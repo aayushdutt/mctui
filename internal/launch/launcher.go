@@ -1,0 +1,529 @@
+// Package launch handles the Minecraft launch pipeline.
+package launch
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/quasar/mctui/internal/config"
+	"github.com/quasar/mctui/internal/core"
+	"github.com/quasar/mctui/internal/download"
+	"github.com/quasar/mctui/internal/java"
+)
+
+// Status represents the current launch step
+type Status struct {
+	Step       string  // Current step name
+	Progress   float64 // 0.0 - 1.0
+	Message    string  // Human-readable message
+	IsComplete bool
+	Error      error
+}
+
+// Options contains launch configuration
+type Options struct {
+	Instance    *core.Instance
+	VersionInfo *core.VersionDetails
+	JavaPath    string // Override Java path
+	Offline     bool   // Skip online auth
+	PlayerName  string // For offline mode
+	Config      *config.Config
+}
+
+// Launcher manages the game launch process
+type Launcher struct {
+	opts       *Options
+	statusChan chan<- Status
+	cfg        *config.Config
+}
+
+// NewLauncher creates a new launcher
+func NewLauncher(opts *Options, statusChan chan<- Status) *Launcher {
+	return &Launcher{
+		opts:       opts,
+		statusChan: statusChan,
+		cfg:        opts.Config,
+	}
+}
+
+// Launch executes the full launch pipeline
+func (l *Launcher) Launch(ctx context.Context) error {
+	steps := []struct {
+		name string
+		fn   func(context.Context) error
+	}{
+		{"Checking Java", l.checkJava},
+		{"Downloading libraries", l.downloadLibraries},
+		{"Downloading assets", l.downloadAssets},
+		{"Preparing game", l.prepareGame},
+		{"Launching", l.launchGame},
+	}
+
+	for i, step := range steps {
+		l.sendStatus(Status{
+			Step:     step.name,
+			Progress: float64(i) / float64(len(steps)),
+			Message:  step.name + "...",
+		})
+
+		if err := step.fn(ctx); err != nil {
+			l.sendStatus(Status{
+				Step:    step.name,
+				Message: err.Error(),
+				Error:   err,
+			})
+			return fmt.Errorf("%s: %w", step.name, err)
+		}
+	}
+
+	l.sendStatus(Status{
+		Step:       "Complete",
+		Progress:   1.0,
+		Message:    "Game launched!",
+		IsComplete: true,
+	})
+
+	return nil
+}
+
+func (l *Launcher) sendStatus(s Status) {
+	if l.statusChan != nil {
+		select {
+		case l.statusChan <- s:
+		default:
+		}
+	}
+}
+
+func (l *Launcher) checkJava(ctx context.Context) error {
+	// If Java path is specified, use it
+	if l.opts.JavaPath != "" {
+		return nil
+	}
+
+	// Determine required Java version
+	requiredVersion := 8
+	if l.opts.VersionInfo != nil && l.opts.VersionInfo.JavaVersion.MajorVersion > 0 {
+		requiredVersion = l.opts.VersionInfo.JavaVersion.MajorVersion
+	}
+
+	// Find suitable Java
+	detector := java.NewDetector()
+
+	// Add our managed java directory to detector
+	configDir, _ := os.UserConfigDir() // Ignore error, fall back to default
+	if configDir != "" {
+		managedJavaDir := filepath.Join(configDir, "mctui", "java", fmt.Sprintf("%d", requiredVersion))
+		// We can't easily add to detector without changing its API,
+		// but we can check this path specifically after FindBest fails,
+		// OR we can rely on the user having run this once.
+		// For now, let's just check if we have it downloaded already.
+		if exe, err := java.NewDownloader().FindJavaExecutable(managedJavaDir); err == nil {
+			l.opts.JavaPath = exe
+			l.sendStatus(Status{
+				Step:    "Checking Java",
+				Message: fmt.Sprintf("Using managed Java %d", requiredVersion),
+			})
+			return nil
+		}
+	}
+
+	inst := detector.FindBest(requiredVersion)
+	if inst != nil {
+		l.opts.JavaPath = inst.Path
+		l.sendStatus(Status{
+			Step:    "Checking Java",
+			Message: fmt.Sprintf("Using %s", java.FormatInstallation(inst)),
+		})
+		return nil
+	}
+
+	// Not found, try to download
+	l.sendStatus(Status{
+		Step:    "Downloading Java",
+		Message: fmt.Sprintf("Java %d not found. Downloading via Adoptium...", requiredVersion),
+	})
+
+	if configDir == "" {
+		return fmt.Errorf("could not determine config directory for java download")
+	}
+
+	javaBaseDir := filepath.Join(configDir, "mctui", "java")
+	downloader := java.NewDownloader()
+
+	exePath, err := downloader.DownloadRuntime(ctx, requiredVersion, javaBaseDir, func(msg string) {
+		l.sendStatus(Status{
+			Step:    "Downloading Java",
+			Message: msg,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to download java %d: %w", requiredVersion, err)
+	}
+
+	l.opts.JavaPath = exePath
+	l.sendStatus(Status{
+		Step:    "Checking Java",
+		Message: fmt.Sprintf("Downloaded and using Java %d", requiredVersion),
+	})
+
+	return nil
+}
+
+func (l *Launcher) downloadLibraries(ctx context.Context) error {
+	if l.opts.VersionInfo == nil {
+		return nil
+	}
+
+	var items []download.Item
+	for _, lib := range l.opts.VersionInfo.Libraries {
+		// Check rules
+		if !l.libraryApplies(&lib) {
+			continue
+		}
+
+		if lib.Downloads == nil || lib.Downloads.Artifact == nil {
+			continue
+		}
+
+		artifact := lib.Downloads.Artifact
+		destPath := filepath.Join(l.cfg.LibrariesDir, artifact.Path)
+
+		items = append(items, download.Item{
+			URL:  artifact.URL,
+			Path: destPath,
+			SHA1: artifact.SHA1,
+			Size: artifact.Size,
+		})
+	}
+
+	// Download client jar
+	if l.opts.VersionInfo.Downloads.Client != nil {
+		client := l.opts.VersionInfo.Downloads.Client
+		clientPath := filepath.Join(l.cfg.LibrariesDir, "com", "mojang", "minecraft",
+			l.opts.VersionInfo.ID, fmt.Sprintf("minecraft-%s-client.jar", l.opts.VersionInfo.ID))
+
+		items = append(items, download.Item{
+			URL:  client.URL,
+			Path: clientPath,
+			SHA1: client.SHA1,
+			Size: client.Size,
+		})
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+
+	mgr := download.NewManager(4)
+	progressChan := make(chan download.Progress, 10)
+
+	// Forward progress
+	go func() {
+		for p := range progressChan {
+			percent := 0.0
+			if p.TotalBytes > 0 {
+				percent = float64(p.DownloadedBytes) / float64(p.TotalBytes)
+			}
+			l.sendStatus(Status{
+				Step:     "Downloading libraries",
+				Progress: percent,
+				Message:  fmt.Sprintf("Downloading %s (%s)", p.CurrentItem, download.FormatSpeed(p.Speed)),
+			})
+		}
+	}()
+
+	result, err := mgr.Download(ctx, items, progressChan)
+	close(progressChan)
+
+	if err != nil {
+		return err
+	}
+	if result.Failed > 0 {
+		return fmt.Errorf("%d libraries failed to download", result.Failed)
+	}
+
+	return nil
+}
+
+func (l *Launcher) downloadAssets(ctx context.Context) error {
+	if l.opts.VersionInfo == nil {
+		return nil
+	}
+
+	assetIndex := l.opts.VersionInfo.AssetIndex
+	indexPath := filepath.Join(l.cfg.AssetsDir, "indexes", assetIndex.ID+".json")
+
+	// Download asset index if needed
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		mgr := download.NewManager(1)
+		_, err := mgr.Download(ctx, []download.Item{{
+			URL:  assetIndex.URL,
+			Path: indexPath,
+			SHA1: assetIndex.SHA1,
+			Size: assetIndex.Size,
+		}}, nil)
+		if err != nil {
+			return fmt.Errorf("downloading asset index: %w", err)
+		}
+	}
+
+	// Parse asset index
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return fmt.Errorf("reading asset index: %w", err)
+	}
+
+	var index struct {
+		Objects map[string]struct {
+			Hash string `json:"hash"`
+			Size int64  `json:"size"`
+		} `json:"objects"`
+	}
+	if err := json.Unmarshal(indexData, &index); err != nil {
+		return fmt.Errorf("parsing asset index: %w", err)
+	}
+
+	// Build download list
+	var items []download.Item
+	for _, obj := range index.Objects {
+		prefix := obj.Hash[:2]
+		destPath := filepath.Join(l.cfg.AssetsDir, "objects", prefix, obj.Hash)
+
+		items = append(items, download.Item{
+			URL:  fmt.Sprintf("https://resources.download.minecraft.net/%s/%s", prefix, obj.Hash),
+			Path: destPath,
+			SHA1: obj.Hash,
+			Size: obj.Size,
+		})
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+
+	mgr := download.NewManager(8) // More workers for small files
+	progressChan := make(chan download.Progress, 10)
+
+	go func() {
+		for p := range progressChan {
+			percent := 0.0
+			if p.TotalItems > 0 {
+				percent = float64(p.CompletedItems) / float64(p.TotalItems)
+			}
+			l.sendStatus(Status{
+				Step:     "Downloading assets",
+				Progress: percent,
+				Message:  fmt.Sprintf("Assets %d/%d (%s)", p.CompletedItems, p.TotalItems, download.FormatSpeed(p.Speed)),
+			})
+		}
+	}()
+
+	result, err := mgr.Download(ctx, items, progressChan)
+	close(progressChan)
+
+	if err != nil {
+		return err
+	}
+	if result.Failed > 0 {
+		return fmt.Errorf("%d assets failed to download", result.Failed)
+	}
+
+	return nil
+}
+
+func (l *Launcher) prepareGame(ctx context.Context) error {
+	inst := l.opts.Instance
+
+	// Create game directories
+	dirs := []string{
+		inst.Path,
+		filepath.Join(inst.Path, ".minecraft"),
+		filepath.Join(inst.Path, ".minecraft", "mods"),
+		filepath.Join(inst.Path, ".minecraft", "resourcepacks"),
+		filepath.Join(inst.Path, ".minecraft", "saves"),
+	}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("creating directory %s: %w", dir, err)
+		}
+	}
+
+	return nil
+}
+
+func (l *Launcher) launchGame(ctx context.Context) error {
+	args := l.buildArguments()
+
+	gameDir := filepath.Join(l.opts.Instance.Path, ".minecraft")
+
+	cmd := exec.CommandContext(ctx, l.opts.JavaPath, args...)
+	cmd.Dir = gameDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Start()
+}
+
+func (l *Launcher) buildArguments() []string {
+	var args []string
+	version := l.opts.VersionInfo
+	inst := l.opts.Instance
+
+	// JVM arguments - use instance settings first, then config defaults
+	if len(inst.JVMArgs) > 0 {
+		args = append(args, inst.JVMArgs...)
+	} else if len(l.cfg.JVMArgs) > 0 {
+		args = append(args, l.cfg.JVMArgs...)
+	} else {
+		// Sensible defaults
+		args = append(args, "-Xmx2G", "-Xms512M")
+	}
+
+	// MacOS specific flags for LWJGL
+	if runtime.GOOS == "darwin" {
+		args = append(args, "-XstartOnFirstThread")
+	}
+
+	// Native library path
+	nativesDir := filepath.Join(inst.Path, "natives")
+	args = append(args, fmt.Sprintf("-Djava.library.path=%s", nativesDir))
+
+	// Classpath
+	classpath := l.buildClasspath()
+	args = append(args, "-cp", classpath)
+
+	// Main class
+	args = append(args, version.MainClass)
+
+	// Game arguments
+	gameArgs := l.buildGameArguments()
+	args = append(args, gameArgs...)
+
+	return args
+}
+
+func (l *Launcher) buildClasspath() string {
+	var paths []string
+	version := l.opts.VersionInfo
+
+	// Add libraries
+	for _, lib := range version.Libraries {
+		if !l.libraryApplies(&lib) {
+			continue
+		}
+		if lib.Downloads == nil || lib.Downloads.Artifact == nil {
+			continue
+		}
+		path := filepath.Join(l.cfg.LibrariesDir, lib.Downloads.Artifact.Path)
+		paths = append(paths, path)
+	}
+
+	// Add client jar
+	clientPath := filepath.Join(l.cfg.LibrariesDir, "com", "mojang", "minecraft",
+		version.ID, fmt.Sprintf("minecraft-%s-client.jar", version.ID))
+	paths = append(paths, clientPath)
+
+	separator := ":"
+	if runtime.GOOS == "windows" {
+		separator = ";"
+	}
+
+	return strings.Join(paths, separator)
+}
+
+func (l *Launcher) buildGameArguments() []string {
+	var args []string
+	version := l.opts.VersionInfo
+	inst := l.opts.Instance
+
+	// Replacement map
+	replacements := map[string]string{
+		"${auth_player_name}":  l.getPlayerName(),
+		"${version_name}":      version.ID,
+		"${game_directory}":    filepath.Join(inst.Path, ".minecraft"),
+		"${assets_root}":       l.cfg.AssetsDir,
+		"${assets_index_name}": version.AssetIndex.ID,
+		"${auth_uuid}":         "00000000-0000-0000-0000-000000000000",
+		"${auth_access_token}": "0",
+		"${user_type}":         "legacy",
+		"${version_type}":      string(version.Type),
+		"${user_properties}":   "{}",
+	}
+
+	// Process arguments
+	if version.Arguments != nil && len(version.Arguments.Game) > 0 {
+		for _, arg := range version.Arguments.Game {
+			switch v := arg.(type) {
+			case string:
+				args = append(args, l.replaceVars(v, replacements))
+			case map[string]interface{}:
+				// Complex rules - skip for now
+			}
+		}
+	} else if version.MinecraftArguments != "" {
+		// Legacy format
+		for _, arg := range strings.Split(version.MinecraftArguments, " ") {
+			args = append(args, l.replaceVars(arg, replacements))
+		}
+	}
+
+	return args
+}
+
+func (l *Launcher) replaceVars(s string, replacements map[string]string) string {
+	result := s
+	for k, v := range replacements {
+		result = strings.ReplaceAll(result, k, v)
+	}
+	return result
+}
+
+func (l *Launcher) getPlayerName() string {
+	if l.opts.PlayerName != "" {
+		return l.opts.PlayerName
+	}
+	return "Player"
+}
+
+func (l *Launcher) libraryApplies(lib *core.Library) bool {
+	if len(lib.Rules) == 0 {
+		return true
+	}
+
+	allowed := false
+	for _, rule := range lib.Rules {
+		applies := true
+
+		if rule.OS != nil {
+			osName := runtime.GOOS
+			if rule.OS.Name != "" {
+				// Map Go OS names to Mojang names
+				osMap := map[string]string{
+					"darwin":  "osx",
+					"linux":   "linux",
+					"windows": "windows",
+				}
+				if mapped, ok := osMap[osName]; ok {
+					osName = mapped
+				}
+				if rule.OS.Name != osName {
+					applies = false
+				}
+			}
+		}
+
+		if applies {
+			allowed = rule.Action == "allow"
+		}
+	}
+
+	return allowed
+}
