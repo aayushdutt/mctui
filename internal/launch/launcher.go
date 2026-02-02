@@ -33,6 +33,8 @@ type Options struct {
 	JavaPath    string // Override Java path
 	Offline     bool   // Skip online auth
 	PlayerName  string // For offline mode
+	UUID        string // Player UUID
+	AccessToken string // Auth Token
 	Config      *config.Config
 }
 
@@ -444,6 +446,20 @@ func (l *Launcher) buildGameArguments() []string {
 	version := l.opts.VersionInfo
 	inst := l.opts.Instance
 
+	// Determine auth values
+	uuid := l.opts.UUID
+	if uuid == "" {
+		uuid = "00000000-0000-0000-0000-000000000000"
+	}
+	token := l.opts.AccessToken
+	if token == "" {
+		token = "0"
+	}
+	userType := "legacy"
+	if !l.opts.Offline {
+		userType = "msa"
+	}
+
 	// Replacement map
 	replacements := map[string]string{
 		"${auth_player_name}":  l.getPlayerName(),
@@ -451,9 +467,9 @@ func (l *Launcher) buildGameArguments() []string {
 		"${game_directory}":    filepath.Join(inst.Path, ".minecraft"),
 		"${assets_root}":       l.cfg.AssetsDir,
 		"${assets_index_name}": version.AssetIndex.ID,
-		"${auth_uuid}":         "00000000-0000-0000-0000-000000000000",
-		"${auth_access_token}": "0",
-		"${user_type}":         "legacy",
+		"${auth_uuid}":         uuid,
+		"${auth_access_token}": token,
+		"${user_type}":         userType,
 		"${version_type}":      string(version.Type),
 		"${user_properties}":   "{}",
 	}

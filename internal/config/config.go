@@ -27,6 +27,10 @@ type Config struct {
 	MSAClientID string `json:"msaClientID"`
 }
 
+const (
+	DefaultMSAClientID = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb"
+)
+
 // DefaultConfig returns a config with sensible defaults
 func DefaultConfig() *Config {
 	dataDir := getDefaultDataDir()
@@ -38,6 +42,7 @@ func DefaultConfig() *Config {
 		JVMArgs:       []string{"-Xmx2G", "-Xms512M"},
 		Theme:         "dark",
 		ShowSnapshots: false,
+		MSAClientID:   DefaultMSAClientID,
 	}
 }
 
@@ -56,6 +61,11 @@ func Load() (*Config, error) {
 
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+
+	// Fallback to default ID if config file had empty string or missing field
+	if cfg.MSAClientID == "" {
+		cfg.MSAClientID = DefaultMSAClientID
 	}
 
 	return cfg, nil

@@ -25,7 +25,11 @@ type (
 	// NavigateToLaunch starts the launch view
 	NavigateToLaunch struct {
 		Instance *core.Instance
+		Offline  bool
 	}
+
+	// NavigateToAuth opens the authentication screen
+	NavigateToAuth struct{}
 )
 
 // Action messages

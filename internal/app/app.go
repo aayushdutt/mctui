@@ -24,6 +24,7 @@ const (
 	StateLaunch
 	StateMods
 	StateSettings
+	StateAuth
 )
 
 // Model is the main application model
@@ -36,10 +37,12 @@ type Model struct {
 	home   *ui.HomeModel
 	wizard *ui.WizardModel
 	launch *ui.LaunchModel
+	auth   *ui.AuthModel
 
 	// Core services
 	cfg       *config.Config
 	instances *core.InstanceManager
+	accounts  *core.AccountManager
 	mojang    *api.MojangClient
 
 	// Launch state
@@ -55,15 +58,20 @@ type Model struct {
 
 // keyMap defines the keybindings for the app
 type keyMap struct {
-	Quit key.Binding
+	ForceQuit key.Binding
+	Quit      key.Binding
 	Help key.Binding
 	Back key.Binding
 }
 
 func defaultKeyMap() keyMap {
 	return keyMap{
+		ForceQuit: key.NewBinding(
+			key.WithKeys("ctrl+c"),
+			key.WithHelp("ctrl+c", "quit"),
+		),
 		Quit: key.NewBinding(
-			key.WithKeys("q", "ctrl+c"),
+			key.WithKeys("q"),
 			key.WithHelp("q", "quit"),
 		),
 		Help: key.NewBinding(
@@ -83,14 +91,20 @@ func New() *Model {
 	cfg.EnsureDirs()
 
 	instances := core.NewInstanceManager(cfg.DataDir)
+	accounts := core.NewAccountManager(cfg.DataDir)
+	accounts.Load()
+
+	home := ui.NewHomeModel()
+	home.SetAccountManager(accounts)
 
 	return &Model{
 		state:     StateHome,
-		home:      ui.NewHomeModel(),
+		home:      home,
 		cfg:       cfg,
 		instances: instances,
+		accounts:  accounts,
 		mojang:    api.NewMojangClient(),
-		keys:      defaultKeyMap(),
+        keys:      defaultKeyMap(),
 	}
 }
 
@@ -165,8 +179,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.launch.SetSize(m.width, m.height)
 		return m, tea.Batch(
 			m.launch.Init(),
-			m.startLaunch(msg.Instance),
+			m.startLaunch(msg.Instance, msg.Offline),
 		)
+
+	case ui.NavigateToAuth:
+		m.state = StateAuth
+		clientID := m.cfg.MSAClientID
+		if clientID == "" {
+			// Fallback or error? For now use a placeholder to allow testing
+			clientID = "YOUR_CLIENT_ID" 
+		}
+		m.auth = ui.NewAuthModel(m.cfg.DataDir, clientID, m.accounts)
+		m.auth.SetSize(m.width, m.height)
+		return m, m.auth.Init()
 
 	// Instance management
 	case ui.InstanceCreated:
@@ -200,6 +225,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Global key handlers
 	case tea.KeyMsg:
 		switch {
+		case key.Matches(msg, m.keys.ForceQuit):
+			return m, tea.Quit
 		case key.Matches(msg, m.keys.Quit):
 			if m.state == StateHome {
 				return m, tea.Quit
@@ -221,10 +248,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 
-	case StateLaunch:
 		if m.launch != nil {
 			newLaunch, cmd := m.launch.Update(msg)
 			m.launch = newLaunch.(*ui.LaunchModel)
+			cmds = append(cmds, cmd)
+		}
+
+	case StateAuth:
+		if m.auth != nil {
+			newAuth, cmd := m.auth.Update(msg)
+			m.auth = newAuth.(*ui.AuthModel)
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -232,7 +265,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Model) startLaunch(inst *core.Instance) tea.Cmd {
+func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.launchCtxCancel = cancel
@@ -256,13 +289,28 @@ func (m *Model) startLaunch(inst *core.Instance) tea.Cmd {
 		// Create status channel
 		m.launchStatusChan = make(chan launch.Status, 10)
 
+		// Determine player info
+		playerName := "Player"
+		uuid := "00000000-0000-0000-0000-000000000000"
+		accessToken := ""
+		
+		if !offline {
+			if acc := m.accounts.GetActive(); acc != nil {
+				playerName = acc.Name
+				uuid = acc.ID
+				accessToken = acc.AccessToken
+			}
+		}
+
 		// Start launcher in goroutine
 		go func() {
 			launcher := launch.NewLauncher(&launch.Options{
 				Instance:    inst,
 				VersionInfo: details,
-				Offline:     true,
-				PlayerName:  "Player",
+				Offline:     offline,
+				PlayerName:  playerName,
+				UUID:        uuid,
+				AccessToken: accessToken,
 				Config:      m.cfg,
 			}, m.launchStatusChan)
 
@@ -326,6 +374,10 @@ func (m *Model) View() string {
 	case StateLaunch:
 		if m.launch != nil {
 			return m.launch.View()
+		}
+	case StateAuth:
+		if m.auth != nil {
+			return m.auth.View()
 		}
 	}
 

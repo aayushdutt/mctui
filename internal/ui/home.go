@@ -22,14 +22,17 @@ type HomeModel struct {
 	height    int
 	keys      homeKeyMap
 	loading   bool
+	accounts  *core.AccountManager
 }
 
 type homeKeyMap struct {
-	Launch   key.Binding
-	NewInst  key.Binding
+	Launch      key.Binding
+	PlayOffline key.Binding
+	NewInst     key.Binding
 	Mods     key.Binding
 	Settings key.Binding
 	Delete   key.Binding
+	Auth     key.Binding
 }
 
 func defaultHomeKeyMap() homeKeyMap {
@@ -37,6 +40,10 @@ func defaultHomeKeyMap() homeKeyMap {
 		Launch: key.NewBinding(
 			key.WithKeys("enter", "l"),
 			key.WithHelp("enter", "launch"),
+		),
+		PlayOffline: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "play offline"),
 		),
 		NewInst: key.NewBinding(
 			key.WithKeys("n"),
@@ -53,6 +60,10 @@ func defaultHomeKeyMap() homeKeyMap {
 		Delete: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete"),
+		),
+		Auth: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "accounts"),
 		),
 	}
 }
@@ -139,6 +150,10 @@ func (m *HomeModel) SetInstances(instances []*core.Instance) {
 	m.list.SetItems(items)
 }
 
+func (m *HomeModel) SetAccountManager(am *core.AccountManager) {
+	m.accounts = am
+}
+
 // SelectedInstance returns the currently selected instance
 func (m *HomeModel) SelectedInstance() *core.Instance {
 	if item, ok := m.list.SelectedItem().(instanceItem); ok {
@@ -177,7 +192,16 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Launch):
 			if inst := m.SelectedInstance(); inst != nil {
-				return m, func() tea.Msg { return NavigateToLaunch{Instance: inst} }
+				// If authenticated, launch online. Else redirect to auth.
+				if m.accounts != nil && m.accounts.GetActive() != nil {
+					return m, func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: false} }
+				}
+				// Not authenticated
+				return m, func() tea.Msg { return NavigateToAuth{} }
+			}
+		case key.Matches(msg, m.keys.PlayOffline):
+			if inst := m.SelectedInstance(); inst != nil {
+				return m, func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: true} }
 			}
 		case key.Matches(msg, m.keys.NewInst):
 			return m, func() tea.Msg { return NavigateToNewInstance{} }
@@ -187,6 +211,8 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case key.Matches(msg, m.keys.Settings):
 			return m, func() tea.Msg { return NavigateToSettings{} }
+		case key.Matches(msg, m.keys.Auth):
+			return m, func() tea.Msg { return NavigateToAuth{} }
 		}
 	}
 
@@ -210,7 +236,7 @@ func (m *HomeModel) View() string {
 
 		help := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#626262")).
-			Render("\n\n[n] new instance • [s] settings • [q] quit")
+			Render("\n\n[n] new instance • [s] settings • [a] accounts • [q] quit")
 
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
@@ -220,13 +246,33 @@ func (m *HomeModel) View() string {
 		)
 	}
 
+	var helpText string
+	authStatus := "Not logged in"
+	if m.accounts != nil {
+		if acc := m.accounts.GetActive(); acc != nil {
+			authStatus = fmt.Sprintf("Logged in as %s", acc.Name)
+		}
+	}
+
+	if m.accounts != nil && m.accounts.GetActive() == nil {
+		helpText = "[enter] login & play • [o] play offline • [n] new • [m] mods • [s] settings • [a] accounts • [q] quit"
+	} else {
+		helpText = "[enter] launch • [o] play offline • [n] new • [m] mods • [s] settings • [a] accounts • [q] quit"
+	}
+
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#626262")).
-		Render("[enter] launch • [n] new • [m] mods • [s] settings • [q] quit")
+		Render(helpText)
+	
+	status := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#7C3AED")).
+		Padding(1, 0).
+		Render(authStatus)
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.list.View(),
+		status,
 		help,
 	)
 }
