@@ -147,6 +147,10 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == AuthStateWaitingForUser && m.deviceCode != nil {
 				openBrowser(m.deviceCode.VerificationURI)
 			}
+		case "c":
+			if m.state == AuthStateWaitingForUser && m.deviceCode != nil {
+				copyToClipboard(m.deviceCode.UserCode)
+			}
 		case "enter":
 			if m.state == AuthStateSuccess {
 				return m, func() tea.Msg { return NavigateToHome{} }
@@ -217,7 +221,7 @@ And enter the code:
 %s
 
 %s Waiting for you to sign in...
-[o] Open browser automatically
+[c] Copy code • [o] Open browser automatically
 `, "Microsoft Authentication", 
 lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.deviceCode.VerificationURI),
 box,
@@ -258,4 +262,39 @@ func openBrowser(url string) {
 	if err != nil {
 		// handle error?
 	}
+}
+
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "linux":
+		// Try wl-copy first, then xclip
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			cmd = exec.Command("wl-copy")
+		} else {
+			cmd = exec.Command("xclip", "-selection", "clipboard")
+		}
+	default:
+		return fmt.Errorf("unsupported platform")
+	}
+	
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	
+	if _, err := in.Write([]byte(text)); err != nil {
+		return err
+	}
+	if err := in.Close(); err != nil {
+		return err
+	}
+	
+	return cmd.Wait()
 }

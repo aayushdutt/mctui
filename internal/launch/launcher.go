@@ -2,9 +2,11 @@
 package launch
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +26,7 @@ type Status struct {
 	Message    string  // Human-readable message
 	IsComplete bool
 	Error      error
+	LogLine    *LogLine // Streamed log output
 }
 
 // Options contains launch configuration
@@ -36,6 +39,15 @@ type Options struct {
 	UUID        string // Player UUID
 	AccessToken string // Auth Token
 	Config      *config.Config
+	
+	// Callbacks
+	UpdateLastPlayed func(id string) error
+}
+
+// LogLine represents a line of log output
+type LogLine struct {
+	Text string
+	Type string // "stdout" or "stderr"
 }
 
 // Launcher manages the game launch process
@@ -87,7 +99,7 @@ func (l *Launcher) Launch(ctx context.Context) error {
 	l.sendStatus(Status{
 		Step:       "Complete",
 		Progress:   1.0,
-		Message:    "Game launched!",
+		Message:    "Game closed.",
 		IsComplete: true,
 	})
 
@@ -363,15 +375,85 @@ func (l *Launcher) prepareGame(ctx context.Context) error {
 
 func (l *Launcher) launchGame(ctx context.Context) error {
 	args := l.buildArguments()
+	inst := l.opts.Instance
 
-	gameDir := filepath.Join(l.opts.Instance.Path, ".minecraft")
+	gameDir := filepath.Join(inst.Path, ".minecraft")
 
 	cmd := exec.CommandContext(ctx, l.opts.JavaPath, args...)
 	cmd.Dir = gameDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	
+	// Capture output
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
 
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	l.sendStatus(Status{
+		Step:    "Playing",
+		Message: "Game running...",
+	})
+
+	// Update last played struct
+	if l.opts.UpdateLastPlayed != nil {
+		l.opts.UpdateLastPlayed(inst.ID)
+	}
+
+	// Stream logs
+	go l.streamLog(stdout, "stdout")
+	go l.streamLog(stderr, "stderr")
+
+	// Wait for game to finish
+	err := cmd.Wait()
+	
+	// Send final message
+	if err != nil {
+		return fmt.Errorf("game exited with error: %w", err)
+	}
+	
+	// We return nil here so the pipeline considers this step "done".
+	// The launcher will then send the "Complete" status.
+	return nil
+}
+
+func (l *Launcher) streamLog(r io.Reader, apiType string) {
+	// Import bufio and io at top of file, but for now assuming they exist or will add them.
+	// Actually I need to add imports. I'll do that in a separate step or assume implicit if I used them.
+	// Wait, I haven't added bufio import.
+	// I'll use a simple scanner.
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		text := scanner.Text()
+		
+		// Filter "important" logs or just send them all?
+		// User said "only show important logs".
+		// Simple heuristic: Lines with [FATAL], [ERROR], or [WARN].
+		// Or maybe lines starting with "[...]" are structured log lines.
+		// For now, let's pass everything and let UI filter, OR filter here to save channel bandwidth.
+		// Let's filter here.
+		
+		isImportant := strings.Contains(text, "[FATAL]") || 
+			strings.Contains(text, "[ERROR]") || 
+			strings.Contains(text, "[WARN]") ||
+			strings.Contains(text, "Exception") || 
+			strings.Contains(text, "Error")
+		
+		// Also always show if it's stderr
+		if apiType == "stderr" {
+			isImportant = true
+		}
+
+		if isImportant {
+			l.sendStatus(Status{
+				Step: "Launching",
+				LogLine: &LogLine{
+					Text: text,
+					Type: apiType,
+				},
+			})
+		}
+	}
 }
 
 func (l *Launcher) buildArguments() []string {

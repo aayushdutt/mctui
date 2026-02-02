@@ -23,6 +23,7 @@ type LaunchModel struct {
 	steps    []stepInfo
 	done     bool
 	err      error
+	logs     []string
 }
 
 type stepInfo struct {
@@ -68,6 +69,14 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LaunchStatusUpdate:
 		m.status = msg.Status
 		m.updateSteps()
+		
+		if msg.Status.LogLine != nil {
+			line := fmt.Sprintf("[%s] %s", msg.Status.LogLine.Type, msg.Status.LogLine.Text)
+			m.logs = append(m.logs, line)
+			if len(m.logs) > 15 {
+				m.logs = m.logs[len(m.logs)-15:]
+			}
+		}
 
 		// Update progress bar
 		cmd := m.progress.SetPercent(msg.Status.Progress)
@@ -80,6 +89,8 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateStepStatus(m.status.Step, "error")
 		} else {
 			m.updateStepStatus(m.status.Step, "done")
+			// Auto return to home immediately
+			return m, func() tea.Msg { return NavigateToHome{} }
 		}
 		return m, nil
 
@@ -161,7 +172,12 @@ func (m *LaunchModel) View() string {
 		Background(lipgloss.Color("#7C3AED")).
 		Padding(0, 1)
 
-	header := headerStyle.Render(fmt.Sprintf("Launching: %s", m.instance.Name))
+	// Status message
+	headerText := fmt.Sprintf("Launching: %s", m.instance.Name)
+	if m.status.Step == "Playing" {
+		headerText = fmt.Sprintf("Playing: %s (Standard Output)", m.instance.Name)
+	}
+	header := headerStyle.Render(headerText)
 
 	// Instance info
 	info := lipgloss.NewStyle().
@@ -208,12 +224,26 @@ func (m *LaunchModel) View() string {
 		} else {
 			footer = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#10B981")).
-				Render("\n✓ Game launched!\n\nPress Enter to go back")
+				Render("\n✓ Game Closed. Returning to home...")
 		}
 	} else {
+		helpText := "[Esc] Cancel • [Ctrl+C] Quit"
+		if m.status.Step == "Playing" {
+			helpText = "[Ctrl+C] Force Quit"
+		}
 		footer = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#626262")).
-			Render("\n[Esc] Cancel • [Ctrl+C] Quit")
+			Render("\n" + helpText)
+	}
+
+	// Logs
+	var logsView strings.Builder
+	if len(m.logs) > 0 {
+		logsView.WriteString("\n")
+		logStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+		for _, line := range m.logs {
+			logsView.WriteString(logStyle.Render(line) + "\n")
+		}
 	}
 
 	return lipgloss.JoinVertical(
@@ -226,6 +256,7 @@ func (m *LaunchModel) View() string {
 		stepsView.String(),
 		"",
 		statusMsg,
+		logsView.String(),
 		footer,
 	)
 }

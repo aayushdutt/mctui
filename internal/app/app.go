@@ -212,15 +212,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Launch complete - clean up
 	case ui.LaunchComplete:
+		var cmd tea.Cmd
 		if m.launch != nil {
-			m.launch.Update(msg)
+			newLaunch, c := m.launch.Update(msg)
+			m.launch = newLaunch.(*ui.LaunchModel)
+			cmd = c
 		}
 		// Clean up
 		m.launchStatusChan = nil
 		if m.launchCtxCancel != nil {
 			m.launchCtxCancel = nil
 		}
-		return m, nil
+		return m, cmd
 
 	// Global key handlers
 	case tea.KeyMsg:
@@ -310,8 +313,9 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 				Offline:     offline,
 				PlayerName:  playerName,
 				UUID:        uuid,
-				AccessToken: accessToken,
-				Config:      m.cfg,
+				AccessToken:      accessToken,
+				Config:           m.cfg,
+				UpdateLastPlayed: m.instances.UpdateLastPlayed,
 			}, m.launchStatusChan)
 
 			err := launcher.Launch(ctx)
