@@ -8,7 +8,18 @@ import (
 	"github.com/quasar/mctui/internal/app"
 )
 
+var version = "dev"
+
 func main() {
+	// Handle flags
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			fmt.Printf("mctui %s\n", version)
+			return
+		}
+	}
+
 	// Initialize the app
 	model := app.New()
 
