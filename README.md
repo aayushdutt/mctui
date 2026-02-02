@@ -1,4 +1,4 @@
-# mctui - Minecraft TUI Launcher
+# mctui - Minecraft TUI Launcher (Beta)
 
 A fast, terminal-based Minecraft launcher built with Go and Bubbletea.
 
@@ -19,23 +19,6 @@ go run .
 # Or build and run
 make build
 ./mctui
-```
-
-## Development
-
-```bash
-# Install dependencies
-go mod tidy
-
-# Run with hot reload (install air first)
-go install github.com/air-verse/air@latest
-make dev
-
-# Run tests
-make test
-
-# Build for all platforms
-make build-all
 ```
 
 ## Project Structure
@@ -65,6 +48,15 @@ mctui/
 | `/` | Search |
 | `q` | Quit |
 
+## Data & Configuration
+ 
+Data is stored in `~/.local/share/mctui` (Linux/macOS) or `%APPDATA%\mctui` (Windows).
+ 
+- **Instances**: `.../instances/`
+- **Java Runtimes**: `.../java/` (Automatic downloads are stored here and reused across instances)
+- **Accounts**: `.../accounts.json`
+- **Assets/Libraries**: Shared global cache
+ 
 ## License
 
 MIT

@@ -52,3 +52,12 @@ build-all:
 	GOOS=darwin GOARCH=arm64 go build -o dist/mctui-darwin-arm64 .
 	GOOS=linux GOARCH=amd64 go build -o dist/mctui-linux-amd64 .
 	GOOS=windows GOARCH=amd64 go build -o dist/mctui-windows-amd64.exe .
+
+# Reset authentication (deletes accounts.json)
+# Note: config path logic might vary, this assumes default Linux/Mac path
+reset-auth:
+	rm -f ~/.local/share/mctui/accounts.json
+
+# Reset all data (instances, cache, auth)
+reset-all:
+	rm -rf ~/.local/share/mctui

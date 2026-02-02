@@ -104,7 +104,7 @@ func New() *Model {
 		instances: instances,
 		accounts:  accounts,
 		mojang:    api.NewMojangClient(),
-        keys:      defaultKeyMap(),
+		keys:      defaultKeyMap(),
 	}
 }
 
@@ -248,12 +248,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.wizard != nil {
 			newWizard, cmd := m.wizard.Update(msg)
 			m.wizard = newWizard.(*ui.WizardModel)
-			cmds = append(cmds, cmd)
-		}
-
-		if m.launch != nil {
-			newLaunch, cmd := m.launch.Update(msg)
-			m.launch = newLaunch.(*ui.LaunchModel)
 			cmds = append(cmds, cmd)
 		}
 

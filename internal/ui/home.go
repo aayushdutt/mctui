@@ -23,6 +23,11 @@ type HomeModel struct {
 	keys      homeKeyMap
 	loading   bool
 	accounts  *core.AccountManager
+
+	// Auth prompt state
+	showAuthPrompt    bool
+	selectedForLaunch *core.Instance
+	promptSelection   int // 0 = Login, 1 = Play Offline
 }
 
 type homeKeyMap struct {
@@ -184,6 +189,31 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle auth prompt mode
+		if m.showAuthPrompt {
+			switch msg.String() {
+			case "up", "k", "left", "h":
+				m.promptSelection = 0
+			case "down", "j", "right", "l":
+				m.promptSelection = 1
+			case "enter":
+				m.showAuthPrompt = false
+				if m.promptSelection == 0 {
+					// Login first
+					return m, func() tea.Msg { return NavigateToAuth{} }
+				}
+				// Play offline
+				inst := m.selectedForLaunch
+				m.selectedForLaunch = nil
+				return m, func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: true} }
+			case "esc", "q":
+				m.showAuthPrompt = false
+				m.selectedForLaunch = nil
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// Don't handle keys if filtering
 		if m.list.FilterState() == list.Filtering {
 			break
@@ -192,12 +222,15 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Launch):
 			if inst := m.SelectedInstance(); inst != nil {
-				// If authenticated, launch online. Else redirect to auth.
+				// If authenticated, launch online. Else show prompt.
 				if m.accounts != nil && m.accounts.GetActive() != nil {
 					return m, func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: false} }
 				}
-				// Not authenticated
-				return m, func() tea.Msg { return NavigateToAuth{} }
+				// Not authenticated - show prompt
+				m.showAuthPrompt = true
+				m.selectedForLaunch = inst
+				m.promptSelection = 0
+				return m, nil
 			}
 		case key.Matches(msg, m.keys.PlayOffline):
 			if inst := m.SelectedInstance(); inst != nil {
@@ -255,9 +288,9 @@ func (m *HomeModel) View() string {
 	}
 
 	if m.accounts != nil && m.accounts.GetActive() == nil {
-		helpText = "[enter] login & play • [o] play offline • [n] new • [m] mods • [s] settings • [a] accounts • [q] quit"
+		helpText = "[enter] login & play • [n] new • [m] mods • [s] settings • [a] accounts • [o] play offline • [q] quit"
 	} else {
-		helpText = "[enter] launch • [o] play offline • [n] new • [m] mods • [s] settings • [a] accounts • [q] quit"
+		helpText = "[enter] launch • [n] new • [m] mods • [s] settings • [a] accounts • [o] play offline • [q] quit"
 	}
 
 	help := lipgloss.NewStyle().
@@ -269,10 +302,72 @@ func (m *HomeModel) View() string {
 		Padding(1, 0).
 		Render(authStatus)
 
-	return lipgloss.JoinVertical(
+	baseView := lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.list.View(),
 		status,
 		help,
 	)
+
+	// Show auth prompt overlay if needed
+	if m.showAuthPrompt {
+		// Build prompt box
+		titleStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Background(lipgloss.Color("#EF4444")).
+			Padding(0, 1)
+
+		title := titleStyle.Render("⚠️  Not Authenticated")
+
+		instName := ""
+		if m.selectedForLaunch != nil {
+			instName = m.selectedForLaunch.Name
+		}
+		subtitle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#A1A1AA")).
+			Render(fmt.Sprintf("To play \"%s\", choose an option:", instName))
+
+		// Options
+		options := []string{"🔐 Log in with Microsoft", "🎮 Play Offline"}
+		var optionsView string
+		for i, opt := range options {
+			cursor := "  "
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color("#A1A1AA"))
+			if i == m.promptSelection {
+				cursor = "▸ "
+				style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED")).Bold(true)
+			}
+			optionsView += style.Render(cursor+opt) + "\n"
+		}
+
+		helpPrompt := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#626262")).
+			Render("[↑/↓] Select • [Enter] Confirm • [Esc] Cancel")
+
+		promptBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#EF4444")).
+			Padding(1, 2).
+			Render(lipgloss.JoinVertical(
+				lipgloss.Left,
+				title,
+				"",
+				subtitle,
+				"",
+				optionsView,
+				helpPrompt,
+			))
+
+		// Overlay the prompt on top
+		return lipgloss.Place(
+			m.width,
+			m.height,
+			lipgloss.Center,
+			lipgloss.Center,
+			promptBox,
+		)
+	}
+
+	return baseView
 }

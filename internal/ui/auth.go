@@ -34,6 +34,7 @@ type AuthModel struct {
 	deviceCode *api.DeviceCodeResponse
 	err        error
 	account    *core.Account
+	copied     bool
 
 	spinner spinner.Model
 
@@ -139,6 +140,13 @@ func (m *AuthModel) exchangeTokens(msaToken string) tea.Cmd {
 
 func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		if msg.Type == tea.MouseLeft && m.state == AuthStateWaitingForUser && m.deviceCode != nil {
+			copyToClipboard(m.deviceCode.UserCode)
+			m.copied = true
+			return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearCopiedMsg{} })
+		}
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc", "q":
@@ -150,6 +158,8 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			if m.state == AuthStateWaitingForUser && m.deviceCode != nil {
 				copyToClipboard(m.deviceCode.UserCode)
+				m.copied = true
+				return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearCopiedMsg{} })
 			}
 		case "enter":
 			if m.state == AuthStateSuccess {
@@ -160,7 +170,15 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case deviceCodeMsg:
 		m.deviceCode = msg.resp
 		m.state = AuthStateWaitingForUser
-		return m, m.pollToken(msg.resp)
+		// Auto-copy the code
+		copyToClipboard(msg.resp.UserCode)
+		m.copied = true
+		// Schedule browser open after 1 second, also start polling, and schedule copied reset
+		return m, tea.Batch(
+			m.pollToken(msg.resp),
+			tea.Tick(1*time.Second, func(_ time.Time) tea.Msg { return openBrowserMsg{} }),
+			tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearCopiedMsg{} }),
+		)
 
 	case msaTokenMsg:
 		m.state = AuthStateExchange
@@ -187,6 +205,16 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+
+	case openBrowserMsg:
+		if m.deviceCode != nil {
+			openBrowser(m.deviceCode.VerificationURI)
+		}
+		return m, nil
+
+	case clearCopiedMsg:
+		m.copied = false
+		return m, nil
 	}
 
 	return m, nil
@@ -205,11 +233,23 @@ func (m *AuthModel) View() string {
 		if m.deviceCode == nil {
 			content = "Error: No device code."
 		} else {
+			codeText := m.deviceCode.UserCode
+			if m.copied {
+				codeText += "  ✓ Copied!"
+			} else {
+				codeText += "  📋"
+			}
+			
 			box := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("63")).
 				Padding(1, 2).
-				Render(m.deviceCode.UserCode)
+				Render(codeText)
+
+			actionText := "[c] Copy code"
+			if m.copied {
+				actionText = "[✓] Copied!"
+			}
 
 			content = fmt.Sprintf(`
 %s
@@ -221,11 +261,12 @@ And enter the code:
 %s
 
 %s Waiting for you to sign in...
-[c] Copy code • [o] Open browser automatically
-`, "Microsoft Authentication", 
-lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.deviceCode.VerificationURI),
-box,
-m.spinner.View())
+%s • [o] Open browser automatically
+`, "Microsoft Authentication",
+				lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.deviceCode.VerificationURI),
+				box,
+				m.spinner.View(),
+				actionText)
 		}
 
 	case AuthStateExchange:
@@ -298,3 +339,6 @@ func copyToClipboard(text string) error {
 	
 	return cmd.Wait()
 }
+
+type clearCopiedMsg struct{}
+type openBrowserMsg struct{}
