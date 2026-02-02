@@ -30,6 +30,11 @@ type (
 
 	// NavigateToAuth opens the authentication screen
 	NavigateToAuth struct{}
+
+	// DeleteInstance requests instance deletion
+	DeleteInstance struct {
+		Instance *core.Instance
+	}
 )
 
 // Action messages

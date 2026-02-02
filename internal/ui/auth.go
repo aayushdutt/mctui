@@ -261,7 +261,7 @@ And enter the code:
 %s
 
 %s Waiting for you to sign in...
-%s • [o] Open browser automatically
+%s • [o] Open browser • [esc] Back
 `, "Microsoft Authentication",
 				lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.deviceCode.VerificationURI),
 				box,

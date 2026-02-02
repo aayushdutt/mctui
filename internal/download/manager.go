@@ -312,8 +312,3 @@ func hashFile(path string) (string, error) {
 func FormatSpeed(bytesPerSec float64) string {
 	return humanize.Bytes(uint64(bytesPerSec)) + "/s"
 }
-
-// FormatBytes formats bytes for display
-func FormatBytes(bytes int64) string {
-	return humanize.Bytes(uint64(bytes))
-}

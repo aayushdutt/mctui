@@ -193,6 +193,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.auth.SetSize(m.width, m.height)
 		return m, m.auth.Init()
 
+	case ui.DeleteInstance:
+		if msg.Instance != nil {
+			_ = m.instances.Delete(msg.Instance.ID)
+			return m, m.loadInstances()
+		}
 	// Instance management
 	case ui.InstanceCreated:
 		if err := m.instances.Create(msg.Instance); err != nil {

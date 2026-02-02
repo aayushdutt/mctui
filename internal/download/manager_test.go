@@ -203,23 +203,3 @@ func TestFormatSpeed(t *testing.T) {
 		}
 	}
 }
-
-func TestFormatBytes(t *testing.T) {
-	tests := []struct {
-		bytes int64
-		want  string
-	}{
-		{0, "0 B"},
-		{100, "100 B"},
-		{1024, "1.0 kB"},
-		{1024 * 1024, "1.0 MB"},
-		{1024 * 1024 * 1024, "1.0 GB"},
-	}
-
-	for _, tt := range tests {
-		got := FormatBytes(tt.bytes)
-		if got == "" {
-			t.Errorf("FormatBytes(%d) returned empty string", tt.bytes)
-		}
-	}
-}

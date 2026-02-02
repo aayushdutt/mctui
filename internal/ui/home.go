@@ -4,7 +4,10 @@ package ui
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -24,20 +27,20 @@ type HomeModel struct {
 	loading   bool
 	accounts  *core.AccountManager
 
-	// Auth prompt state
-	showAuthPrompt    bool
-	selectedForLaunch *core.Instance
-	promptSelection   int // 0 = Login, 1 = Play Offline
+	// Delete confirmation state
+	confirmDelete bool
+	deleteTarget  *core.Instance
 }
 
 type homeKeyMap struct {
 	Launch      key.Binding
 	PlayOffline key.Binding
 	NewInst     key.Binding
-	Mods     key.Binding
-	Settings key.Binding
-	Delete   key.Binding
-	Auth     key.Binding
+	Mods        key.Binding
+	Settings    key.Binding
+	Delete      key.Binding
+	Auth        key.Binding
+	OpenFolder  key.Binding
 }
 
 func defaultHomeKeyMap() homeKeyMap {
@@ -69,6 +72,10 @@ func defaultHomeKeyMap() homeKeyMap {
 		Auth: key.NewBinding(
 			key.WithKeys("a"),
 			key.WithHelp("a", "accounts"),
+		),
+		OpenFolder: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "open folder"),
 		),
 	}
 }
@@ -124,6 +131,7 @@ func NewHomeModel() *HomeModel {
 	l.Title = "🎮 Minecraft Instances"
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
+	l.SetShowTitle(true)
 	l.Styles.Title = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
@@ -171,7 +179,8 @@ func (m *HomeModel) SelectedInstance() *core.Instance {
 func (m *HomeModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	m.list.SetSize(width, height-3)
+	// Reserve space for: status (3 lines with padding) + help text (up to 2 lines)
+	m.list.SetSize(width, height-6)
 }
 
 // Init implements tea.Model
@@ -189,26 +198,17 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Handle auth prompt mode
-		if m.showAuthPrompt {
+		// Handle delete confirmation mode
+		if m.confirmDelete {
 			switch msg.String() {
-			case "up", "k", "left", "h":
-				m.promptSelection = 0
-			case "down", "j", "right", "l":
-				m.promptSelection = 1
-			case "enter":
-				m.showAuthPrompt = false
-				if m.promptSelection == 0 {
-					// Login first
-					return m, func() tea.Msg { return NavigateToAuth{} }
-				}
-				// Play offline
-				inst := m.selectedForLaunch
-				m.selectedForLaunch = nil
-				return m, func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: true} }
-			case "esc", "q":
-				m.showAuthPrompt = false
-				m.selectedForLaunch = nil
+			case "y", "Y", "enter":
+				inst := m.deleteTarget
+				m.confirmDelete = false
+				m.deleteTarget = nil
+				return m, func() tea.Msg { return DeleteInstance{Instance: inst} }
+			case "n", "N", "esc", "q":
+				m.confirmDelete = false
+				m.deleteTarget = nil
 				return m, nil
 			}
 			return m, nil
@@ -222,15 +222,12 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Launch):
 			if inst := m.SelectedInstance(); inst != nil {
-				// If authenticated, launch online. Else show prompt.
+				// If authenticated, launch online. Else go to auth.
 				if m.accounts != nil && m.accounts.GetActive() != nil {
 					return m, func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: false} }
 				}
-				// Not authenticated - show prompt
-				m.showAuthPrompt = true
-				m.selectedForLaunch = inst
-				m.promptSelection = 0
-				return m, nil
+				// Not authenticated - go to login
+				return m, func() tea.Msg { return NavigateToAuth{} }
 			}
 		case key.Matches(msg, m.keys.PlayOffline):
 			if inst := m.SelectedInstance(); inst != nil {
@@ -246,6 +243,17 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return NavigateToSettings{} }
 		case key.Matches(msg, m.keys.Auth):
 			return m, func() tea.Msg { return NavigateToAuth{} }
+		case key.Matches(msg, m.keys.OpenFolder):
+			if inst := m.SelectedInstance(); inst != nil {
+				openInstanceFolder(inst.Path)
+			}
+		case key.Matches(msg, m.keys.Delete):
+			if inst := m.SelectedInstance(); inst != nil {
+				// Show confirmation prompt
+				m.confirmDelete = true
+				m.deleteTarget = inst
+				return m, nil
+			}
 		}
 	}
 
@@ -263,19 +271,52 @@ func (m *HomeModel) View() string {
 	}
 
 	if len(m.instances) == 0 {
-		empty := lipgloss.NewStyle().
+		// Delightful empty state with project intro
+		titleStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#7C3AED"))
+
+		title := titleStyle.Render("🎮  mctui")
+
+		tagline := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A1A1AA")).
-			Render("No instances yet. Press 'n' to create one.")
+			Italic(true).
+			Render("A terminal-based Minecraft launcher")
 
-		help := lipgloss.NewStyle().
+		divider := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#3F3F46")).
+			Render("────────────────────────────")
+
+		emptyMsg := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FAFAFA")).
+			MarginTop(1).
+			Render("No instances yet. Let's get started!")
+
+		tips := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#626262")).
-			Render("\n\n[n] new instance • [s] settings • [a] accounts • [q] quit")
+			MarginTop(1).
+			Render(`[n]  Create new instance
+[a]  Add Microsoft account
+[s]  Settings  •  [q]  Quit`)
 
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
-			m.list.View(),
-			empty,
-			help,
+		content := lipgloss.JoinVertical(
+			lipgloss.Center,
+			title,
+			tagline,
+			"",
+			divider,
+			"",
+			emptyMsg,
+			tips,
+		)
+
+		// Center the content
+		return lipgloss.Place(
+			m.width,
+			m.height,
+			lipgloss.Center,
+			lipgloss.Center,
+			content,
 		)
 	}
 
@@ -287,16 +328,21 @@ func (m *HomeModel) View() string {
 		}
 	}
 
+	// Build help items based on auth status
+	var helpItems []string
 	if m.accounts != nil && m.accounts.GetActive() == nil {
-		helpText = "[enter] login & play • [n] new • [m] mods • [s] settings • [a] accounts • [o] play offline • [q] quit"
+		helpItems = []string{"[↵] login & play", "[n] new", "[f] folder", "[d] delete", "[m] mods", "[s] settings", "[a] accounts", "[o] play offline", "[q] quit"}
 	} else {
-		helpText = "[enter] launch • [n] new • [m] mods • [s] settings • [a] accounts • [o] play offline • [q] quit"
+		helpItems = []string{"[↵] launch", "[n] new", "[f] folder", "[d] delete", "[m] mods", "[s] settings", "[a] accounts", "[o] play offline", "[q] quit"}
 	}
+
+	// Build help text with smart item-wise wrapping
+	helpText = buildHelpText(helpItems, m.width-4)
 
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#626262")).
 		Render(helpText)
-	
+
 	status := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#7C3AED")).
 		Padding(1, 0).
@@ -309,41 +355,24 @@ func (m *HomeModel) View() string {
 		help,
 	)
 
-	// Show auth prompt overlay if needed
-	if m.showAuthPrompt {
-		// Build prompt box
+	// Show delete confirmation overlay if needed
+	if m.confirmDelete && m.deleteTarget != nil {
 		titleStyle := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#FAFAFA")).
 			Background(lipgloss.Color("#EF4444")).
 			Padding(0, 1)
 
-		title := titleStyle.Render("⚠️  Not Authenticated")
+		title := titleStyle.Render("⚠️  Delete Instance?")
 
-		instName := ""
-		if m.selectedForLaunch != nil {
-			instName = m.selectedForLaunch.Name
-		}
-		subtitle := lipgloss.NewStyle().
+		msg := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A1A1AA")).
-			Render(fmt.Sprintf("To play \"%s\", choose an option:", instName))
+			Render(fmt.Sprintf("Are you sure you want to delete \"%s\"?\nThis cannot be undone.", m.deleteTarget.Name))
 
-		// Options
-		options := []string{"🔐 Log in with Microsoft", "🎮 Play Offline"}
-		var optionsView string
-		for i, opt := range options {
-			cursor := "  "
-			style := lipgloss.NewStyle().Foreground(lipgloss.Color("#A1A1AA"))
-			if i == m.promptSelection {
-				cursor = "▸ "
-				style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED")).Bold(true)
-			}
-			optionsView += style.Render(cursor+opt) + "\n"
-		}
-
-		helpPrompt := lipgloss.NewStyle().
+		options := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#626262")).
-			Render("[↑/↓] Select • [Enter] Confirm • [Esc] Cancel")
+			MarginTop(1).
+			Render("[y] Yes, delete  •  [n] No, cancel")
 
 		promptBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -353,13 +382,10 @@ func (m *HomeModel) View() string {
 				lipgloss.Left,
 				title,
 				"",
-				subtitle,
-				"",
-				optionsView,
-				helpPrompt,
+				msg,
+				options,
 			))
 
-		// Overlay the prompt on top
 		return lipgloss.Place(
 			m.width,
 			m.height,
@@ -370,4 +396,58 @@ func (m *HomeModel) View() string {
 	}
 
 	return baseView
+}
+
+// openInstanceFolder opens the instance folder in the system file manager
+func openInstanceFolder(path string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "linux":
+		cmd = exec.Command("xdg-open", path)
+	case "windows":
+		cmd = exec.Command("explorer", path)
+	default:
+		return
+	}
+	_ = cmd.Start()
+}
+
+// buildHelpText builds help text with item-wise wrapping
+// Items are kept together, lines wrap at item boundaries
+func buildHelpText(items []string, maxWidth int) string {
+	if maxWidth <= 0 {
+		maxWidth = 80
+	}
+
+	separator := " • "
+	var lines []string
+	var currentLine string
+
+	for i, item := range items {
+		testLine := currentLine
+		if testLine != "" {
+			testLine += separator
+		}
+		testLine += item
+
+		// Check if adding this item would exceed width
+		if len(testLine) > maxWidth && currentLine != "" {
+			lines = append(lines, currentLine)
+			currentLine = item
+		} else {
+			if currentLine != "" {
+				currentLine += separator
+			}
+			currentLine += item
+		}
+
+		// Last item
+		if i == len(items)-1 && currentLine != "" {
+			lines = append(lines, currentLine)
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
