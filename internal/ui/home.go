@@ -4,7 +4,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -400,14 +402,16 @@ func (m *HomeModel) View() string {
 
 // openInstanceFolder opens the instance folder in the system file manager
 func openInstanceFolder(path string) {
+	mcDir := filepath.Join(path, ".minecraft")
+	_ = os.MkdirAll(mcDir, 0755)
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", path)
+		cmd = exec.Command("open", mcDir)
 	case "linux":
-		cmd = exec.Command("xdg-open", path)
+		cmd = exec.Command("xdg-open", mcDir)
 	case "windows":
-		cmd = exec.Command("explorer", path)
+		cmd = exec.Command("explorer", mcDir)
 	default:
 		return
 	}

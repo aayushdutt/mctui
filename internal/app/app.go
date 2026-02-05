@@ -166,7 +166,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ui.NavigateToNewInstance:
 		m.state = StateNewInstance
-		m.wizard = ui.NewWizardModel()
+		m.wizard = ui.NewWizardModel(m.instances.List())
 		m.wizard.SetSize(m.width, m.height)
 		return m, tea.Batch(
 			m.wizard.Init(),

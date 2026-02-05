@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/google/uuid"
 	"github.com/quasar/mctui/internal/core"
 )
 
@@ -42,6 +41,9 @@ type WizardModel struct {
 	// Name input
 	nameInput      textinput.Model
 	selectedLoader string
+	nameErr        string
+
+	existingNames map[string]struct{}
 
 	// State
 	loading bool
@@ -67,7 +69,7 @@ func (i versionItem) Description() string {
 func (i versionItem) FilterValue() string { return i.version.ID }
 
 // NewWizardModel creates a new wizard
-func NewWizardModel() *WizardModel {
+func NewWizardModel(instances []*core.Instance) *WizardModel {
 	// Version list
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
@@ -93,12 +95,18 @@ func NewWizardModel() *WizardModel {
 	ti.CharLimit = 64
 	ti.Width = 40
 
+	existingNames := make(map[string]struct{})
+	for _, inst := range instances {
+		existingNames[strings.ToLower(inst.Name)] = struct{}{}
+	}
+
 	return &WizardModel{
-		step:        StepSelectVersion,
-		versionList: vl,
-		loaders:     []string{"Vanilla", "Fabric", "Forge", "Quilt"},
-		nameInput:   ti,
-		loading:     true,
+		step:          StepSelectVersion,
+		versionList:   vl,
+		loaders:       []string{"Vanilla", "Fabric", "Forge", "Quilt"},
+		nameInput:     ti,
+		loading:       true,
+		existingNames: existingNames,
 	}
 }
 
@@ -205,13 +213,19 @@ func (m *WizardModel) handleEnter() (*WizardModel, tea.Cmd) {
 		m.nameInput.SetValue(fmt.Sprintf("%s %s", m.selectedVersion, m.loaders[m.loaderIndex]))
 		m.nameInput.Focus()
 	case StepEnterName:
-		name := m.nameInput.Value()
+		name := strings.TrimSpace(m.nameInput.Value())
 		if name == "" {
 			name = "New Instance"
 		}
 
+		if err := validateInstanceName(name, m.existingNames); err != nil {
+			m.nameErr = err.Error()
+			return m, nil
+		}
+		m.nameErr = ""
+
 		inst := &core.Instance{
-			ID:         uuid.New().String()[:8],
+			ID:         name,
 			Name:       name,
 			Version:    m.selectedVersion,
 			Loader:     m.selectedLoader,
@@ -344,6 +358,13 @@ func (m *WizardModel) viewNameStep() string {
 		BorderForeground(lipgloss.Color("#10B981")).
 		Padding(0, 1)
 
+	errText := ""
+	if m.nameErr != "" {
+		errText = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#EF4444")).
+			Render(m.nameErr)
+	}
+
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#626262")).
 		Render("[Enter] Create • [Esc] Back")
@@ -354,7 +375,32 @@ func (m *WizardModel) viewNameStep() string {
 		summary,
 		"",
 		inputStyle.Render(m.nameInput.View()),
+		errText,
 		"",
 		help,
 	)
+}
+
+func validateInstanceName(name string, existingNames map[string]struct{}) error {
+	if name == "." || name == ".." {
+		return fmt.Errorf("Name cannot be '.' or '..'")
+	}
+	if strings.ContainsAny(name, "<>:\"/\\|?*") {
+		return fmt.Errorf("Name contains invalid characters")
+	}
+	if strings.HasSuffix(name, " ") || strings.HasSuffix(name, ".") {
+		return fmt.Errorf("Name cannot end with a space or period")
+	}
+	for _, r := range name {
+		if r < 32 {
+			return fmt.Errorf("Name contains invalid characters")
+		}
+	}
+
+	key := strings.ToLower(name)
+	if _, ok := existingNames[key]; ok {
+		return fmt.Errorf("Name already exists")
+	}
+
+	return nil
 }
