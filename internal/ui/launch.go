@@ -58,6 +58,11 @@ func (m *LaunchModel) SetSize(width, height int) {
 	m.progress.Width = width - 10
 }
 
+// GetInstance returns the instance being launched
+func (m *LaunchModel) GetInstance() *core.Instance {
+	return m.instance
+}
+
 // Init implements tea.Model
 func (m *LaunchModel) Init() tea.Cmd {
 	return nil
@@ -107,10 +112,22 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.done {
 				return m, func() tea.Msg { return NavigateToHome{} }
 			}
-			// TODO: Cancel launch
+			// Cancel launch if still in progress
+			if !m.done {
+				m.status.Message = "Cancelling..."
+				return m, func() tea.Msg { return CancelLaunch{} }
+			}
 		case "enter":
 			if m.done {
 				return m, func() tea.Msg { return NavigateToHome{} }
+			}
+		case "r":
+			if m.done && m.err != nil {
+				return m, func() tea.Msg { return RetryLaunch{Offline: false} }
+			}
+		case "o":
+			if m.done && m.err != nil {
+				return m, func() tea.Msg { return RetryLaunch{Offline: true} }
 			}
 		}
 	}
@@ -161,11 +178,6 @@ func (m *LaunchModel) updateStepStatus(stepName, status string) {
 
 // View implements tea.Model
 func (m *LaunchModel) View() string {
-	// ... (Header and Info same as replace target or keep?)
-	// I need to be careful with replace range.
-	// The target range is from line 91 (Update switch) to end of View.
-	// I'll rewrite View mostly to be safe.
-
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
@@ -220,7 +232,7 @@ func (m *LaunchModel) View() string {
 		if m.err != nil {
 			footer = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#EF4444")).
-				Render(fmt.Sprintf("\n✗ Failed: %v\n\nPress Enter to go back", m.err))
+				Render(fmt.Sprintf("\n✗ Failed: %v\n\n[r] Retry • [o] Offline Mode • [Enter] Home", m.err))
 		} else {
 			footer = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#10B981")).

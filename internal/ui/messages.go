@@ -72,4 +72,12 @@ type (
 	LaunchComplete struct {
 		Error error
 	}
+
+	// CancelLaunch is sent when user cancels launch
+	CancelLaunch struct{}
+
+	// RetryLaunch is sent when user retries launch (generic or offline)
+	RetryLaunch struct {
+		Offline bool
+	}
 )

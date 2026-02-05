@@ -60,8 +60,8 @@ type Model struct {
 type keyMap struct {
 	ForceQuit key.Binding
 	Quit      key.Binding
-	Help key.Binding
-	Back key.Binding
+	Help      key.Binding
+	Back      key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -103,7 +103,7 @@ func New() *Model {
 		cfg:       cfg,
 		instances: instances,
 		accounts:  accounts,
-		mojang:    api.NewMojangClient(),
+		mojang:    api.NewMojangClient(cfg.DataDir),
 		keys:      defaultKeyMap(),
 	}
 }
@@ -187,7 +187,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		clientID := m.cfg.MSAClientID
 		if clientID == "" {
 			// Fallback or error? For now use a placeholder to allow testing
-			clientID = "YOUR_CLIENT_ID" 
+			clientID = "YOUR_CLIENT_ID"
 		}
 		m.auth = ui.NewAuthModel(m.cfg.DataDir, clientID, m.accounts)
 		m.auth.SetSize(m.width, m.height)
@@ -215,6 +215,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Continue listening for more status updates
 		return m, m.waitForLaunchStatus()
 
+	// Cancel launch - user pressed ESC
+	case ui.CancelLaunch:
+		// Cancel the context to stop ongoing operations
+		if m.launchCtxCancel != nil {
+			m.launchCtxCancel()
+			m.launchCtxCancel = nil
+		}
+		// Clean up
+		m.launchStatusChan = nil
+		// Return to home
+		m.state = StateHome
+		return m, m.loadInstances()
+
 	// Launch complete - clean up
 	case ui.LaunchComplete:
 		var cmd tea.Cmd
@@ -229,6 +242,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.launchCtxCancel = nil
 		}
 		return m, cmd
+
+	// Retry launch
+	case ui.RetryLaunch:
+		if m.launch != nil {
+			inst := m.launch.GetInstance()
+			return m, m.startLaunch(inst, msg.Offline)
+		}
+		return m, nil
 
 	// Global key handlers
 	case tea.KeyMsg:
@@ -262,6 +283,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.auth = newAuth.(*ui.AuthModel)
 			cmds = append(cmds, cmd)
 		}
+	case StateLaunch:
+		if m.launch != nil {
+			newLaunch, cmd := m.launch.Update(msg)
+			m.launch = newLaunch.(*ui.LaunchModel)
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -273,12 +300,7 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 		m.launchCtxCancel = cancel
 
 		// Find version info
-		version, err := m.mojang.FindVersion(ctx, inst.Version)
-		if err != nil {
-			return ui.LaunchComplete{Error: err}
-		}
-
-		details, err := m.mojang.GetVersionDetails(ctx, version)
+		details, err := m.mojang.ResolveVersionDetails(ctx, inst.Version, offline)
 		if err != nil {
 			return ui.LaunchComplete{Error: err}
 		}
@@ -295,7 +317,7 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 		playerName := "Player"
 		uuid := "00000000-0000-0000-0000-000000000000"
 		accessToken := ""
-		
+
 		if !offline {
 			if acc := m.accounts.GetActive(); acc != nil {
 				playerName = acc.Name
@@ -307,14 +329,15 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 		// Start launcher in goroutine
 		go func() {
 			launcher := launch.NewLauncher(&launch.Options{
-				Instance:    inst,
-				VersionInfo: details,
-				Offline:     offline,
-				PlayerName:  playerName,
-				UUID:        uuid,
+				Instance:         inst,
+				VersionInfo:      details,
+				Offline:          offline,
+				PlayerName:       playerName,
+				UUID:             uuid,
 				AccessToken:      accessToken,
 				Config:           m.cfg,
 				UpdateLastPlayed: m.instances.UpdateLastPlayed,
+				UpdateInstance:   m.instances.Update,
 			}, m.launchStatusChan)
 
 			err := launcher.Launch(ctx)

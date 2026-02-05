@@ -21,6 +21,10 @@ type Instance struct {
 	JVMArgs    []string  `json:"jvmArgs"`   // Additional JVM arguments
 	LastPlayed time.Time `json:"lastPlayed"`
 	PlayTime   int64     `json:"playTime"` // Total playtime in seconds
+
+	// Caching fields for offline support
+	IsFullyDownloaded bool      `json:"isFullyDownloaded"` // All files downloaded and ready
+	CachedAt          time.Time `json:"cachedAt"`          // When instance was last fully cached
 }
 
 // InstanceManager handles instance CRUD operations

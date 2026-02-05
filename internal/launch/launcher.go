@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/quasar/mctui/internal/config"
 	"github.com/quasar/mctui/internal/core"
@@ -42,6 +43,7 @@ type Options struct {
 	
 	// Callbacks
 	UpdateLastPlayed func(id string) error
+	UpdateInstance   func(inst *core.Instance) error
 }
 
 // LogLine represents a line of log output
@@ -96,6 +98,13 @@ func (l *Launcher) Launch(ctx context.Context) error {
 		}
 	}
 
+	// Mark instance as fully downloaded for future offline launches
+	if l.opts.Instance != nil && l.opts.UpdateInstance != nil {
+		l.opts.Instance.IsFullyDownloaded = true
+		l.opts.Instance.CachedAt = time.Now()
+		_ = l.opts.UpdateInstance(l.opts.Instance)
+	}
+
 	l.sendStatus(Status{
 		Step:       "Complete",
 		Progress:   1.0,
@@ -116,9 +125,17 @@ func (l *Launcher) sendStatus(s Status) {
 }
 
 func (l *Launcher) checkJava(ctx context.Context) error {
-	// If Java path is specified, use it
+	// 1. Check explicit override or instance setting
 	if l.opts.JavaPath != "" {
 		return nil
+	}
+	
+	if l.opts.Instance != nil && l.opts.Instance.JavaPath != "" {
+		if _, err := os.Stat(l.opts.Instance.JavaPath); err == nil {
+			l.opts.JavaPath = l.opts.Instance.JavaPath
+			l.sendStatus(Status{Step: "Checking Java", Message: "Using instance Java"})
+			return nil
+		}
 	}
 
 	// Determine required Java version
@@ -127,71 +144,67 @@ func (l *Launcher) checkJava(ctx context.Context) error {
 		requiredVersion = l.opts.VersionInfo.JavaVersion.MajorVersion
 	}
 
-	// Find suitable Java
-	detector := java.NewDetector()
-
-	// Add our managed java directory to detector
-	configDir, _ := os.UserConfigDir() // Ignore error, fall back to default
+	// 2. Check managed java directory
+	configDir, _ := os.UserConfigDir()
 	if configDir != "" {
 		managedJavaDir := filepath.Join(configDir, "mctui", "java", fmt.Sprintf("%d", requiredVersion))
-		// We can't easily add to detector without changing its API,
-		// but we can check this path specifically after FindBest fails,
-		// OR we can rely on the user having run this once.
-		// For now, let's just check if we have it downloaded already.
 		if exe, err := java.NewDownloader().FindJavaExecutable(managedJavaDir); err == nil {
-			l.opts.JavaPath = exe
-			l.sendStatus(Status{
-				Step:    "Checking Java",
-				Message: fmt.Sprintf("Using managed Java %d", requiredVersion),
-			})
+			l.commitJavaPath(exe)
+			l.sendStatus(Status{Step: "Checking Java", Message: fmt.Sprintf("Using managed Java %d", requiredVersion)})
 			return nil
 		}
 	}
 
-	inst := detector.FindBest(requiredVersion)
-	if inst != nil {
-		l.opts.JavaPath = inst.Path
-		l.sendStatus(Status{
-			Step:    "Checking Java",
-			Message: fmt.Sprintf("Using %s", java.FormatInstallation(inst)),
-		})
+	// 3. System-wide detection
+	if inst := java.NewDetector().FindBest(requiredVersion); inst != nil {
+		l.commitJavaPath(inst.Path)
+		l.sendStatus(Status{Step: "Checking Java", Message: fmt.Sprintf("Using %s", java.FormatInstallation(inst))})
 		return nil
 	}
 
-	// Not found, try to download
-	l.sendStatus(Status{
-		Step:    "Downloading Java",
-		Message: fmt.Sprintf("Java %d not found. Downloading via Adoptium...", requiredVersion),
-	})
+	// 4. Download Java
+	l.sendStatus(Status{Step: "Downloading Java", Message: fmt.Sprintf("Downloading Java %d...", requiredVersion)})
 
 	if configDir == "" {
 		return fmt.Errorf("could not determine config directory for java download")
 	}
 
 	javaBaseDir := filepath.Join(configDir, "mctui", "java")
-	downloader := java.NewDownloader()
-
-	exePath, err := downloader.DownloadRuntime(ctx, requiredVersion, javaBaseDir, func(msg string) {
-		l.sendStatus(Status{
-			Step:    "Downloading Java",
-			Message: msg,
-		})
+	exePath, err := java.NewDownloader().DownloadRuntime(ctx, requiredVersion, javaBaseDir, func(msg string) {
+		l.sendStatus(Status{Step: "Downloading Java", Message: msg})
 	})
 	if err != nil {
 		return fmt.Errorf("failed to download java %d: %w", requiredVersion, err)
 	}
 
-	l.opts.JavaPath = exePath
-	l.sendStatus(Status{
-		Step:    "Checking Java",
-		Message: fmt.Sprintf("Downloaded and using Java %d", requiredVersion),
-	})
+	l.commitJavaPath(exePath)
+	l.sendStatus(Status{Step: "Checking Java", Message: fmt.Sprintf("Downloaded Java %d", requiredVersion)})
 
 	return nil
 }
 
+func (l *Launcher) commitJavaPath(path string) {
+	l.opts.JavaPath = path
+	if l.opts.Instance != nil && l.opts.UpdateInstance != nil {
+		l.opts.Instance.JavaPath = path
+		_ = l.opts.UpdateInstance(l.opts.Instance)
+	}
+}
+
 func (l *Launcher) downloadLibraries(ctx context.Context) error {
+	// Check for cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	if l.opts.VersionInfo == nil {
+		return nil
+	}
+
+	// Optimization: Skip if already fully downloaded
+	if l.opts.Instance != nil && l.opts.Instance.IsFullyDownloaded {
 		return nil
 	}
 
@@ -231,43 +244,23 @@ func (l *Launcher) downloadLibraries(ctx context.Context) error {
 		})
 	}
 
-	if len(items) == 0 {
-		return nil
-	}
-
-	mgr := download.NewManager(4)
-	progressChan := make(chan download.Progress, 10)
-
-	// Forward progress
-	go func() {
-		for p := range progressChan {
-			percent := 0.0
-			if p.TotalBytes > 0 {
-				percent = float64(p.DownloadedBytes) / float64(p.TotalBytes)
-			}
-			l.sendStatus(Status{
-				Step:     "Downloading libraries",
-				Progress: percent,
-				Message:  fmt.Sprintf("Downloading %s (%s)", p.CurrentItem, download.FormatSpeed(p.Speed)),
-			})
-		}
-	}()
-
-	result, err := mgr.Download(ctx, items, progressChan)
-	close(progressChan)
-
-	if err != nil {
-		return err
-	}
-	if result.Failed > 0 {
-		return fmt.Errorf("%d libraries failed to download", result.Failed)
-	}
-
-	return nil
+	return l.performDownload(ctx, "Downloading libraries", items, 4)
 }
 
 func (l *Launcher) downloadAssets(ctx context.Context) error {
+	// Check for cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	if l.opts.VersionInfo == nil {
+		return nil
+	}
+
+	// Optimization: Skip if already fully downloaded
+	if l.opts.Instance != nil && l.opts.Instance.IsFullyDownloaded {
 		return nil
 	}
 
@@ -318,38 +311,7 @@ func (l *Launcher) downloadAssets(ctx context.Context) error {
 		})
 	}
 
-	if len(items) == 0 {
-		return nil
-	}
-
-	mgr := download.NewManager(8) // More workers for small files
-	progressChan := make(chan download.Progress, 10)
-
-	go func() {
-		for p := range progressChan {
-			percent := 0.0
-			if p.TotalItems > 0 {
-				percent = float64(p.CompletedItems) / float64(p.TotalItems)
-			}
-			l.sendStatus(Status{
-				Step:     "Downloading assets",
-				Progress: percent,
-				Message:  fmt.Sprintf("Assets %d/%d (%s)", p.CompletedItems, p.TotalItems, download.FormatSpeed(p.Speed)),
-			})
-		}
-	}()
-
-	result, err := mgr.Download(ctx, items, progressChan)
-	close(progressChan)
-
-	if err != nil {
-		return err
-	}
-	if result.Failed > 0 {
-		return fmt.Errorf("%d assets failed to download", result.Failed)
-	}
-
-	return nil
+	return l.performDownload(ctx, "Downloading assets", items, 8)
 }
 
 func (l *Launcher) prepareGame(ctx context.Context) error {
@@ -418,31 +380,16 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 }
 
 func (l *Launcher) streamLog(r io.Reader, apiType string) {
-	// Import bufio and io at top of file, but for now assuming they exist or will add them.
-	// Actually I need to add imports. I'll do that in a separate step or assume implicit if I used them.
-	// Wait, I haven't added bufio import.
-	// I'll use a simple scanner.
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		text := scanner.Text()
 		
-		// Filter "important" logs or just send them all?
-		// User said "only show important logs".
-		// Simple heuristic: Lines with [FATAL], [ERROR], or [WARN].
-		// Or maybe lines starting with "[...]" are structured log lines.
-		// For now, let's pass everything and let UI filter, OR filter here to save channel bandwidth.
-		// Let's filter here.
-		
-		isImportant := strings.Contains(text, "[FATAL]") || 
+		isImportant := apiType == "stderr" ||
+			strings.Contains(text, "[FATAL]") || 
 			strings.Contains(text, "[ERROR]") || 
 			strings.Contains(text, "[WARN]") ||
 			strings.Contains(text, "Exception") || 
 			strings.Contains(text, "Error")
-		
-		// Also always show if it's stderr
-		if apiType == "stderr" {
-			isImportant = true
-		}
 
 		if isImportant {
 			l.sendStatus(Status{
@@ -624,4 +571,41 @@ func (l *Launcher) libraryApplies(lib *core.Library) bool {
 	}
 
 	return allowed
+}
+func (l *Launcher) performDownload(ctx context.Context, stepName string, items []download.Item, workerCount int) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	mgr := download.NewManager(workerCount)
+	progressChan := make(chan download.Progress, 10)
+
+	// Forward progress
+	go func() {
+		for p := range progressChan {
+			percent := 0.0
+			if p.TotalBytes > 0 {
+				percent = float64(p.DownloadedBytes) / float64(p.TotalBytes)
+			} else if p.TotalItems > 0 {
+				percent = float64(p.CompletedItems) / float64(p.TotalItems)
+			}
+			l.sendStatus(Status{
+				Step:     stepName,
+				Progress: percent,
+				Message:  fmt.Sprintf("Downloading %s (%s)", p.CurrentItem, download.FormatSpeed(p.Speed)),
+			})
+		}
+	}()
+
+	result, err := mgr.Download(ctx, items, progressChan)
+	close(progressChan)
+
+	if err != nil {
+		return err
+	}
+	if result.Failed > 0 {
+		return fmt.Errorf("%d items failed to download", result.Failed)
+	}
+
+	return nil
 }
