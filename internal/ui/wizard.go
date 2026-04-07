@@ -22,6 +22,13 @@ const (
 	StepEnterName
 )
 
+// loaderChoice is one row in the mod loader step (extensible for future loaders).
+type loaderChoice struct {
+	Label      string
+	ID         string // persisted to Instance.Loader when not ComingSoon
+	ComingSoon bool
+}
+
 // WizardModel is the new instance wizard
 type WizardModel struct {
 	step   WizardStep
@@ -34,14 +41,16 @@ type WizardModel struct {
 	showSnaps   bool
 
 	// Loader selection
-	selectedVersion string
-	loaderIndex     int
-	loaders         []string
+	selectedVersion     string
+	loaderIndex         int
+	loaderChoices       []loaderChoice
+	selectedLoader      string // instance loader id: vanilla, fabric
+	selectedLoaderLabel string // display label for summary
+	loaderHint          string // e.g. coming-soon message
 
 	// Name input
-	nameInput      textinput.Model
-	selectedLoader string
-	nameErr        string
+	nameInput textinput.Model
+	nameErr   string
 
 	existingNames map[string]struct{}
 
@@ -101,9 +110,14 @@ func NewWizardModel(instances []*core.Instance) *WizardModel {
 	}
 
 	return &WizardModel{
-		step:          StepSelectVersion,
-		versionList:   vl,
-		loaders:       []string{"Vanilla", "Fabric", "Forge", "Quilt"},
+		step:        StepSelectVersion,
+		versionList: vl,
+		loaderChoices: []loaderChoice{
+			{Label: "Vanilla", ID: "vanilla"},
+			{Label: "Fabric", ID: "fabric"},
+			{Label: "Forge (coming soon)", ID: "", ComingSoon: true},
+			{Label: "Quilt (coming soon)", ID: "", ComingSoon: true},
+		},
 		nameInput:     ti,
 		loading:       true,
 		existingNames: existingNames,
@@ -175,10 +189,12 @@ func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "up", "k":
 			if m.step == StepSelectLoader && m.loaderIndex > 0 {
+				m.loaderHint = ""
 				m.loaderIndex--
 			}
 		case "down", "j":
-			if m.step == StepSelectLoader && m.loaderIndex < len(m.loaders)-1 {
+			if m.step == StepSelectLoader && m.loaderIndex < len(m.loaderChoices)-1 {
+				m.loaderHint = ""
 				m.loaderIndex++
 			}
 		}
@@ -208,9 +224,16 @@ func (m *WizardModel) handleEnter() (*WizardModel, tea.Cmd) {
 			m.step = StepSelectLoader
 		}
 	case StepSelectLoader:
-		m.selectedLoader = strings.ToLower(m.loaders[m.loaderIndex])
+		ch := m.loaderChoices[m.loaderIndex]
+		if ch.ComingSoon {
+			m.loaderHint = "That loader isn't available yet — choose Vanilla or Fabric."
+			return m, nil
+		}
+		m.selectedLoader = ch.ID
+		m.selectedLoaderLabel = ch.Label
+		m.loaderHint = ""
 		m.step = StepEnterName
-		m.nameInput.SetValue(fmt.Sprintf("%s %s", m.selectedVersion, m.loaders[m.loaderIndex]))
+		m.nameInput.SetValue(fmt.Sprintf("%s %s", m.selectedVersion, ch.Label))
 		m.nameInput.Focus()
 	case StepEnterName:
 		name := strings.TrimSpace(m.nameInput.Value())
@@ -315,18 +338,26 @@ func (m *WizardModel) viewLoaderStep() string {
 		Render(fmt.Sprintf("Select Mod Loader for %s", m.selectedVersion))
 
 	var loaderList strings.Builder
-	for i, loader := range m.loaders {
+	for i, ch := range m.loaderChoices {
 		style := lipgloss.NewStyle().Padding(0, 2)
+		label := ch.Label
+		prefix := "  "
 		if i == m.loaderIndex {
-			style = style.
-				Bold(true).
-				Foreground(lipgloss.Color("#10B981")).
-				SetString("▸ " + loader)
-		} else {
-			style = style.SetString("  " + loader)
+			prefix = "▸ "
+			style = style.Bold(true).Foreground(lipgloss.Color("#10B981"))
+		} else if ch.ComingSoon {
+			style = style.Foreground(lipgloss.Color("#626262"))
 		}
+		style = style.SetString(prefix + label)
 		loaderList.WriteString(style.Render())
 		loaderList.WriteString("\n")
+	}
+
+	hintBlock := ""
+	if m.loaderHint != "" {
+		hintBlock = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FBBF24")).
+			Render(m.loaderHint) + "\n\n"
 	}
 
 	help := lipgloss.NewStyle().
@@ -339,7 +370,7 @@ func (m *WizardModel) viewLoaderStep() string {
 		"",
 		loaderList.String(),
 		"",
-		help,
+		hintBlock+help,
 	)
 }
 
@@ -351,7 +382,7 @@ func (m *WizardModel) viewNameStep() string {
 
 	summary := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#A1A1AA")).
-		Render(fmt.Sprintf("Minecraft %s • %s", m.selectedVersion, m.loaders[m.loaderIndex]))
+		Render(fmt.Sprintf("Minecraft %s • %s", m.selectedVersion, m.selectedLoaderLabel))
 
 	inputStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

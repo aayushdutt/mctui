@@ -200,3 +200,8 @@ func (c *MojangClient) saveVersionDetails(versionID string, details *core.Versio
 func (c *MojangClient) versionDetailsPath(versionID string) string {
 	return filepath.Join(c.versionCacheRoot, fmt.Sprintf("%s.json", versionID))
 }
+
+// VersionCacheDir returns the directory used for cached version JSON files.
+func (c *MojangClient) VersionCacheDir() string {
+	return c.versionCacheRoot
+}

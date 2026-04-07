@@ -14,6 +14,7 @@ import (
 	"github.com/quasar/mctui/internal/config"
 	"github.com/quasar/mctui/internal/core"
 	"github.com/quasar/mctui/internal/launch"
+	"github.com/quasar/mctui/internal/loader"
 	"github.com/quasar/mctui/internal/ui"
 )
 
@@ -412,10 +413,13 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.launchCtxCancel = cancel
 
-		// Find version info
-		details, err := m.mojang.ResolveVersionDetails(ctx, inst.Version, offline)
+		// Find version info (vanilla or merged loader profile)
+		details, err := loader.ResolveVersionDetails(ctx, m.mojang, inst, offline)
 		if err != nil {
 			return ui.LaunchComplete{Error: err}
+		}
+		if loader.ParseKind(inst.Loader) == loader.KindFabric {
+			_ = m.instances.Update(inst)
 		}
 
 		// Validate version info

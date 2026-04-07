@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,21 @@ type Instance struct {
 	// Caching fields for offline support
 	IsFullyDownloaded bool      `json:"isFullyDownloaded"` // All files downloaded and ready
 	CachedAt          time.Time `json:"cachedAt"`          // When instance was last fully cached
+	// DownloadCacheKey matches LaunchDownloadKey when isFullyDownloaded was set; used to invalidate after loader/MC changes.
+	DownloadCacheKey string `json:"downloadCacheKey,omitempty"`
+}
+
+// LaunchDownloadKey fingerprints game version, loader, and loader version for download skip logic.
+// Empty LoaderVer is normalized (e.g. vanilla); empty Loader is treated as vanilla.
+func LaunchDownloadKey(inst *Instance) string {
+	if inst == nil {
+		return ""
+	}
+	loader := strings.ToLower(strings.TrimSpace(inst.Loader))
+	if loader == "" {
+		loader = "vanilla"
+	}
+	return inst.Version + "|" + loader + "|" + strings.TrimSpace(inst.LoaderVer)
 }
 
 // InstanceManager handles instance CRUD operations

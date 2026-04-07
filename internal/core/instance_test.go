@@ -7,6 +7,18 @@ import (
 	"time"
 )
 
+func TestLaunchDownloadKey(t *testing.T) {
+	if g, w := LaunchDownloadKey(&Instance{Version: "1.21.4", Loader: "vanilla"}), "1.21.4|vanilla|"; g != w {
+		t.Fatalf("got %q want %q", g, w)
+	}
+	if g, w := LaunchDownloadKey(&Instance{Version: "1.21.4", Loader: "", LoaderVer: ""}), "1.21.4|vanilla|"; g != w {
+		t.Fatalf("got %q want %q", g, w)
+	}
+	if g, w := LaunchDownloadKey(&Instance{Version: "1.21.4", Loader: "fabric", LoaderVer: "0.16.9"}), "1.21.4|fabric|0.16.9"; g != w {
+		t.Fatalf("got %q want %q", g, w)
+	}
+}
+
 func TestInstanceManager_CreateAndLoad(t *testing.T) {
 	// Setup temp directory
 	tmpDir := t.TempDir()

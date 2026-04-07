@@ -70,6 +70,9 @@ func NewLauncher(opts *Options, statusChan chan<- Status) *Launcher {
 
 // Launch executes the full launch pipeline
 func (l *Launcher) Launch(ctx context.Context) error {
+	// Invalidate download skip if instance version/loader changed (before any download step).
+	l.invalidateStaleDownloadCache()
+
 	steps := []struct {
 		name string
 		fn   func(context.Context) error
@@ -100,9 +103,11 @@ func (l *Launcher) Launch(ctx context.Context) error {
 
 	// Mark instance as fully downloaded for future offline launches
 	if l.opts.Instance != nil && l.opts.UpdateInstance != nil {
-		l.opts.Instance.IsFullyDownloaded = true
-		l.opts.Instance.CachedAt = time.Now()
-		_ = l.opts.UpdateInstance(l.opts.Instance)
+		inst := l.opts.Instance
+		inst.IsFullyDownloaded = true
+		inst.CachedAt = time.Now()
+		inst.DownloadCacheKey = core.LaunchDownloadKey(inst)
+		_ = l.opts.UpdateInstance(inst)
 	}
 
 	l.sendStatus(Status{
@@ -245,6 +250,26 @@ func (l *Launcher) downloadLibraries(ctx context.Context) error {
 	}
 
 	return l.performDownload(ctx, "Downloading libraries", items, 4)
+}
+
+// invalidateStaleDownloadCache clears IsFullyDownloaded when version/loader/LoaderVer changed
+// so switching e.g. vanilla→Fabric cannot skip downloading new libraries.
+func (l *Launcher) invalidateStaleDownloadCache() {
+	inst := l.opts.Instance
+	if inst == nil || l.opts.UpdateInstance == nil {
+		return
+	}
+	if !inst.IsFullyDownloaded {
+		return
+	}
+	want := core.LaunchDownloadKey(inst)
+	if inst.DownloadCacheKey == want {
+		return
+	}
+	inst.IsFullyDownloaded = false
+	inst.CachedAt = time.Time{}
+	inst.DownloadCacheKey = ""
+	_ = l.opts.UpdateInstance(inst)
 }
 
 func (l *Launcher) downloadAssets(ctx context.Context) error {
