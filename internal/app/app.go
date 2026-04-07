@@ -260,7 +260,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.NavigateToLaunch:
 		if msg.Offline {
 			m.state = StateLaunch
-			m.launch = ui.NewLaunchModel(msg.Instance)
+			m.launch = ui.NewLaunchModel(msg.Instance, m.cfg)
 			m.launch.SetSize(m.width, m.height)
 			return m, tea.Batch(
 				m.launch.Init(),
@@ -271,7 +271,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ui.ProceedWithLaunch:
 		m.state = StateLaunch
-		m.launch = ui.NewLaunchModel(msg.Instance)
+		m.launch = ui.NewLaunchModel(msg.Instance, m.cfg)
 		m.launch.SetSize(m.width, m.height)
 		return m, tea.Batch(
 			m.launch.Init(),

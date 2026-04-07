@@ -40,7 +40,7 @@ type Options struct {
 	UUID        string // Player UUID
 	AccessToken string // Auth Token
 	Config      *config.Config
-	
+
 	// Callbacks
 	UpdateLastPlayed func(id string) error
 	UpdateInstance   func(inst *core.Instance) error
@@ -129,7 +129,7 @@ func (l *Launcher) checkJava(ctx context.Context) error {
 	if l.opts.JavaPath != "" {
 		return nil
 	}
-	
+
 	if l.opts.Instance != nil && l.opts.Instance.JavaPath != "" {
 		if _, err := os.Stat(l.opts.Instance.JavaPath); err == nil {
 			l.opts.JavaPath = l.opts.Instance.JavaPath
@@ -343,7 +343,7 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 
 	cmd := exec.CommandContext(ctx, l.opts.JavaPath, args...)
 	cmd.Dir = gameDir
-	
+
 	// Capture output
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
@@ -368,12 +368,12 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 
 	// Wait for game to finish
 	err := cmd.Wait()
-	
+
 	// Send final message
 	if err != nil {
 		return fmt.Errorf("game exited with error: %w", err)
 	}
-	
+
 	// We return nil here so the pipeline considers this step "done".
 	// The launcher will then send the "Complete" status.
 	return nil
@@ -383,23 +383,20 @@ func (l *Launcher) streamLog(r io.Reader, apiType string) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		text := scanner.Text()
-		
-		isImportant := apiType == "stderr" ||
-			strings.Contains(text, "[FATAL]") || 
-			strings.Contains(text, "[ERROR]") || 
-			strings.Contains(text, "[WARN]") ||
-			strings.Contains(text, "Exception") || 
-			strings.Contains(text, "Error")
-
-		if isImportant {
-			l.sendStatus(Status{
-				Step: "Launching",
-				LogLine: &LogLine{
-					Text: text,
-					Type: apiType,
-				},
-			})
+		verb := LogVerbosityError
+		if l.cfg != nil {
+			verb = ParseLaunchLogVerbosity(l.cfg.LaunchLogVerbosity)
 		}
+		if !shouldEmitGameLogLine(verb, text) {
+			continue
+		}
+		l.sendStatus(Status{
+			Step: "Playing",
+			LogLine: &LogLine{
+				Text: text,
+				Type: apiType,
+			},
+		})
 	}
 }
 
