@@ -5,12 +5,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
 )
+
+// ErrMinecraftSessionInvalid means the Minecraft access token was rejected
+// (expired, revoked, or otherwise invalid).
+var ErrMinecraftSessionInvalid = errors.New("minecraft session invalid or expired")
 
 var (
 	msaDeviceCodeURL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
@@ -144,7 +149,7 @@ func (c *AuthClient) PollForToken(ctx context.Context, dc *DeviceCodeResponse) (
 		if err != nil {
 			continue // Network error, retry
 		}
-		
+
 		var result struct {
 			MSATokenResponse
 			Error string `json:"error"`
@@ -259,7 +264,13 @@ func (c *AuthClient) FetchProfile(ctx context.Context, accessToken string) (*Min
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		return nil, fmt.Errorf("%w", ErrMinecraftSessionInvalid)
+	case http.StatusOK:
+		// ok
+	default:
+		// 403 etc. may mean “no game license” or other policy — not always “re-run OAuth”.
 		return nil, fmt.Errorf("fetch profile failed: %d", resp.StatusCode)
 	}
 
@@ -268,4 +279,12 @@ func (c *AuthClient) FetchProfile(ctx context.Context, accessToken string) (*Min
 		return nil, err
 	}
 	return &result, nil
+}
+
+// ValidateMinecraftToken checks that accessToken is accepted by Minecraft Services
+// (same contract as the game launch). Use errors.Is(err, ErrMinecraftSessionInvalid)
+// to detect a token that needs re-login.
+func (c *AuthClient) ValidateMinecraftToken(ctx context.Context, accessToken string) error {
+	_, err := c.FetchProfile(ctx, accessToken)
+	return err
 }

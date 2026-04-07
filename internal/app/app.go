@@ -4,7 +4,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -113,6 +115,88 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.home.Init(),
 		m.loadInstances(),
+		tea.Sequence(
+			func() tea.Msg { return ui.ActiveSessionCheckStarted{} },
+			m.checkActiveSessionCmd(),
+		),
+	)
+}
+
+func (m *Model) effectiveMSAClientID() string {
+	if m.cfg.MSAClientID != "" {
+		return m.cfg.MSAClientID
+	}
+	return config.DefaultMSAClientID
+}
+
+func (m *Model) prepareAuthScreen() tea.Cmd {
+	m.state = StateAuth
+	m.auth = ui.NewAuthModel(m.cfg.DataDir, m.effectiveMSAClientID(), m.accounts)
+	m.auth.SetSize(m.width, m.height)
+	return m.auth.Init()
+}
+
+func (m *Model) validateMSAccessToken(ctx context.Context, acc *core.Account) error {
+	return api.NewAuthClient(m.effectiveMSAClientID()).ValidateMinecraftToken(ctx, acc.AccessToken)
+}
+
+func (m *Model) checkActiveSessionCmd() tea.Cmd {
+	return func() tea.Msg {
+		acc := m.accounts.GetActive()
+		if acc == nil || acc.Type != core.AccountTypeMSA {
+			return ui.ActiveSessionCheckResult{Status: ui.ActiveSessionNotApplicable}
+		}
+		if acc.IsExpired() {
+			return ui.ActiveSessionCheckResult{Status: ui.ActiveSessionInvalid}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		err := m.validateMSAccessToken(ctx, acc)
+		if errors.Is(err, api.ErrMinecraftSessionInvalid) {
+			return ui.ActiveSessionCheckResult{Status: ui.ActiveSessionInvalid}
+		}
+		if err != nil {
+			return ui.ActiveSessionCheckResult{Status: ui.ActiveSessionUncertain, Err: err}
+		}
+		return ui.ActiveSessionCheckResult{Status: ui.ActiveSessionOK}
+	}
+}
+
+func (m *Model) gateOnlineLaunch(inst *core.Instance) tea.Cmd {
+	return func() tea.Msg {
+		acc := m.accounts.GetActive()
+		if acc == nil {
+			return ui.NavigateToAuth{}
+		}
+		switch acc.Type {
+		case core.AccountTypeOffline:
+			// No Minecraft Services token; online launch would run with an empty accessToken.
+			return ui.NavigateToLaunch{Instance: inst, Offline: true}
+		case core.AccountTypeMSA:
+			// continue below
+		default:
+			return ui.NavigateToAuth{}
+		}
+		if acc.IsExpired() {
+			return ui.SessionGateFailed{NeedAuth: true}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		err := m.validateMSAccessToken(ctx, acc)
+		if errors.Is(err, api.ErrMinecraftSessionInvalid) {
+			return ui.SessionGateFailed{NeedAuth: true}
+		}
+		if err != nil {
+			return ui.SessionGateFailed{Err: err}
+		}
+		return ui.ProceedWithLaunch{Instance: inst}
+	}
+}
+
+func (m *Model) sessionRecheckCmd() tea.Cmd {
+	return tea.Sequence(
+		func() tea.Msg { return ui.ActiveSessionCheckStarted{} },
+		m.checkActiveSessionCmd(),
 	)
 }
 
@@ -162,7 +246,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Navigation messages
 	case ui.NavigateToHome:
 		m.state = StateHome
-		return m, m.loadInstances()
+		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 
 	case ui.NavigateToNewInstance:
 		m.state = StateNewInstance
@@ -174,24 +258,50 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case ui.NavigateToLaunch:
+		if msg.Offline {
+			m.state = StateLaunch
+			m.launch = ui.NewLaunchModel(msg.Instance)
+			m.launch.SetSize(m.width, m.height)
+			return m, tea.Batch(
+				m.launch.Init(),
+				m.startLaunch(msg.Instance, true),
+			)
+		}
+		return m, m.gateOnlineLaunch(msg.Instance)
+
+	case ui.ProceedWithLaunch:
 		m.state = StateLaunch
 		m.launch = ui.NewLaunchModel(msg.Instance)
 		m.launch.SetSize(m.width, m.height)
 		return m, tea.Batch(
 			m.launch.Init(),
-			m.startLaunch(msg.Instance, msg.Offline),
+			m.startLaunch(msg.Instance, false),
 		)
 
-	case ui.NavigateToAuth:
-		m.state = StateAuth
-		clientID := m.cfg.MSAClientID
-		if clientID == "" {
-			// Fallback or error? For now use a placeholder to allow testing
-			clientID = "YOUR_CLIENT_ID"
+	case ui.SessionGateFailed:
+		if msg.NeedAuth {
+			return m, m.prepareAuthScreen()
 		}
-		m.auth = ui.NewAuthModel(m.cfg.DataDir, clientID, m.accounts)
-		m.auth.SetSize(m.width, m.height)
-		return m, m.auth.Init()
+		m.state = StateHome
+		if m.launchCtxCancel != nil {
+			m.launchCtxCancel()
+			m.launchCtxCancel = nil
+		}
+		m.launch = nil
+		m.launchStatusChan = nil
+		m.home.SetTransientBanner("Could not verify Microsoft session. Check your connection or press [o] for offline.")
+		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+
+	case ui.ActiveSessionCheckStarted:
+		m.home.SetSessionCheckStarted()
+		return m, nil
+
+	case ui.ActiveSessionCheckResult:
+		m.home.ApplyActiveSessionCheckResult(msg)
+		return m, nil
+
+	case ui.NavigateToAuth:
+		return m, m.prepareAuthScreen()
 
 	case ui.DeleteInstance:
 		if msg.Instance != nil {
@@ -205,7 +315,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state = StateHome
-		return m, m.loadInstances()
+		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 
 	// Launch status updates - continue subscription
 	case ui.LaunchStatusUpdate:
@@ -226,7 +336,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.launchStatusChan = nil
 		// Return to home
 		m.state = StateHome
-		return m, m.loadInstances()
+		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 
 	// Launch complete - clean up
 	case ui.LaunchComplete:
@@ -247,7 +357,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.RetryLaunch:
 		if m.launch != nil {
 			inst := m.launch.GetInstance()
-			return m, m.startLaunch(inst, msg.Offline)
+			if msg.Offline {
+				return m, m.startLaunch(inst, true)
+			}
+			return m, m.gateOnlineLaunch(inst)
 		}
 		return m, nil
 

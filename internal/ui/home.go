@@ -29,10 +29,25 @@ type HomeModel struct {
 	loading   bool
 	accounts  *core.AccountManager
 
+	// Microsoft session hint from background check (MSA accounts only)
+	sessionRemote sessionRemoteLine
+
+	// transientBanner is a one-line notice (e.g. session gate network error)
+	transientBanner string
+
 	// Delete confirmation state
 	confirmDelete bool
 	deleteTarget  *core.Instance
 }
+
+type sessionRemoteLine int
+
+const (
+	sessionRemoteUnset sessionRemoteLine = iota
+	sessionRemoteChecking
+	sessionRemoteInvalid
+	sessionRemoteUncertain
+)
 
 type homeKeyMap struct {
 	Launch      key.Binding
@@ -169,6 +184,52 @@ func (m *HomeModel) SetAccountManager(am *core.AccountManager) {
 	m.accounts = am
 }
 
+// SetSessionCheckStarted marks the UI as verifying the active Microsoft session.
+func (m *HomeModel) SetSessionCheckStarted() {
+	if acc := m.activeMSAAccount(); acc != nil {
+		m.sessionRemote = sessionRemoteChecking
+	}
+}
+
+// ApplyActiveSessionCheckResult updates session status from a background check.
+func (m *HomeModel) ApplyActiveSessionCheckResult(res ActiveSessionCheckResult) {
+	switch res.Status {
+	case ActiveSessionNotApplicable:
+		m.sessionRemote = sessionRemoteUnset
+	case ActiveSessionOK:
+		m.sessionRemote = sessionRemoteUnset
+	case ActiveSessionInvalid:
+		m.sessionRemote = sessionRemoteInvalid
+	case ActiveSessionUncertain:
+		m.sessionRemote = sessionRemoteUncertain
+	}
+}
+
+// SetTransientBanner shows a short notice above the footer; cleared on the next key press.
+func (m *HomeModel) SetTransientBanner(s string) {
+	m.transientBanner = s
+	m.applyListSize()
+}
+
+func (m *HomeModel) activeMSAAccount() *core.Account {
+	if m.accounts == nil {
+		return nil
+	}
+	acc := m.accounts.GetActive()
+	if acc == nil || acc.Type != core.AccountTypeMSA {
+		return nil
+	}
+	return acc
+}
+
+func (m *HomeModel) applyListSize() {
+	footerLines := 6
+	if m.transientBanner != "" {
+		footerLines++
+	}
+	m.list.SetSize(m.width, m.height-footerLines)
+}
+
 // SelectedInstance returns the currently selected instance
 func (m *HomeModel) SelectedInstance() *core.Instance {
 	if item, ok := m.list.SelectedItem().(instanceItem); ok {
@@ -181,8 +242,7 @@ func (m *HomeModel) SelectedInstance() *core.Instance {
 func (m *HomeModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	// Reserve space for: status (3 lines with padding) + help text (up to 2 lines)
-	m.list.SetSize(width, height-6)
+	m.applyListSize()
 }
 
 // Init implements tea.Model
@@ -200,6 +260,11 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.transientBanner != "" {
+			m.transientBanner = ""
+			m.applyListSize()
+		}
+
 		// Handle delete confirmation mode
 		if m.confirmDelete {
 			switch msg.String() {
@@ -323,16 +388,46 @@ func (m *HomeModel) View() string {
 	}
 
 	var helpText string
-	authStatus := "Not logged in"
+
+	// Auth line: avoid "signed in" when Microsoft session is invalid or unverified.
+	authStatus := "Not signed in"
+	authWarn := false
 	if m.accounts != nil {
 		if acc := m.accounts.GetActive(); acc != nil {
-			authStatus = fmt.Sprintf("Logged in as %s", acc.Name)
+			switch acc.Type {
+			case core.AccountTypeMSA:
+				switch m.sessionRemote {
+				case sessionRemoteInvalid:
+					authStatus = fmt.Sprintf("%s — Microsoft sign-in required [a]", acc.Name)
+					authWarn = true
+				case sessionRemoteUncertain:
+					authStatus = fmt.Sprintf("%s — can't verify session (network?) [a]", acc.Name)
+					authWarn = true
+				case sessionRemoteChecking:
+					authStatus = fmt.Sprintf("Checking Microsoft session for %s…", acc.Name)
+				default:
+					authStatus = fmt.Sprintf("Signed in as %s", acc.Name)
+				}
+			case core.AccountTypeOffline:
+				authStatus = fmt.Sprintf("Offline: %s", acc.Name)
+			default:
+				authStatus = fmt.Sprintf("Account: %s", acc.Name)
+			}
+		}
+	}
+
+	msaNeedsSignin := false
+	if acc := m.activeMSAAccount(); acc != nil {
+		switch m.sessionRemote {
+		case sessionRemoteInvalid, sessionRemoteUncertain:
+			msaNeedsSignin = true
 		}
 	}
 
 	// Build help items based on auth status
 	var helpItems []string
-	if m.accounts != nil && m.accounts.GetActive() == nil {
+	noOnlineSession := m.accounts == nil || m.accounts.GetActive() == nil || msaNeedsSignin
+	if noOnlineSession {
 		helpItems = []string{"[↵] login & play", "[n] new", "[f] folder", "[d] delete", "[m] mods", "[s] settings", "[a] accounts", "[o] play offline", "[q] quit"}
 	} else {
 		helpItems = []string{"[↵] launch", "[n] new", "[f] folder", "[d] delete", "[m] mods", "[s] settings", "[a] accounts", "[o] play offline", "[q] quit"}
@@ -345,17 +440,24 @@ func (m *HomeModel) View() string {
 		Foreground(lipgloss.Color("#626262")).
 		Render(helpText)
 
+	statusColor := lipgloss.Color("#7C3AED")
+	if authWarn {
+		statusColor = lipgloss.Color("#FBBF24")
+	}
 	status := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#7C3AED")).
+		Foreground(statusColor).
 		Padding(1, 0).
 		Render(authStatus)
 
-	baseView := lipgloss.JoinVertical(
-		lipgloss.Left,
-		m.list.View(),
-		status,
-		help,
-	)
+	aboveStatus := []string{m.list.View()}
+	if m.transientBanner != "" {
+		aboveStatus = append(aboveStatus, lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FBBF24")).
+			Render(m.transientBanner))
+	}
+	aboveStatus = append(aboveStatus, status, help)
+
+	baseView := lipgloss.JoinVertical(lipgloss.Left, aboveStatus...)
 
 	// Show delete confirmation overlay if needed
 	if m.confirmDelete && m.deleteTarget != nil {

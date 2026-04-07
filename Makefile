@@ -1,4 +1,4 @@
-.PHONY: build run test lint clean dev
+.PHONY: build run test lint clean dev reset-auth damage-auth reset-all
 
 # Build the binary
 build:
@@ -53,11 +53,25 @@ build-all:
 	GOOS=linux GOARCH=amd64 go build -o dist/mctui-linux-amd64 .
 	GOOS=windows GOARCH=amd64 go build -o dist/mctui-windows-amd64.exe .
 
+# Default app data dir (override for portable layout: make damage-auth MCTUI_DATA_DIR=./data)
+# Matches config.getDefaultDataDir when XDG_DATA_HOME is unset and not using APPDATA.
+MCTUI_DATA_DIR ?= $(HOME)/.local/share/mctui
+ACCOUNTS_JSON := $(MCTUI_DATA_DIR)/accounts.json
+
 # Reset authentication (deletes accounts.json)
-# Note: config path logic might vary, this assumes default Linux/Mac path
 reset-auth:
-	rm -f ~/.local/share/mctui/accounts.json
+	rm -f $(ACCOUNTS_JSON)
+
+# Corrupt stored MSA tokens for testing session validation / re-login (keeps accounts.json)
+damage-auth:
+	@test -f $(ACCOUNTS_JSON) || (echo "No accounts file at $(ACCOUNTS_JSON); sign in once, or set MCTUI_DATA_DIR." && false)
+	@command -v jq >/dev/null || (echo "damage-auth needs jq (e.g. brew install jq)" && false)
+	@jq -e '[.accounts[]? | select(.type == "msa")] | length > 0' "$(ACCOUNTS_JSON)" >/dev/null \
+		|| (echo "No MSA accounts in $(ACCOUNTS_JSON)" && false)
+	jq '.accounts |= map(if .type == "msa" then . + {accessToken: "__mctui_damage_auth__", expiresAt: "2099-01-01T00:00:00Z"} else . end)' \
+		"$(ACCOUNTS_JSON)" > "$(ACCOUNTS_JSON).tmp" && mv "$(ACCOUNTS_JSON).tmp" "$(ACCOUNTS_JSON)"
+	@echo Damaged MSA tokens in $(ACCOUNTS_JSON)
 
 # Reset all data (instances, cache, auth)
 reset-all:
-	rm -rf ~/.local/share/mctui
+	rm -rf $(MCTUI_DATA_DIR)

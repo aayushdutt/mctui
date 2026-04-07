@@ -80,4 +80,34 @@ type (
 	RetryLaunch struct {
 		Offline bool
 	}
+
+	// ProceedWithLaunch continues to the launch view after online session checks pass.
+	ProceedWithLaunch struct {
+		Instance *core.Instance
+	}
+
+	// SessionGateFailed blocks online launch until the user re-authenticates or network is available.
+	SessionGateFailed struct {
+		NeedAuth bool  // missing account, locally expired, or API rejected token (401)
+		Err      error // network / server error when NeedAuth is false
+	}
+
+	// ActiveSessionCheckStarted signals a background Minecraft session check has begun.
+	ActiveSessionCheckStarted struct{}
+
+	// ActiveSessionCheckResult is the outcome of a background session verification on the home screen.
+	ActiveSessionCheckResult struct {
+		Status ActiveSessionCheckStatus
+		Err    error // set when Status is ActiveSessionUncertain
+	}
+)
+
+// ActiveSessionCheckStatus is the outcome of validating the active account against Minecraft Services.
+type ActiveSessionCheckStatus int
+
+const (
+	ActiveSessionNotApplicable ActiveSessionCheckStatus = iota // no Microsoft account to check
+	ActiveSessionOK
+	ActiveSessionInvalid
+	ActiveSessionUncertain
 )
