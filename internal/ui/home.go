@@ -16,8 +16,8 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/quasar/mctui/internal/core"
-	"github.com/quasar/mctui/internal/loader"
+	"github.com/mctui/mctui/internal/core"
+	"github.com/mctui/mctui/internal/loader"
 )
 
 // HomeModel is the main instance list view

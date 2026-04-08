@@ -1,4 +1,4 @@
-.PHONY: build run test lint clean dev reset-auth damage-auth reset-all
+.PHONY: build run dev test test-cover lint fmt tidy clean build-all reset-auth damage-auth reset-all
 
 # Build the binary
 build:
@@ -41,13 +41,14 @@ fmt:
 tidy:
 	go mod tidy
 
-# Clean build artifacts
+# Clean build artifacts (binary, coverage, cross-build output in dist/)
 clean:
-	rm -f mctui
-	rm -f coverage.out coverage.html
+	rm -f mctui coverage.out coverage.html
+	rm -rf dist
 
-# Build for all platforms
+# Build for all platforms (writes to dist/)
 build-all:
+	mkdir -p dist
 	GOOS=darwin GOARCH=amd64 go build -o dist/mctui-darwin-amd64 .
 	GOOS=darwin GOARCH=arm64 go build -o dist/mctui-darwin-arm64 .
 	GOOS=linux GOARCH=amd64 go build -o dist/mctui-linux-amd64 .

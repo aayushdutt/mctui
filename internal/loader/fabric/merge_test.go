@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/quasar/mctui/internal/core"
+	"github.com/mctui/mctui/internal/core"
 )
 
 func TestMergeProfile_mainClassAndLibraries(t *testing.T) {

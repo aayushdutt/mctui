@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/quasar/mctui/internal/core"
+	"github.com/mctui/mctui/internal/core"
 )
 
 func TestListInstalledJars(t *testing.T) {

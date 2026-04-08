@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/quasar/mctui/internal/api"
-	"github.com/quasar/mctui/internal/core"
-	"github.com/quasar/mctui/internal/download"
+	"github.com/mctui/mctui/internal/api"
+	"github.com/mctui/mctui/internal/core"
+	"github.com/mctui/mctui/internal/download"
 )
 
 // Service wires Modrinth API calls to instance paths and download execution.

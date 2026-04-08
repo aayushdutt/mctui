@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/quasar/mctui/internal/core"
+	"github.com/mctui/mctui/internal/core"
 )
 
 const catalogFileName = ".mctui-modrinth.json"

@@ -1,4 +1,4 @@
-module github.com/quasar/mctui
+module github.com/mctui/mctui
 
 go 1.25.4
 

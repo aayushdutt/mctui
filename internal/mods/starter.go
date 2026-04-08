@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/quasar/mctui/internal/core"
+	"github.com/mctui/mctui/internal/core"
 )
 
 // starterFabricMod is one Modrinth project (slug works with the v2 project API).

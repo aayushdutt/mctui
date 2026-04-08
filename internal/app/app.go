@@ -10,13 +10,13 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/quasar/mctui/internal/api"
-	"github.com/quasar/mctui/internal/config"
-	"github.com/quasar/mctui/internal/core"
-	"github.com/quasar/mctui/internal/launch"
-	"github.com/quasar/mctui/internal/loader"
-	"github.com/quasar/mctui/internal/mods"
-	"github.com/quasar/mctui/internal/ui"
+	"github.com/mctui/mctui/internal/api"
+	"github.com/mctui/mctui/internal/config"
+	"github.com/mctui/mctui/internal/core"
+	"github.com/mctui/mctui/internal/launch"
+	"github.com/mctui/mctui/internal/loader"
+	"github.com/mctui/mctui/internal/mods"
+	"github.com/mctui/mctui/internal/ui"
 )
 
 // State represents the current view/screen of the application

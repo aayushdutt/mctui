@@ -3,7 +3,7 @@ package mods
 import (
 	"testing"
 
-	"github.com/quasar/mctui/internal/api"
+	"github.com/mctui/mctui/internal/api"
 )
 
 func TestPickBestFabricVersion(t *testing.T) {

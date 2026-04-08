@@ -5,7 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/quasar/mctui/internal/app"
+	"github.com/mctui/mctui/internal/app"
 )
 
 var version = "dev"

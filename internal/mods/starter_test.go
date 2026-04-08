@@ -3,7 +3,7 @@ package mods
 import (
 	"testing"
 
-	"github.com/quasar/mctui/internal/core"
+	"github.com/mctui/mctui/internal/core"
 )
 
 func TestStarterFabricModsComplete_nil(t *testing.T) {

@@ -2,8 +2,8 @@
 package ui
 
 import (
-	"github.com/quasar/mctui/internal/core"
-	"github.com/quasar/mctui/internal/launch"
+	"github.com/mctui/mctui/internal/core"
+	"github.com/mctui/mctui/internal/launch"
 )
 
 // Navigation messages

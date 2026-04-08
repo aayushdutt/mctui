@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/quasar/mctui/internal/config"
-	"github.com/quasar/mctui/internal/core"
-	"github.com/quasar/mctui/internal/download"
-	"github.com/quasar/mctui/internal/java"
+	"github.com/mctui/mctui/internal/config"
+	"github.com/mctui/mctui/internal/core"
+	"github.com/mctui/mctui/internal/download"
+	"github.com/mctui/mctui/internal/java"
 )
 
 // Status represents the current launch step

@@ -3,7 +3,7 @@ package mods
 import (
 	"strings"
 
-	"github.com/quasar/mctui/internal/api"
+	"github.com/mctui/mctui/internal/api"
 )
 
 // PickBestFabricVersion chooses a version to install from Modrinth's filtered list.

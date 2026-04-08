@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/quasar/mctui/internal/core"
+	"github.com/mctui/mctui/internal/core"
 )
 
 // InstalledJar is a mod file present under the instance mods directory.
