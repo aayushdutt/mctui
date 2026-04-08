@@ -16,7 +16,7 @@ A fast, terminal-based Minecraft launcher written in Go.
 You do **not** need Go installed to run a prebuilt binary.
 
 1. Open **[Releases](https://github.com/aayushdutt/mctui/releases)** on GitHub.
-2. Pick the latest release and download the **asset for your OS** under *Assets*:
+2. Pick the latest release and download the **asset for your OS** under _Assets_:
    - **Windows (64-bit):** `.zip` containing `mctui.exe`
    - **macOS Apple Silicon:** `Darwin_arm64` `.tar.gz`
    - **macOS Intel:** `Darwin_x86_64` `.tar.gz`
@@ -35,7 +35,7 @@ If you have Go 1.21+, you can install the latest tagged release **without** down
 go install github.com/aayushdutt/mctui@latest
 ```
 
-Ensure `$(go env GOPATH)/bin` is on your `PATH`, then run `mctui`.
+Then run `mctui`. If you get “command not found”, add Go’s bin to your `PATH`: `export PATH="$PATH:$(go env GOPATH)/bin"` (one-off), or add that line to `~/.zshrc` or `~/.bashrc` and open a new terminal — then run `mctui` again.
 
 ## Build from source
 
@@ -70,19 +70,19 @@ mctui/
 
 ## Keybindings (home)
 
-| Key | Action |
-|-----|--------|
-| `↑` `↓` or `j` `k` | Move selection |
-| `Enter` or `l` | Launch (online if signed in) |
-| `o` | Play offline |
-| `n` | New instance |
-| `m` | Mods browser (Fabric instances) |
-| `s` | Settings (placeholder) |
-| `a` | Accounts |
-| `f` | Open instance folder |
-| `d` | Delete instance |
-| `/` | Filter instances |
-| `q` | Quit |
+| Key                | Action                          |
+| ------------------ | ------------------------------- |
+| `↑` `↓` or `j` `k` | Move selection                  |
+| `Enter` or `l`     | Launch (online if signed in)    |
+| `o`                | Play offline                    |
+| `n`                | New instance                    |
+| `m`                | Mods browser (Fabric instances) |
+| `s`                | Settings (placeholder)          |
+| `a`                | Accounts                        |
+| `f`                | Open instance folder            |
+| `d`                | Delete instance                 |
+| `/`                | Filter instances                |
+| `q`                | Quit                            |
 
 On the **launch** screen, **`v`** cycles log verbosity. On the **mods** screen, use **`Tab`** to move between installed list, search, and results; **`Esc`** returns home.
 
@@ -90,12 +90,12 @@ On the **launch** screen, **`v`** cycles log verbosity. On the **mods** screen, 
 
 Data lives under `~/.local/share/mctui` (Linux/macOS) or `%APPDATA%\mctui` (Windows).
 
-| Location | Purpose |
-|----------|---------|
-| `instances/` | Per-instance configs and worlds |
-| `java/` | Downloaded Java runtimes (shared) |
-| `accounts.json` | Stored accounts |
-| Global cache | Shared game assets and libraries |
+| Location                               | Purpose                                                                     |
+| -------------------------------------- | --------------------------------------------------------------------------- |
+| `instances/`                           | Per-instance configs and worlds                                             |
+| `java/`                                | Downloaded Java runtimes (shared)                                           |
+| `accounts.json`                        | Stored accounts                                                             |
+| Global cache                           | Shared game assets and libraries                                            |
 | `.minecraft/mods/.mctui-modrinth.json` | Per-instance catalog of mods installed via mctui (under each instance path) |
 
 Config (same data directory) can include **`launchLogVerbosity`**: `error` (default), `warn`, or `all`.
