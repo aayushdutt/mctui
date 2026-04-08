@@ -10,10 +10,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mctui/mctui/internal/api"
-	"github.com/mctui/mctui/internal/core"
-	"github.com/mctui/mctui/internal/loader"
-	"github.com/mctui/mctui/internal/mods"
+	"github.com/aayushdutt/mctui/internal/api"
+	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/loader"
+	"github.com/aayushdutt/mctui/internal/mods"
 )
 
 // ModsModel: left = installed, right = Modrinth (split) or stacked when narrow.

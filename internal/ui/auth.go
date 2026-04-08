@@ -11,8 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	
-	"github.com/mctui/mctui/internal/api"
-	"github.com/mctui/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/api"
+	"github.com/aayushdutt/mctui/internal/core"
 )
 
 type AuthState int

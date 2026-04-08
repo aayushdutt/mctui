@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mctui/mctui/internal/config"
-	"github.com/mctui/mctui/internal/core"
-	"github.com/mctui/mctui/internal/download"
-	"github.com/mctui/mctui/internal/java"
+	"github.com/aayushdutt/mctui/internal/config"
+	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/download"
+	"github.com/aayushdutt/mctui/internal/java"
 )
 
 // Status represents the current launch step

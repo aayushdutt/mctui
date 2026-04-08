@@ -8,9 +8,9 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mctui/mctui/internal/config"
-	"github.com/mctui/mctui/internal/core"
-	"github.com/mctui/mctui/internal/launch"
+	"github.com/aayushdutt/mctui/internal/config"
+	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/launch"
 )
 
 // LaunchModel shows launch progress

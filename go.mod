@@ -1,4 +1,4 @@
-module github.com/mctui/mctui
+module github.com/aayushdutt/mctui
 
 go 1.25.4
 

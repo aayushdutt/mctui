@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mctui/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/core"
 )
 
 // WizardStep represents the current wizard step

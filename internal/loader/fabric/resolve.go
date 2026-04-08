@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mctui/mctui/internal/api"
-	"github.com/mctui/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/api"
+	"github.com/aayushdutt/mctui/internal/core"
 )
 
 const metaBase = "https://meta.fabricmc.net"

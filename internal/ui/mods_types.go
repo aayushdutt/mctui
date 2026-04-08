@@ -5,8 +5,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
-	"github.com/mctui/mctui/internal/api"
-	"github.com/mctui/mctui/internal/mods"
+	"github.com/aayushdutt/mctui/internal/api"
+	"github.com/aayushdutt/mctui/internal/mods"
 )
 
 const splitMinWidth = 78

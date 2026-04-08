@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mctui/mctui/internal/api"
-	"github.com/mctui/mctui/internal/core"
-	"github.com/mctui/mctui/internal/loader/fabric"
+	"github.com/aayushdutt/mctui/internal/api"
+	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/loader/fabric"
 )
 
 // ResolveVersionDetails returns launch-ready version metadata for an instance.

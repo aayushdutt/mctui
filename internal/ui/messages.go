@@ -2,8 +2,8 @@
 package ui
 
 import (
-	"github.com/mctui/mctui/internal/core"
-	"github.com/mctui/mctui/internal/launch"
+	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/launch"
 )
 
 // Navigation messages

@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mctui/mctui/internal/mods"
+	"github.com/aayushdutt/mctui/internal/mods"
 )
 
 // Update implements tea.Model.

@@ -15,7 +15,7 @@ A fast, terminal-based Minecraft launcher written in Go.
 
 You do **not** need Go installed to run a prebuilt binary.
 
-1. Open **[Releases](https://github.com/mctui/mctui/releases)** on GitHub (use the Releases tab on this repository if the URL differs).
+1. Open **[Releases](https://github.com/aayushdutt/mctui/releases)** on GitHub.
 2. Pick the latest release and download the **asset for your OS** under *Assets*:
    - **Windows (64-bit):** `.zip` containing `mctui.exe`
    - **macOS Apple Silicon:** `Darwin_arm64` `.tar.gz`
@@ -26,6 +26,16 @@ You do **not** need Go installed to run a prebuilt binary.
    - **macOS / Linux:** `chmod +x mctui` once, then `./mctui`
    - **Windows:** `.\mctui.exe`
 5. Always start mctui from a terminal so the full interface works. Double-clicking the binary often does not show the TUI correctly.
+
+### Install with Go (`go install`)
+
+If you have Go 1.21+, you can install the latest tagged release **without** downloading a release archive (builds on your machine—often simpler on **macOS** where prebuilt binaries may trigger Gatekeeper):
+
+```bash
+go install github.com/aayushdutt/mctui@latest
+```
+
+Ensure `$(go env GOPATH)/bin` is on your `PATH`, then run `mctui`.
 
 ## Build from source
 

@@ -14,7 +14,7 @@ import (
 
 const (
 	modrinthBaseURL = "https://api.modrinth.com/v2"
-	userAgent       = "mctui/1.0.0 (github.com/mctui/mctui)"
+	userAgent       = "mctui/1.0.0 (github.com/aayushdutt/mctui)"
 )
 
 // ModrinthClient handles Modrinth API interactions

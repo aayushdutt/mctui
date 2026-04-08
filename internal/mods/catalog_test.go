@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mctui/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/core"
 )
 
 func TestSlugHeuristicMatch(t *testing.T) {

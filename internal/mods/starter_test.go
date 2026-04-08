@@ -3,7 +3,7 @@ package mods
 import (
 	"testing"
 
-	"github.com/mctui/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/core"
 )
 
 func TestStarterFabricModsComplete_nil(t *testing.T) {

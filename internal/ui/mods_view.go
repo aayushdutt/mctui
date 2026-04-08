@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mctui/mctui/internal/mods"
+	"github.com/aayushdutt/mctui/internal/mods"
 )
 
 func (m *ModsModel) libraryBannerBlock(nLocal int) string {

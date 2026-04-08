@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mctui/mctui/internal/config"
-	"github.com/mctui/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/config"
+	"github.com/aayushdutt/mctui/internal/core"
 )
 
 func TestLauncher_IsFullyDownloaded(t *testing.T) {
