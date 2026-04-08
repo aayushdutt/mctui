@@ -145,6 +145,21 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *LaunchModel) updateSteps() {
+	// Dynamically add Installing starter mods (Fabric bundle before the normal pipeline)
+	if m.status.Step == "Installing starter mods" {
+		found := false
+		for _, s := range m.steps {
+			if s.name == "Installing starter mods" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			newSteps := append([]stepInfo{{name: "Installing starter mods", status: "pending"}}, m.steps...)
+			m.steps = newSteps
+		}
+	}
+
 	// Dynamically add Downloading Java if it occurs
 	if m.status.Step == "Downloading Java" {
 		found := false

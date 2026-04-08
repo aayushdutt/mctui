@@ -27,8 +27,7 @@ type loaderMetaEntry struct {
 	} `json:"loader"`
 }
 
-// ResolveVersion loads merged Fabric+Mojang version metadata for launching.
-// It may set inst.LoaderVer to the latest stable Fabric loader when empty (online only).
+// ResolveVersion loads merged Fabric+Mojang version metadata; may set LoaderVer to latest stable Fabric (online).
 func ResolveVersion(ctx context.Context, mojang *api.MojangClient, inst *core.Instance, offline bool) (*core.VersionDetails, error) {
 	if inst == nil {
 		return nil, fmt.Errorf("instance required")
@@ -45,7 +44,7 @@ func ResolveVersion(ctx context.Context, mojang *api.MojangClient, inst *core.In
 		if loaderVer == "" {
 			return nil, fmt.Errorf("fabric offline needs a saved loader version; connect once after choosing Fabric")
 		}
-		cacheFile := filepath.Join(cacheDir, fmt.Sprintf("fabric-merged-%s-%s.json", gameVer, loaderVer))
+		cacheFile := mergedProfileCacheFile(cacheDir, gameVer, loaderVer)
 		data, err := os.ReadFile(cacheFile)
 		if err != nil {
 			return nil, fmt.Errorf("offline fabric launch needs cached profile %s: %w", filepath.Base(cacheFile), err)
@@ -71,7 +70,7 @@ func ResolveVersion(ctx context.Context, mojang *api.MojangClient, inst *core.In
 		inst.LoaderVer = loaderVer
 	}
 
-	cacheFile := filepath.Join(cacheDir, fmt.Sprintf("fabric-merged-%s-%s.json", gameVer, loaderVer))
+	cacheFile := mergedProfileCacheFile(cacheDir, gameVer, loaderVer)
 	if data, err := os.ReadFile(cacheFile); err == nil {
 		var details core.VersionDetails
 		if json.Unmarshal(data, &details) == nil && details.MainClass != "" {

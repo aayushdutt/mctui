@@ -465,6 +465,16 @@ func (l *Launcher) buildArguments() []string {
 
 func (l *Launcher) buildClasspath() string {
 	var paths []string
+	seen := make(map[string]struct{})
+	addPath := func(p string) {
+		p = filepath.Clean(p)
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
+
 	version := l.opts.VersionInfo
 
 	// Add libraries
@@ -476,13 +486,13 @@ func (l *Launcher) buildClasspath() string {
 			continue
 		}
 		path := filepath.Join(l.cfg.LibrariesDir, lib.Downloads.Artifact.Path)
-		paths = append(paths, path)
+		addPath(path)
 	}
 
 	// Add client jar
 	clientPath := filepath.Join(l.cfg.LibrariesDir, "com", "mojang", "minecraft",
 		version.ID, fmt.Sprintf("minecraft-%s-client.jar", version.ID))
-	paths = append(paths, clientPath)
+	addPath(clientPath)
 
 	separator := ":"
 	if runtime.GOOS == "windows" {

@@ -41,13 +41,16 @@ type (
 type (
 	// InstanceCreated is sent when a new instance is created
 	InstanceCreated struct {
-		Instance *core.Instance
+		Instance                 *core.Instance
+		InstallStarterFabricMods bool // mirrored from Instance.InstallStarterFabricMods (persisted in instance.json)
 	}
 
 	// InstancesLoaded is sent when instances are loaded from disk
 	InstancesLoaded struct {
 		Instances []*core.Instance
 		Error     error
+		// SelectID, if set, moves the home list cursor to that instance after refresh (e.g. newly created).
+		SelectID string
 	}
 
 	// VersionsLoaded is sent when version manifest is fetched
@@ -99,6 +102,15 @@ type (
 	ActiveSessionCheckResult struct {
 		Status ActiveSessionCheckStatus
 		Err    error // set when Status is ActiveSessionUncertain
+	}
+
+	// ModInstallDoneMsg is sent when a Modrinth mod jar install finishes or fails.
+	ModInstallDoneMsg struct {
+		ProjectID string
+		Slug      string
+		Title     string
+		Path      string
+		Err       error
 	}
 )
 

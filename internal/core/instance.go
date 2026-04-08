@@ -21,13 +21,19 @@ type Instance struct {
 	JavaPath   string    `json:"javaPath"`  // Path to Java executable (optional)
 	JVMArgs    []string  `json:"jvmArgs"`   // Additional JVM arguments
 	LastPlayed time.Time `json:"lastPlayed"`
-	PlayTime   int64     `json:"playTime"` // Total playtime in seconds
+	// CreatedAt is set when the instance is first saved (wizard / Create). Used for list order when LastPlayed is zero.
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+	PlayTime  int64     `json:"playTime"` // Total playtime in seconds
 
 	// Caching fields for offline support
 	IsFullyDownloaded bool      `json:"isFullyDownloaded"` // All files downloaded and ready
 	CachedAt          time.Time `json:"cachedAt"`          // When instance was last fully cached
 	// DownloadCacheKey matches LaunchDownloadKey when isFullyDownloaded was set; used to invalidate after loader/MC changes.
 	DownloadCacheKey string `json:"downloadCacheKey,omitempty"`
+
+	// InstallStarterFabricMods is true when the user opted into the default Fabric bundle at instance creation.
+	// Cleared after that bundle is installed successfully at launch (see mods package).
+	InstallStarterFabricMods bool `json:"installStarterFabricMods,omitempty"`
 }
 
 // LaunchDownloadKey fingerprints game version, loader, and loader version for download skip logic.
@@ -41,6 +47,28 @@ func LaunchDownloadKey(inst *Instance) string {
 		loader = "vanilla"
 	}
 	return inst.Version + "|" + loader + "|" + strings.TrimSpace(inst.LoaderVer)
+}
+
+// RecencyForSort picks a timestamp for ordering instances (most recent first).
+// It is the later of LastPlayed and CreatedAt (each ignored if zero). Usually LastPlayed ≥ CreatedAt.
+func RecencyForSort(inst *Instance) time.Time {
+	if inst == nil {
+		return time.Time{}
+	}
+	lp, ca := inst.LastPlayed, inst.CreatedAt
+	switch {
+	case lp.IsZero() && ca.IsZero():
+		return time.Time{}
+	case lp.IsZero():
+		return ca
+	case ca.IsZero():
+		return lp
+	default:
+		if lp.After(ca) {
+			return lp
+		}
+		return ca
+	}
 }
 
 // InstanceManager handles instance CRUD operations
@@ -117,6 +145,9 @@ func (im *InstanceManager) Create(inst *Instance) error {
 	}
 
 	inst.Path = instPath
+	if inst.CreatedAt.IsZero() {
+		inst.CreatedAt = time.Now()
+	}
 
 	// Save instance config
 	if err := im.save(inst); err != nil {

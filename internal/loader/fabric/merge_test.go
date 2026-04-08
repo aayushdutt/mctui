@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/quasar/mctui/internal/core"
@@ -66,6 +67,89 @@ func TestNormalizeFabricLibraries_url(t *testing.T) {
 	}
 	if libs[0].Downloads.Artifact.URL == "" {
 		t.Fatal("empty url")
+	}
+}
+
+func TestDropOW2AsmAllWhenModularPresent_dropsFatJar(t *testing.T) {
+	parent := []core.Library{
+		{Name: "org.ow2.asm:asm-all:5.2", Downloads: &core.LibraryDownloads{Artifact: &core.Artifact{Path: "o/a/5/asm-all-5.2.jar"}}},
+		{Name: "com.mojang:foo:1", Downloads: &core.LibraryDownloads{Artifact: &core.Artifact{Path: "f.jar"}}},
+	}
+	fabric := []core.Library{
+		{Name: "org.ow2.asm:asm:9.6", Downloads: &core.LibraryDownloads{Artifact: &core.Artifact{Path: "o/a/9/asm-9.6.jar"}}},
+	}
+	merged := dropOW2AsmAllWhenModularPresent(append(append([]core.Library{}, parent...), fabric...))
+	if len(merged) != 2 {
+		t.Fatalf("want 2 libs after dropping asm-all, got %d", len(merged))
+	}
+	for _, lib := range merged {
+		if strings.Contains(lib.Name, "asm-all") {
+			t.Fatalf("asm-all should be removed: %q", lib.Name)
+		}
+	}
+}
+
+func TestMergeLibrariesByMavenIdentity_higherVersionWins(t *testing.T) {
+	parent := []core.Library{
+		{Name: "org.ow2.asm:asm:9.6"},
+		{Name: "com.mojang:foo:1"},
+	}
+	child := []core.Library{
+		{Name: "org.ow2.asm:asm:9.7.1"},
+		{Name: "net.fabricmc:fabric-loader:1"},
+	}
+	out := mergeLibrariesByMavenIdentity(parent, child)
+	if len(out) != 3 {
+		t.Fatalf("want 3 libs, got %d: %+v", len(out), out)
+	}
+	var asmName string
+	for _, lib := range out {
+		if strings.HasPrefix(lib.Name, "org.ow2.asm:asm:") {
+			asmName = lib.Name
+			break
+		}
+	}
+	if asmName != "org.ow2.asm:asm:9.7.1" {
+		t.Fatalf("expected child asm version to win, got %q", asmName)
+	}
+}
+
+func TestMergeLibrariesByMavenIdentity_classifierIsSeparateSlot(t *testing.T) {
+	parent := []core.Library{{Name: "g:a:1:linux"}}
+	child := []core.Library{{Name: "g:a:2:osx"}}
+	out := mergeLibrariesByMavenIdentity(parent, child)
+	if len(out) != 2 {
+		t.Fatalf("want 2 (different classifiers), got %d", len(out))
+	}
+}
+
+func TestMergeLibrariesByMavenIdentity_childDoesNotDowngrade(t *testing.T) {
+	parent := []core.Library{{Name: "org.ow2.asm:asm:9.7.1"}}
+	child := []core.Library{{Name: "org.ow2.asm:asm:9.6"}}
+	out := mergeLibrariesByMavenIdentity(parent, child)
+	if len(out) != 1 || out[0].Name != "org.ow2.asm:asm:9.7.1" {
+		t.Fatalf("parent version should be kept: %+v", out)
+	}
+}
+
+func TestDedupeLibrariesByArtifactPath(t *testing.T) {
+	libs := []core.Library{
+		{Name: "a:1:1", Downloads: &core.LibraryDownloads{Artifact: &core.Artifact{Path: "x/y/z.jar"}}},
+		{Name: "b:2:2", Downloads: &core.LibraryDownloads{Artifact: &core.Artifact{Path: "x/y/z.jar"}}},
+	}
+	out := dedupeLibrariesByArtifactPath(libs)
+	if len(out) != 1 || out[0].Name != "a:1:1" {
+		t.Fatalf("got %+v", out)
+	}
+}
+
+func TestDropOW2AsmAllWhenModularPresent_keepsAsmAllIfAlone(t *testing.T) {
+	libs := []core.Library{
+		{Name: "org.ow2.asm:asm-all:5.2"},
+	}
+	out := dropOW2AsmAllWhenModularPresent(libs)
+	if len(out) != 1 {
+		t.Fatalf("got %d", len(out))
 	}
 }
 

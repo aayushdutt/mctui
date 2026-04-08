@@ -15,6 +15,7 @@ import (
 	"github.com/quasar/mctui/internal/core"
 	"github.com/quasar/mctui/internal/launch"
 	"github.com/quasar/mctui/internal/loader"
+	"github.com/quasar/mctui/internal/mods"
 	"github.com/quasar/mctui/internal/ui"
 )
 
@@ -40,6 +41,7 @@ type Model struct {
 	home   *ui.HomeModel
 	wizard *ui.WizardModel
 	launch *ui.LaunchModel
+	mods   *ui.ModsModel
 	auth   *ui.AuthModel
 
 	// Core services
@@ -47,6 +49,7 @@ type Model struct {
 	instances *core.InstanceManager
 	accounts  *core.AccountManager
 	mojang    *api.MojangClient
+	modrinth  *api.ModrinthClient
 
 	// Launch state
 	launchStatusChan chan launch.Status
@@ -107,6 +110,7 @@ func New() *Model {
 		instances: instances,
 		accounts:  accounts,
 		mojang:    api.NewMojangClient(cfg.DataDir),
+		modrinth:  api.NewModrinthClient(),
 		keys:      defaultKeyMap(),
 	}
 }
@@ -133,8 +137,17 @@ func (m *Model) effectiveMSAClientID() string {
 func (m *Model) prepareAuthScreen() tea.Cmd {
 	m.state = StateAuth
 	m.auth = ui.NewAuthModel(m.cfg.DataDir, m.effectiveMSAClientID(), m.accounts)
-	m.auth.SetSize(m.width, m.height)
+	cw, ch := m.contentSize()
+	m.auth.SetSize(cw, ch)
 	return m.auth.Init()
+}
+
+// contentSize is the drawable area inside [ui.AppShellStyle] for the current terminal size.
+func (m *Model) contentSize() (w, h int) {
+	if m.width <= 0 {
+		return 0, 0
+	}
+	return max(0, m.width-2*ui.AppShellPadX), max(0, m.height-2*ui.AppShellPadY)
 }
 
 func (m *Model) validateMSAccessToken(ctx context.Context, acc *core.Account) error {
@@ -202,11 +215,17 @@ func (m *Model) sessionRecheckCmd() tea.Cmd {
 }
 
 func (m *Model) loadInstances() tea.Cmd {
+	return m.loadInstancesSelecting("")
+}
+
+// loadInstancesSelecting reloads instances from disk; selectID optionally focuses that instance in the home list.
+func (m *Model) loadInstancesSelecting(selectID string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.instances.Load()
 		return ui.InstancesLoaded{
 			Instances: m.instances.List(),
 			Error:     err,
+			SelectID:  selectID,
 		}
 	}
 }
@@ -235,34 +254,62 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ready = true
 
-		// Propagate size to child models
-		m.home.SetSize(msg.Width, msg.Height)
+		cw, ch := m.contentSize()
+		m.home.SetSize(cw, ch)
 		if m.wizard != nil {
-			m.wizard.SetSize(msg.Width, msg.Height)
+			m.wizard.SetSize(cw, ch)
 		}
 		if m.launch != nil {
-			m.launch.SetSize(msg.Width, msg.Height)
+			m.launch.SetSize(cw, ch)
+		}
+		if m.mods != nil {
+			m.mods.SetSize(cw, ch)
+		}
+		if m.auth != nil {
+			m.auth.SetSize(cw, ch)
 		}
 
 	// Navigation messages
 	case ui.NavigateToHome:
+		if m.mods != nil {
+			m.mods.CancelPending()
+		}
 		m.state = StateHome
+		m.mods = nil
 		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+
+	case ui.NavigateToSettings:
+		m.state = StateSettings
+		cw, ch := m.contentSize()
+		m.home.SetSize(cw, ch)
+		return m, nil
 
 	case ui.NavigateToNewInstance:
 		m.state = StateNewInstance
 		m.wizard = ui.NewWizardModel(m.instances.List())
-		m.wizard.SetSize(m.width, m.height)
+		cw, ch := m.contentSize()
+		m.wizard.SetSize(cw, ch)
 		return m, tea.Batch(
 			m.wizard.Init(),
 			m.loadVersions(),
 		)
 
+	case ui.NavigateToMods:
+		if msg.Instance == nil {
+			return m, nil
+		}
+		m.state = StateMods
+		m.mods = ui.NewModsModel(msg.Instance, m.modrinth)
+		cw, ch := m.contentSize()
+		m.mods.SetSize(cw, ch)
+		return m, m.mods.Init()
+
 	case ui.NavigateToLaunch:
 		if msg.Offline {
 			m.state = StateLaunch
 			m.launch = ui.NewLaunchModel(msg.Instance, m.cfg)
-			m.launch.SetSize(m.width, m.height)
+			cw, ch := m.contentSize()
+			m.launch.SetSize(cw, ch)
 			return m, tea.Batch(
 				m.launch.Init(),
 				m.startLaunch(msg.Instance, true),
@@ -273,7 +320,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.ProceedWithLaunch:
 		m.state = StateLaunch
 		m.launch = ui.NewLaunchModel(msg.Instance, m.cfg)
-		m.launch.SetSize(m.width, m.height)
+		cw, ch := m.contentSize()
+		m.launch.SetSize(cw, ch)
 		return m, tea.Batch(
 			m.launch.Init(),
 			m.startLaunch(msg.Instance, false),
@@ -304,6 +352,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.NavigateToAuth:
 		return m, m.prepareAuthScreen()
 
+	case ui.ModInstallDoneMsg:
+		if m.mods != nil {
+			newMods, cmd := m.mods.Update(msg)
+			m.mods = newMods.(*ui.ModsModel)
+			return m, cmd
+		}
+		return m, nil
+
 	case ui.DeleteInstance:
 		if msg.Instance != nil {
 			_ = m.instances.Delete(msg.Instance.ID)
@@ -316,7 +372,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state = StateHome
-		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+		id := msg.Instance.ID
+		return m, tea.Batch(m.loadInstancesSelecting(id), m.sessionRecheckCmd())
 
 	// Launch status updates - continue subscription
 	case ui.LaunchStatusUpdate:
@@ -374,6 +431,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == StateHome {
 				return m, tea.Quit
 			}
+		case key.Matches(msg, m.keys.Back):
+			if m.state == StateSettings {
+				m.state = StateHome
+				return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+			}
 		}
 	}
 
@@ -401,6 +463,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.launch != nil {
 			newLaunch, cmd := m.launch.Update(msg)
 			m.launch = newLaunch.(*ui.LaunchModel)
+			cmds = append(cmds, cmd)
+		}
+	case StateMods:
+		if m.mods != nil {
+			newMods, cmd := m.mods.Update(msg)
+			m.mods = newMods.(*ui.ModsModel)
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -443,8 +511,39 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 			}
 		}
 
-		// Start launcher in goroutine
+		// Start launcher in goroutine (starter Fabric mods first if requested, with progress on this screen)
 		go func() {
+			if loader.ParseKind(inst.Loader) == loader.KindFabric && inst.InstallStarterFabricMods {
+				if mods.StarterFabricModsComplete(inst) {
+					inst.InstallStarterFabricMods = false
+					_ = m.instances.Update(inst)
+				} else {
+					svc := mods.NewService(m.modrinth)
+					err := svc.InstallStarterFabricMods(ctx, inst, func(i, total int, label string) {
+						var p float64
+						if total > 0 {
+							p = float64(i) / float64(total) * 0.12
+						}
+						m.launchStatusChan <- launch.Status{
+							Step:     "Installing starter mods",
+							Message:  fmt.Sprintf("Downloading %s (%d/%d). Slow connections may take several minutes.", label, i+1, total),
+							Progress: p,
+						}
+					})
+					if err != nil {
+						m.launchStatusChan <- launch.Status{
+							Step:    "Installing starter mods",
+							Message: err.Error(),
+							Error:   err,
+						}
+						close(m.launchStatusChan)
+						return
+					}
+					inst.InstallStarterFabricMods = false
+					_ = m.instances.Update(inst)
+				}
+			}
+
 			launcher := launch.NewLauncher(&launch.Options{
 				Instance:         inst,
 				VersionInfo:      details,
@@ -500,13 +599,17 @@ func (m *Model) waitForLaunchStatus() tea.Cmd {
 	}
 }
 
-// View implements tea.Model
+// View implements tea.Model. All screens go through [ui.AppShellStyle] here only — do not pad in leaf views.
 func (m *Model) View() string {
+	return ui.AppShellStyle.Render(m.shellContent())
+}
+
+// shellContent renders the full-frame body before the app shell. Add a branch for every [State] value
+// when introducing new screens so layout width/height and padding stay consistent.
+func (m *Model) shellContent() string {
 	if !m.ready {
 		return "Initializing..."
 	}
-
-	// Delegate to current view
 	switch m.state {
 	case StateHome:
 		return m.home.View()
@@ -522,7 +625,12 @@ func (m *Model) View() string {
 		if m.auth != nil {
 			return m.auth.View()
 		}
+	case StateMods:
+		if m.mods != nil {
+			return m.mods.View()
+		}
+	case StateSettings:
+		return "Settings — coming soon\n\n[esc] Back to home"
 	}
-
 	return "Unknown state"
 }
