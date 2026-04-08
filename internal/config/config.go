@@ -25,6 +25,9 @@ type Config struct {
 
 	// Auth
 	MSAClientID string `json:"msaClientID"`
+
+	// LaunchLogVerbosity filters game output in the launch view: "error", "warn", or "all".
+	LaunchLogVerbosity string `json:"launchLogVerbosity,omitempty"`
 }
 
 const (
@@ -35,14 +38,15 @@ const (
 func DefaultConfig() *Config {
 	dataDir := getDefaultDataDir()
 	return &Config{
-		DataDir:       dataDir,
-		InstancesDir:  filepath.Join(dataDir, "instances"),
-		AssetsDir:     filepath.Join(dataDir, "assets"),
-		LibrariesDir:  filepath.Join(dataDir, "libraries"),
-		JVMArgs:       []string{"-Xmx2G", "-Xms512M"},
-		Theme:         "dark",
-		ShowSnapshots: false,
-		MSAClientID:   DefaultMSAClientID,
+		DataDir:            dataDir,
+		InstancesDir:       filepath.Join(dataDir, "instances"),
+		AssetsDir:          filepath.Join(dataDir, "assets"),
+		LibrariesDir:       filepath.Join(dataDir, "libraries"),
+		JVMArgs:            []string{"-Xmx2G", "-Xms512M"},
+		Theme:              "dark",
+		ShowSnapshots:      false,
+		MSAClientID:        DefaultMSAClientID,
+		LaunchLogVerbosity: "error",
 	}
 }
 
@@ -66,6 +70,9 @@ func Load() (*Config, error) {
 	// Fallback to default ID if config file had empty string or missing field
 	if cfg.MSAClientID == "" {
 		cfg.MSAClientID = DefaultMSAClientID
+	}
+	if cfg.LaunchLogVerbosity == "" {
+		cfg.LaunchLogVerbosity = "error"
 	}
 
 	return cfg, nil

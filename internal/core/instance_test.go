@@ -7,6 +7,35 @@ import (
 	"time"
 )
 
+func TestRecencyForSort(t *testing.T) {
+	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	if g := RecencyForSort(&Instance{LastPlayed: t2, CreatedAt: t1}); !g.Equal(t2) {
+		t.Fatalf("later of two times: got %v want %v", g, t2)
+	}
+	if g := RecencyForSort(&Instance{LastPlayed: t1, CreatedAt: t2}); !g.Equal(t2) {
+		t.Fatalf("later of two times when CreatedAt newer: got %v want %v", g, t2)
+	}
+	if g := RecencyForSort(&Instance{CreatedAt: t2}); !g.Equal(t2) {
+		t.Fatalf("CreatedAt only: got %v", g)
+	}
+	if g := RecencyForSort(&Instance{LastPlayed: t2}); !g.Equal(t2) {
+		t.Fatalf("LastPlayed only: got %v", g)
+	}
+}
+
+func TestLaunchDownloadKey(t *testing.T) {
+	if g, w := LaunchDownloadKey(&Instance{Version: "1.21.4", Loader: "vanilla"}), "1.21.4|vanilla|"; g != w {
+		t.Fatalf("got %q want %q", g, w)
+	}
+	if g, w := LaunchDownloadKey(&Instance{Version: "1.21.4", Loader: "", LoaderVer: ""}), "1.21.4|vanilla|"; g != w {
+		t.Fatalf("got %q want %q", g, w)
+	}
+	if g, w := LaunchDownloadKey(&Instance{Version: "1.21.4", Loader: "fabric", LoaderVer: "0.16.9"}), "1.21.4|fabric|0.16.9"; g != w {
+		t.Fatalf("got %q want %q", g, w)
+	}
+}
+
 func TestInstanceManager_CreateAndLoad(t *testing.T) {
 	// Setup temp directory
 	tmpDir := t.TempDir()
@@ -24,6 +53,9 @@ func TestInstanceManager_CreateAndLoad(t *testing.T) {
 
 	if err := mgr.Create(inst); err != nil {
 		t.Fatalf("Create failed: %v", err)
+	}
+	if inst.CreatedAt.IsZero() {
+		t.Fatal("Create should set CreatedAt")
 	}
 
 	// Verify file exists

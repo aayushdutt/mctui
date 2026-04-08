@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/quasar/mctui/internal/config"
-	"github.com/quasar/mctui/internal/core"
-	"github.com/quasar/mctui/internal/download"
-	"github.com/quasar/mctui/internal/java"
+	"github.com/mctui/mctui/internal/config"
+	"github.com/mctui/mctui/internal/core"
+	"github.com/mctui/mctui/internal/download"
+	"github.com/mctui/mctui/internal/java"
 )
 
 // Status represents the current launch step
@@ -40,7 +40,7 @@ type Options struct {
 	UUID        string // Player UUID
 	AccessToken string // Auth Token
 	Config      *config.Config
-	
+
 	// Callbacks
 	UpdateLastPlayed func(id string) error
 	UpdateInstance   func(inst *core.Instance) error
@@ -70,6 +70,9 @@ func NewLauncher(opts *Options, statusChan chan<- Status) *Launcher {
 
 // Launch executes the full launch pipeline
 func (l *Launcher) Launch(ctx context.Context) error {
+	// Invalidate download skip if instance version/loader changed (before any download step).
+	l.invalidateStaleDownloadCache()
+
 	steps := []struct {
 		name string
 		fn   func(context.Context) error
@@ -100,9 +103,11 @@ func (l *Launcher) Launch(ctx context.Context) error {
 
 	// Mark instance as fully downloaded for future offline launches
 	if l.opts.Instance != nil && l.opts.UpdateInstance != nil {
-		l.opts.Instance.IsFullyDownloaded = true
-		l.opts.Instance.CachedAt = time.Now()
-		_ = l.opts.UpdateInstance(l.opts.Instance)
+		inst := l.opts.Instance
+		inst.IsFullyDownloaded = true
+		inst.CachedAt = time.Now()
+		inst.DownloadCacheKey = core.LaunchDownloadKey(inst)
+		_ = l.opts.UpdateInstance(inst)
 	}
 
 	l.sendStatus(Status{
@@ -129,7 +134,7 @@ func (l *Launcher) checkJava(ctx context.Context) error {
 	if l.opts.JavaPath != "" {
 		return nil
 	}
-	
+
 	if l.opts.Instance != nil && l.opts.Instance.JavaPath != "" {
 		if _, err := os.Stat(l.opts.Instance.JavaPath); err == nil {
 			l.opts.JavaPath = l.opts.Instance.JavaPath
@@ -247,6 +252,26 @@ func (l *Launcher) downloadLibraries(ctx context.Context) error {
 	return l.performDownload(ctx, "Downloading libraries", items, 4)
 }
 
+// invalidateStaleDownloadCache clears IsFullyDownloaded when version/loader/LoaderVer changed
+// so switching e.g. vanilla→Fabric cannot skip downloading new libraries.
+func (l *Launcher) invalidateStaleDownloadCache() {
+	inst := l.opts.Instance
+	if inst == nil || l.opts.UpdateInstance == nil {
+		return
+	}
+	if !inst.IsFullyDownloaded {
+		return
+	}
+	want := core.LaunchDownloadKey(inst)
+	if inst.DownloadCacheKey == want {
+		return
+	}
+	inst.IsFullyDownloaded = false
+	inst.CachedAt = time.Time{}
+	inst.DownloadCacheKey = ""
+	_ = l.opts.UpdateInstance(inst)
+}
+
 func (l *Launcher) downloadAssets(ctx context.Context) error {
 	// Check for cancellation
 	select {
@@ -343,7 +368,7 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 
 	cmd := exec.CommandContext(ctx, l.opts.JavaPath, args...)
 	cmd.Dir = gameDir
-	
+
 	// Capture output
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
@@ -368,12 +393,12 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 
 	// Wait for game to finish
 	err := cmd.Wait()
-	
+
 	// Send final message
 	if err != nil {
 		return fmt.Errorf("game exited with error: %w", err)
 	}
-	
+
 	// We return nil here so the pipeline considers this step "done".
 	// The launcher will then send the "Complete" status.
 	return nil
@@ -383,23 +408,20 @@ func (l *Launcher) streamLog(r io.Reader, apiType string) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		text := scanner.Text()
-		
-		isImportant := apiType == "stderr" ||
-			strings.Contains(text, "[FATAL]") || 
-			strings.Contains(text, "[ERROR]") || 
-			strings.Contains(text, "[WARN]") ||
-			strings.Contains(text, "Exception") || 
-			strings.Contains(text, "Error")
-
-		if isImportant {
-			l.sendStatus(Status{
-				Step: "Launching",
-				LogLine: &LogLine{
-					Text: text,
-					Type: apiType,
-				},
-			})
+		verb := LogVerbosityError
+		if l.cfg != nil {
+			verb = ParseLaunchLogVerbosity(l.cfg.LaunchLogVerbosity)
 		}
+		if !shouldEmitGameLogLine(verb, text) {
+			continue
+		}
+		l.sendStatus(Status{
+			Step: "Playing",
+			LogLine: &LogLine{
+				Text: text,
+				Type: apiType,
+			},
+		})
 	}
 }
 
@@ -443,6 +465,16 @@ func (l *Launcher) buildArguments() []string {
 
 func (l *Launcher) buildClasspath() string {
 	var paths []string
+	seen := make(map[string]struct{})
+	addPath := func(p string) {
+		p = filepath.Clean(p)
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
+
 	version := l.opts.VersionInfo
 
 	// Add libraries
@@ -454,13 +486,13 @@ func (l *Launcher) buildClasspath() string {
 			continue
 		}
 		path := filepath.Join(l.cfg.LibrariesDir, lib.Downloads.Artifact.Path)
-		paths = append(paths, path)
+		addPath(path)
 	}
 
 	// Add client jar
 	clientPath := filepath.Join(l.cfg.LibrariesDir, "com", "mojang", "minecraft",
 		version.ID, fmt.Sprintf("minecraft-%s-client.jar", version.ID))
-	paths = append(paths, clientPath)
+	addPath(clientPath)
 
 	separator := ":"
 	if runtime.GOOS == "windows" {

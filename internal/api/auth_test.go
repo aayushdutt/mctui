@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -93,5 +94,42 @@ func TestAuthClient_PollForToken(t *testing.T) {
 	}
 	if attempts != 2 {
 		t.Errorf("Expected 2 attempts, got %d", attempts)
+	}
+}
+
+func TestAuthClient_FetchProfile_unauthorized(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer bad" {
+			t.Errorf("Authorization header: %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	old := mcProfileURL
+	mcProfileURL = ts.URL
+	defer func() { mcProfileURL = old }()
+
+	client := NewAuthClient("dummy")
+	_, err := client.FetchProfile(context.Background(), "bad")
+	if !errors.Is(err, ErrMinecraftSessionInvalid) {
+		t.Fatalf("err = %v, want ErrMinecraftSessionInvalid", err)
+	}
+}
+
+func TestAuthClient_ValidateMinecraftToken_ok(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(MinecraftProfile{ID: "u", Name: "n"})
+	}))
+	defer ts.Close()
+
+	old := mcProfileURL
+	mcProfileURL = ts.URL
+	defer func() { mcProfileURL = old }()
+
+	client := NewAuthClient("dummy")
+	if err := client.ValidateMinecraftToken(context.Background(), "token"); err != nil {
+		t.Fatal(err)
 	}
 }

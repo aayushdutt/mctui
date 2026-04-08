@@ -8,8 +8,9 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/quasar/mctui/internal/core"
-	"github.com/quasar/mctui/internal/launch"
+	"github.com/mctui/mctui/internal/config"
+	"github.com/mctui/mctui/internal/core"
+	"github.com/mctui/mctui/internal/launch"
 )
 
 // LaunchModel shows launch progress
@@ -24,6 +25,8 @@ type LaunchModel struct {
 	done     bool
 	err      error
 	logs     []string
+
+	cfg *config.Config // optional; used for log verbosity while playing
 }
 
 type stepInfo struct {
@@ -31,8 +34,8 @@ type stepInfo struct {
 	status string // pending, running, done, error
 }
 
-// NewLaunchModel creates a new launch view
-func NewLaunchModel(instance *core.Instance) *LaunchModel {
+// NewLaunchModel creates a new launch view. cfg is used for game log verbosity ([v] while playing).
+func NewLaunchModel(instance *core.Instance, cfg *config.Config) *LaunchModel {
 	p := progress.New(
 		progress.WithDefaultGradient(),
 		progress.WithWidth(50),
@@ -40,6 +43,7 @@ func NewLaunchModel(instance *core.Instance) *LaunchModel {
 
 	return &LaunchModel{
 		instance: instance,
+		cfg:      cfg,
 		progress: p,
 		steps: []stepInfo{
 			{name: "Checking Java", status: "pending"},
@@ -74,7 +78,7 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LaunchStatusUpdate:
 		m.status = msg.Status
 		m.updateSteps()
-		
+
 		if msg.Status.LogLine != nil {
 			line := fmt.Sprintf("[%s] %s", msg.Status.LogLine.Type, msg.Status.LogLine.Text)
 			m.logs = append(m.logs, line)
@@ -129,6 +133,11 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.done && m.err != nil {
 				return m, func() tea.Msg { return RetryLaunch{Offline: true} }
 			}
+		case "v":
+			if m.cfg != nil && m.status.Step == "Playing" && !m.done {
+				m.cfg.LaunchLogVerbosity = launch.CycleLaunchLogVerbosity(m.cfg.LaunchLogVerbosity)
+				_ = m.cfg.Save()
+			}
 		}
 	}
 
@@ -136,6 +145,21 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *LaunchModel) updateSteps() {
+	// Dynamically add Installing starter mods (Fabric bundle before the normal pipeline)
+	if m.status.Step == "Installing starter mods" {
+		found := false
+		for _, s := range m.steps {
+			if s.name == "Installing starter mods" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			newSteps := append([]stepInfo{{name: "Installing starter mods", status: "pending"}}, m.steps...)
+			m.steps = newSteps
+		}
+	}
+
 	// Dynamically add Downloading Java if it occurs
 	if m.status.Step == "Downloading Java" {
 		found := false
@@ -187,7 +211,7 @@ func (m *LaunchModel) View() string {
 	// Status message
 	headerText := fmt.Sprintf("Launching: %s", m.instance.Name)
 	if m.status.Step == "Playing" {
-		headerText = fmt.Sprintf("Playing: %s (Standard Output)", m.instance.Name)
+		headerText = fmt.Sprintf("Playing: %s", m.instance.Name)
 	}
 	header := headerStyle.Render(headerText)
 
@@ -241,7 +265,12 @@ func (m *LaunchModel) View() string {
 	} else {
 		helpText := "[Esc] Cancel • [Ctrl+C] Quit"
 		if m.status.Step == "Playing" {
-			helpText = "[Ctrl+C] Force Quit"
+			if m.cfg != nil {
+				v := launch.ParseLaunchLogVerbosity(m.cfg.LaunchLogVerbosity)
+				helpText = fmt.Sprintf("[Ctrl+C] Force quit • [v] Logs: %s", v.ShortLabel())
+			} else {
+				helpText = "[Ctrl+C] Force quit"
+			}
 		}
 		footer = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#626262")).

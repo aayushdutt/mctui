@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quasar/mctui/internal/config"
-	"github.com/quasar/mctui/internal/core"
+	"github.com/mctui/mctui/internal/config"
+	"github.com/mctui/mctui/internal/core"
 )
 
 func TestLauncher_IsFullyDownloaded(t *testing.T) {

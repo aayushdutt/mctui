@@ -2,8 +2,8 @@
 package ui
 
 import (
-	"github.com/quasar/mctui/internal/core"
-	"github.com/quasar/mctui/internal/launch"
+	"github.com/mctui/mctui/internal/core"
+	"github.com/mctui/mctui/internal/launch"
 )
 
 // Navigation messages
@@ -41,13 +41,16 @@ type (
 type (
 	// InstanceCreated is sent when a new instance is created
 	InstanceCreated struct {
-		Instance *core.Instance
+		Instance                 *core.Instance
+		InstallStarterFabricMods bool // mirrored from Instance.InstallStarterFabricMods (persisted in instance.json)
 	}
 
 	// InstancesLoaded is sent when instances are loaded from disk
 	InstancesLoaded struct {
 		Instances []*core.Instance
 		Error     error
+		// SelectID, if set, moves the home list cursor to that instance after refresh (e.g. newly created).
+		SelectID string
 	}
 
 	// VersionsLoaded is sent when version manifest is fetched
@@ -80,4 +83,43 @@ type (
 	RetryLaunch struct {
 		Offline bool
 	}
+
+	// ProceedWithLaunch continues to the launch view after online session checks pass.
+	ProceedWithLaunch struct {
+		Instance *core.Instance
+	}
+
+	// SessionGateFailed blocks online launch until the user re-authenticates or network is available.
+	SessionGateFailed struct {
+		NeedAuth bool  // missing account, locally expired, or API rejected token (401)
+		Err      error // network / server error when NeedAuth is false
+	}
+
+	// ActiveSessionCheckStarted signals a background Minecraft session check has begun.
+	ActiveSessionCheckStarted struct{}
+
+	// ActiveSessionCheckResult is the outcome of a background session verification on the home screen.
+	ActiveSessionCheckResult struct {
+		Status ActiveSessionCheckStatus
+		Err    error // set when Status is ActiveSessionUncertain
+	}
+
+	// ModInstallDoneMsg is sent when a Modrinth mod jar install finishes or fails.
+	ModInstallDoneMsg struct {
+		ProjectID string
+		Slug      string
+		Title     string
+		Path      string
+		Err       error
+	}
+)
+
+// ActiveSessionCheckStatus is the outcome of validating the active account against Minecraft Services.
+type ActiveSessionCheckStatus int
+
+const (
+	ActiveSessionNotApplicable ActiveSessionCheckStatus = iota // no Microsoft account to check
+	ActiveSessionOK
+	ActiveSessionInvalid
+	ActiveSessionUncertain
 )

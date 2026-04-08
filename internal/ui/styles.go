@@ -16,11 +16,20 @@ var (
 	ColorSubtle    = lipgloss.Color("#A1A1AA") // Zinc
 )
 
+// App shell: consistent inset from the terminal edge for every full-screen view.
+// Apply in the root View after sizing children to (terminal − 2*pad).
+const (
+	AppShellPadY = 1
+	AppShellPadX = 2
+)
+
+// AppShellStyle wraps rendered views with the standard horizontal/vertical padding.
+var AppShellStyle = lipgloss.NewStyle().Padding(AppShellPadY, AppShellPadX)
+
 // Shared styles
 var (
-	// Container styles
-	ContainerStyle = lipgloss.NewStyle().
-			Padding(1, 2)
+	// ContainerStyle matches [AppShellStyle] (legacy alias).
+	ContainerStyle = AppShellStyle
 
 	// Title styles
 	TitleStyle = lipgloss.NewStyle().
