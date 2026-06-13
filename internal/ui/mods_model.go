@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // ModsModel: left = installed, right = Modrinth (split) or stacked when narrow.
@@ -65,41 +64,29 @@ type ModsModel struct {
 func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
 	blocked := inst == nil || loader.ParseKind(inst.Loader) != loader.KindFabric
 
-	instDel := list.NewDefaultDelegate()
-	instDel.Styles.SelectedTitle = instDel.Styles.SelectedTitle.
-		Foreground(ColorWarning).
-		BorderLeftForeground(ColorWarning)
-	instDel.Styles.SelectedDesc = instDel.Styles.SelectedDesc.
-		Foreground(ColorAmberSubtle).
-		BorderLeftForeground(ColorWarning)
+	instDel := ThemeListDelegate(Active.Warning, Active.WarningSoft)
 	installedList := list.New([]list.Item{}, instDel, 0, 0)
 	installedList.Title = "Installed (0)"
 	installedList.SetShowTitle(false)
 	installedList.SetShowStatusBar(true)
 	installedList.SetFilteringEnabled(false)
 	installedList.DisableQuitKeybindings()
+	ThemeListChrome(&installedList)
 
 	ti := textinput.New()
 	ti.Placeholder = "Search Fabric mods, or leave empty for popular picks…"
 	ti.CharLimit = 200
 	ti.Width = 50
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(ColorZinc500)
-	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
+	ThemeTextInput(&ti)
 
-	browseDel := list.NewDefaultDelegate()
-	browseDel.Styles.SelectedTitle = browseDel.Styles.SelectedTitle.
-		Foreground(ColorSuccess).
-		BorderLeftForeground(ColorSuccess)
-	browseDel.Styles.SelectedDesc = browseDel.Styles.SelectedDesc.
-		Foreground(ColorSuccessSubtle).
-		BorderLeftForeground(ColorSuccess)
-
+	browseDel := ThemeListDelegate(Active.Success, Active.SuccessSoft)
 	browseList := list.New([]list.Item{}, browseDel, 0, 0)
 	browseList.Title = "Modrinth"
 	browseList.SetShowTitle(false)
 	browseList.SetShowStatusBar(true)
 	browseList.SetFilteringEnabled(false)
 	browseList.DisableQuitKeybindings()
+	ThemeListChrome(&browseList)
 
 	m := &ModsModel{
 		inst:      inst,
@@ -330,7 +317,7 @@ func (m *ModsModel) Init() tea.Cmd {
 	return browse
 }
 
-func (m *ModsModel) footerHelpItems() []string {
+func (m *ModsModel) footerHelpItems() []KeyHint {
 	if m.compactLayout {
 		return modsCompactFooterItems(m.height, m.width)
 	}
@@ -349,17 +336,6 @@ func (m *ModsModel) cycleTab() {
 	case panelBrowse:
 		m.modsFocus = panelInstalled
 	}
-}
-
-func (m *ModsModel) panelBorderFocused(p modsPanel) lipgloss.Style {
-	s := lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder())
-	if m.modsFocus == p {
-		return s.BorderForeground(ColorSuccess)
-	}
-	if p == panelInstalled {
-		return s.BorderForeground(ColorStone)
-	}
-	return s.BorderForeground(ColorZinc800)
 }
 
 func (m *ModsModel) rightColumnFocused() bool {

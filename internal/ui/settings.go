@@ -18,6 +18,7 @@ const (
 	focusSettingsJavaPath settingsFocus = iota
 	focusSettingsJVMArgs
 	focusSettingsSnapshots
+	focusSettingsTheme
 	focusSettingsMSAClientID
 	focusSettingsSave
 )
@@ -27,6 +28,7 @@ var settingsFocusOrder = []settingsFocus{
 	focusSettingsJavaPath,
 	focusSettingsJVMArgs,
 	focusSettingsSnapshots,
+	focusSettingsTheme,
 	focusSettingsMSAClientID,
 	focusSettingsSave,
 }
@@ -44,6 +46,10 @@ type SettingsModel struct {
 	msaClientID textinput.Model
 	snapshots   bool
 
+	themeNames []string // registered theme names, in order
+	themeIdx   int      // index of the previewed/selected theme
+	origTheme  string   // theme active when the form opened (restore on cancel)
+
 	saveErr string
 }
 
@@ -55,9 +61,17 @@ func NewSettingsModel(cfg *config.Config) *SettingsModel {
 		ti.Placeholder = placeholder
 		ti.CharLimit = 512
 		ti.Width = width
-		ti.PromptStyle = lipgloss.NewStyle().Foreground(ColorZinc500)
-		ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
+		ThemeTextInput(&ti)
 		return ti
+	}
+
+	themeNames := ThemeNames()
+	themeIdx := 0
+	for i, n := range themeNames {
+		if n == cfg.Theme {
+			themeIdx = i
+			break
+		}
 	}
 
 	m := &SettingsModel{
@@ -66,6 +80,9 @@ func NewSettingsModel(cfg *config.Config) *SettingsModel {
 		jvmArgs:     mk(strings.Join(cfg.JVMArgs, " "), strings.Join(config.DefaultJVMArgs(), " "), 48),
 		msaClientID: mk(cfg.MSAClientID, config.DefaultMSAClientID, 48),
 		snapshots:   cfg.ShowSnapshots,
+		themeNames:  themeNames,
+		themeIdx:    themeIdx,
+		origTheme:   ActiveName(),
 	}
 	m.applyFocus(focusSettingsJavaPath)
 	return m
@@ -120,6 +137,17 @@ func (m *SettingsModel) cycleFocus(delta int) {
 	m.applyFocus(settingsFocusOrder[(idx+delta+n)%n])
 }
 
+// cycleTheme moves the theme selection by delta (wrapping) and applies the new
+// theme immediately so the foreground form previews it live.
+func (m *SettingsModel) cycleTheme(delta int) {
+	n := len(m.themeNames)
+	if n == 0 {
+		return
+	}
+	m.themeIdx = (m.themeIdx + delta + n) % n
+	Apply(m.themeNames[m.themeIdx])
+}
+
 // Update implements tea.Model.
 func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -130,8 +158,22 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.snapshots = !m.snapshots
 			return m, nil
 		}
+		// Left/right cycles the theme selector with live preview when focused.
+		// Handled here so it never falls through to the textinput handling.
+		if m.focus == focusSettingsTheme {
+			switch msg.String() {
+			case "left", "h":
+				m.cycleTheme(-1)
+				return m, nil
+			case "right", "l":
+				m.cycleTheme(1)
+				return m, nil
+			}
+		}
 		switch msg.String() {
 		case "esc":
+			// Restore a previewed-but-unsaved theme so it doesn't persist visually.
+			Apply(m.origTheme)
 			return m, func() tea.Msg { return NavigateToHome{} }
 		case "tab", "down":
 			m.cycleFocus(1)
@@ -172,27 +214,27 @@ func (m *SettingsModel) submit() (*SettingsModel, tea.Cmd) {
 		JVMArgs:       strings.Fields(m.jvmArgs.Value()),
 		ShowSnapshots: m.snapshots,
 		MSAClientID:   strings.TrimSpace(m.msaClientID.Value()),
+		Theme:         m.themeNames[m.themeIdx],
 	}
 	return m, func() tea.Msg { return saved }
 }
 
 // View implements tea.Model.
 func (m *SettingsModel) View() string {
-	header := lipgloss.NewStyle().Bold(true).Foreground(ColorText).Render("Settings")
-	sub := lipgloss.NewStyle().Foreground(ColorSubtle).Render("Changes apply on save and persist to config.json")
+	header := ScreenHeader("Settings", "Changes apply on save and persist to config.json")
 
 	field := func(label, hint string, in textinput.Model, focused bool) string {
-		border := ColorZinc700
+		border := Active.BorderSubtle
 		if focused {
-			border = ColorSuccess
+			border = Active.Success
 		}
-		lbl := lipgloss.NewStyle().Foreground(ColorZinc500).Render(label)
+		lbl := lipgloss.NewStyle().Foreground(Active.TextDim).Render(label)
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(border).
 			Padding(0, 1).
 			Render(in.View())
-		hintLine := lipgloss.NewStyle().Foreground(ColorZinc600).Render(hint)
+		hintLine := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(hint)
 		return lipgloss.JoinVertical(lipgloss.Left, lbl, box, hintLine)
 	}
 
@@ -203,41 +245,81 @@ func (m *SettingsModel) View() string {
 	// Snapshots checkbox row, styled to match the wizard's starter-mods row.
 	cbFocused := m.focus == focusSettingsSnapshots
 	mark := wizardCheckboxGlyph(m.snapshots, cbFocused)
-	cbTitle := lipgloss.NewStyle().Foreground(ColorZinc200).Render("Show snapshots in the version list")
-	cbSub := lipgloss.NewStyle().Foreground(ColorZinc500).Render("Includes pre-releases and weekly snapshots")
+	cbTitle := lipgloss.NewStyle().Foreground(Active.Title).Render("Show snapshots in the version list")
+	cbSub := lipgloss.NewStyle().Foreground(Active.TextDim).Render("Includes pre-releases and weekly snapshots")
 	cbLabel := lipgloss.JoinVertical(lipgloss.Left, cbTitle, cbSub)
 	cbRow := lipgloss.JoinHorizontal(lipgloss.Top, mark, "  ", cbLabel)
 	rowStyle := lipgloss.NewStyle().PaddingLeft(2)
 	if cbFocused {
 		rowStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(ColorSuccess).
-			Background(ColorZinc800).
+			BorderForeground(Active.Success).
+			Background(Active.BorderFaint).
 			PaddingLeft(1).
 			PaddingRight(1)
 	}
 	snapshotsBlock := rowStyle.Render(cbRow)
 
+	// Theme selector row, styled to match the snapshots checkbox row.
+	themeFocused := m.focus == focusSettingsTheme
+	themeName := ""
+	if len(m.themeNames) > 0 {
+		themeName = m.themeNames[m.themeIdx]
+	}
+	displayTheme := themeName
+	if displayTheme != "" {
+		displayTheme = strings.ToUpper(displayTheme[:1]) + displayTheme[1:]
+	}
+	arrowFg := Active.TextDim
+	if themeFocused {
+		arrowFg = Active.Success
+	}
+	arrowStyle := lipgloss.NewStyle().Foreground(arrowFg)
+	valueStyle := lipgloss.NewStyle().Bold(true).Foreground(Active.Title)
+	picker := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		arrowStyle.Render("‹ "),
+		valueStyle.Render(displayTheme),
+		arrowStyle.Render(" ›"),
+	)
+	themeTitle := lipgloss.NewStyle().Foreground(Active.Title).Render("Theme")
+	themeSub := lipgloss.NewStyle().Foreground(Active.TextDim).Render("Live preview · ←/→ to change")
+	themeLabel := lipgloss.JoinVertical(lipgloss.Left, themeTitle, themeSub)
+	themeRow := lipgloss.JoinHorizontal(lipgloss.Top, picker, "  ", themeLabel)
+	themeRowStyle := lipgloss.NewStyle().PaddingLeft(2)
+	if themeFocused {
+		themeRowStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(Active.Success).
+			Background(Active.BorderFaint).
+			PaddingLeft(1).
+			PaddingRight(1)
+	}
+	themeBlock := themeRowStyle.Render(themeRow)
+
 	saveBtn := lipgloss.NewStyle().MarginTop(1).Render(wizardFormButton("Save", m.focus == focusSettingsSave, true))
 
 	errBlock := ""
 	if m.saveErr != "" {
-		errBlock = lipgloss.NewStyle().Foreground(ColorError).MarginTop(1).Render(m.saveErr)
+		errBlock = lipgloss.NewStyle().Foreground(Active.Error).MarginTop(1).Render(m.saveErr)
 	}
 
-	help := lipgloss.NewStyle().
-		Foreground(ColorZinc600).
-		MarginTop(1).
-		Render("[Tab]/[↑][↓] move · [Space] toggle · [Enter] save · [Esc] cancel")
+	help := lipgloss.NewStyle().MarginTop(1).Render(KeyHints(max(40, m.width-4),
+		KeyHint{"tab", "move"},
+		KeyHint{"space", "toggle"},
+		KeyHint{"←→", "theme"},
+		KeyHint{"enter", "save"},
+		KeyHint{"esc", "cancel"},
+	))
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		header,
-		sub,
 		"",
 		javaBlock,
 		jvmBlock,
 		snapshotsBlock,
+		themeBlock,
 		msaBlock,
 		saveBtn,
 		errBlock,

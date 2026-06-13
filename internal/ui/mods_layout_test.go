@@ -38,7 +38,7 @@ func TestModsLayoutCompactFitsTerminalHeight(t *testing.T) {
 	}
 }
 
-// Help line count must match the width ModsModel.View passes to buildHelpText.
+// Help line count must match the width ModsModel.View passes to modsRenderHelp.
 func TestModsHelpBodyMaxWidthMatchesView(t *testing.T) {
 	w := 53
 	if got, want := modsHelpBodyMaxWidth(w), w-6; got != want {

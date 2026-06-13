@@ -100,6 +100,28 @@ Data lives under `~/.local/share/mctui` (Linux/macOS) or `%APPDATA%\mctui` (Wind
 
 Config (same data directory) can include **`launchLogVerbosity`**: `error` (default), `warn`, or `all`.
 
+## Themes
+
+mctui ships with several built-in themes. Set the **`theme`** key in `config.json` (in the data directory above), e.g.:
+
+```json
+{ "theme": "gruvbox" }
+```
+
+| Theme        | Notes                                                          |
+| ------------ | -------------------------------------------------------------- |
+| `auto`       | **Default.** Adapts to your terminal — uses `dark` or `light` based on the detected terminal background. |
+| `dark`       | Force the dark palette.                                        |
+| `light`      | Force the light palette (tuned for light-background terminals). |
+| `gruvbox`    | Retro warm (dark).                                             |
+| `catppuccin` | Soft pastel (dark).                                            |
+| `dracula`    | High-contrast (dark).                                          |
+| `nord`       | Cool arctic (dark).                                            |
+
+You can also switch themes live in the in-app **Settings** screen — the theme selector previews each theme as you move through the list.
+
+Themes recolor foregrounds, accents, and borders and inherit your terminal's background. `auto` keeps text readable on either a light or dark terminal automatically. The named dark-family themes are designed for dark terminals; choose `light` (or `auto`) if you run a light-background terminal.
+
 ## License
 
 MIT

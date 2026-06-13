@@ -127,6 +127,7 @@ type (
 		JVMArgs       []string
 		ShowSnapshots bool
 		MSAClientID   string
+		Theme         string
 	}
 )
 

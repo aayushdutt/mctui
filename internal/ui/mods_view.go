@@ -11,56 +11,51 @@ import (
 
 func (m *ModsModel) libraryBannerBlock(nLocal int) string {
 	if m.installedErr != "" {
-		return lipgloss.NewStyle().Foreground(ColorError).Render(m.installedErr)
+		return lipgloss.NewStyle().Foreground(Active.Error).Render(m.installedErr)
 	}
 	if m.modsDialog == modsDialogConfirmRemoveJar {
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorStone500).
+			BorderForeground(Active.Border).
 			Padding(0, 1).
 			MarginBottom(0)
-		q := lipgloss.NewStyle().Foreground(ColorText).
+		q := lipgloss.NewStyle().Foreground(Active.Text).
 			Render(fmt.Sprintf("Remove %q from this instance?", m.modsDialogJar))
-		actions := lipgloss.NewStyle().Foreground(ColorStone400).
-			Render("[y] or Enter confirm  ·  [n] or Backspace cancel")
+		actions := KeyHints(max(24, m.libraryListW), KeyHint{"y/↵", "confirm"}, KeyHint{"n/⌫", "cancel"})
 		return box.Render(lipgloss.JoinVertical(lipgloss.Left, q, actions))
 	}
 	if m.libraryToast != "" {
-		return lipgloss.NewStyle().Foreground(ColorSuccessSubtle).Render(m.libraryToast)
+		return lipgloss.NewStyle().Foreground(Active.SuccessSoft).Render(m.libraryToast)
 	}
 	if len(m.installed.Items()) == 0 {
-		return lipgloss.NewStyle().Foreground(ColorZinc500).Render("Empty — browse →")
+		return lipgloss.NewStyle().Foreground(Active.TextDim).Render("Empty — browse →")
 	}
-	return lipgloss.NewStyle().Foreground(ColorStone).
+	return lipgloss.NewStyle().Foreground(Active.Border).
 		Render(fmt.Sprintf("%d jar(s) · %s", nLocal, filepath.Base(mods.ModsDir(m.inst))))
 }
 
 func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta, discoverHint string) string {
-	title := lipgloss.NewStyle().Bold(true).Foreground(ColorViolet300).Render("Discover")
-	sub := lipgloss.NewStyle().Foreground(ColorZinc600).Render("Modrinth · Fabric mods for this version")
-	header := lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", sub)
-
-	qLabel := lipgloss.NewStyle().Foreground(ColorStone).Render("Query")
+	qLabel := lipgloss.NewStyle().Foreground(Active.Border).Render("Query")
 	if m.modsFocus == panelQuery {
-		qLabel = lipgloss.NewStyle().Bold(true).Foreground(ColorSuccess).Render("Query")
+		qLabel = lipgloss.NewStyle().Bold(true).Foreground(Active.Success).Render("Query")
 	}
 	searchBox := m.query.View()
 	if m.modsFocus != panelQuery {
-		searchBox = lipgloss.NewStyle().Foreground(ColorZinc500).Render(searchBox)
+		searchBox = lipgloss.NewStyle().Foreground(Active.TextDim).Render(searchBox)
 	}
 	queryRow := lipgloss.JoinVertical(lipgloss.Left, qLabel, searchBox)
 
 	statusBlock := ""
 	if statusVisible && strings.TrimSpace(status) != "" {
-		bar := lipgloss.NewStyle().Foreground(ColorPrimary).Render("┃ ")
+		bar := lipgloss.NewStyle().Foreground(Active.Primary).Render("┃ ")
 		statusBlock = lipgloss.JoinHorizontal(lipgloss.Top, bar, status)
 	}
 
 	aux := ""
 	if strings.TrimSpace(meta) != "" && strings.TrimSpace(discoverHint) != "" {
 		aux = lipgloss.JoinHorizontal(lipgloss.Left,
-			lipgloss.NewStyle().Foreground(ColorZinc600).Render(meta),
-			lipgloss.NewStyle().Foreground(ColorZinc700).Render("  ·  "),
+			lipgloss.NewStyle().Foreground(Active.TextMuted).Render(meta),
+			lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("  ·  "),
 			discoverHint,
 		)
 	} else if strings.TrimSpace(meta) != "" {
@@ -70,8 +65,6 @@ func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta,
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		"",
 		queryRow,
 		statusBlock,
 		aux,
@@ -81,19 +74,19 @@ func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta,
 // View implements tea.Model.
 func (m *ModsModel) View() string {
 	if m.blocked {
-		brand := lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("Mods")
-		divider := lipgloss.NewStyle().Foreground(ColorZinc700).Render(strings.Repeat("─", min(42, max(24, m.width-8))))
+		brand := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render("Mods")
+		divider := lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render(strings.Repeat("─", min(42, max(24, m.width-8))))
 		body := lipgloss.JoinVertical(
 			lipgloss.Center,
 			brand,
-			lipgloss.NewStyle().Foreground(ColorSubtle).Render("Fabric instances only"),
+			lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Fabric instances only"),
 			"",
 			divider,
 			"",
-			lipgloss.NewStyle().Foreground(ColorText).
+			lipgloss.NewStyle().Foreground(Active.Text).
 				Render("Select a Fabric instance on home, then press [m]."),
 			"",
-			lipgloss.NewStyle().Foreground(ColorMuted).Render("[esc]  Back"),
+			KeyHints(40, KeyHint{"esc", "back"}),
 		)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 	}
@@ -101,10 +94,10 @@ func (m *ModsModel) View() string {
 	nLocal := len(m.installed.Items())
 
 	contentInnerW := max(24, m.width-8)
-	brand := lipgloss.NewStyle().Bold(true).Foreground(ColorViolet200).Render("Mods")
-	ctxLine := lipgloss.NewStyle().Foreground(ColorSubtle).Render(
+	brand := lipgloss.NewStyle().Bold(true).Foreground(Active.AccentSofter).Render("Mods")
+	ctxLine := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(
 		fmt.Sprintf("%s · Minecraft %s · Fabric · %d installed", m.inst.Name, m.inst.Version, nLocal))
-	shellRule := lipgloss.NewStyle().Foreground(ColorZinc800).Render(strings.Repeat("─", contentInnerW))
+	shellRule := lipgloss.NewStyle().Foreground(Active.BorderFaint).Render(strings.Repeat("─", contentInnerW))
 	header := lipgloss.NewStyle().MarginBottom(1).Render(lipgloss.JoinVertical(
 		lipgloss.Left, brand, ctxLine, shellRule))
 
@@ -112,38 +105,38 @@ func (m *ModsModel) View() string {
 	modrinthStatusVisible := false
 	switch {
 	case m.installing:
-		modrinthStatus = lipgloss.NewStyle().Foreground(ColorSecondary).Render("Downloading selected mod…")
+		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Secondary).Render("Downloading selected mod…")
 		modrinthStatusVisible = true
 	case m.installErr != "":
-		modrinthStatus = lipgloss.NewStyle().Foreground(ColorError).Render(m.installErr)
+		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Error).Render(m.installErr)
 		modrinthStatusVisible = true
 	case m.installOK != "":
-		modrinthStatus = lipgloss.NewStyle().Foreground(ColorAccent).Render(m.installOK)
+		modrinthStatus = lipgloss.NewStyle().Foreground(Active.SuccessAccent).Render(m.installOK)
 		modrinthStatusVisible = true
 	case m.searching:
 		modrinthStatusVisible = true
 		if strings.TrimSpace(m.query.Value()) == "" {
-			modrinthStatus = lipgloss.NewStyle().Foreground(ColorSubtle).Render("Loading Modrinth…")
+			modrinthStatus = lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Loading Modrinth…")
 		} else {
-			modrinthStatus = lipgloss.NewStyle().Foreground(ColorSubtle).Render("Searching…")
+			modrinthStatus = lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Searching…")
 		}
 	case m.searchErr != "":
-		modrinthStatus = lipgloss.NewStyle().Foreground(ColorError).Render(m.searchErr)
+		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Error).Render(m.searchErr)
 		modrinthStatusVisible = true
 	case m.searchNotice != "":
-		modrinthStatus = lipgloss.NewStyle().Foreground(ColorWarning).Render(m.searchNotice)
+		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Warning).Render(m.searchNotice)
 		modrinthStatusVisible = true
 	}
 
 	meta := ""
 	if !m.searching && m.searchErr == "" && m.lastTotalHits > 0 && len(m.results.Items()) > 0 {
-		meta = lipgloss.NewStyle().Foreground(ColorZinc600).
+		meta = lipgloss.NewStyle().Foreground(Active.TextMuted).
 			Render(fmt.Sprintf("Showing %d of ~%s projects", len(m.results.Items()), formatModHitCount(m.lastTotalHits)))
 	}
 
 	discoverHint := ""
 	if len(m.results.Items()) > 0 && !m.searching {
-		discoverHint = lipgloss.NewStyle().Foreground(ColorZinc600).Italic(true).
+		discoverHint = lipgloss.NewStyle().Foreground(Active.TextMuted).Italic(true).
 			Render("● = already installed   ◆ = installing")
 	}
 
@@ -157,40 +150,36 @@ func (m *ModsModel) View() string {
 	if resW < 4 {
 		resW = 28
 	}
-	libHdr := modPanelSectionHeader(m.installed.Title, "#34D399", libW)
-	browseHdr := modPanelSectionHeader(m.results.Title, "#A78BFA", resW)
-
 	libraryInner := lipgloss.JoinVertical(lipgloss.Left,
 		libBanner,
-		libHdr,
 		m.installed.View(),
 	)
 	rightTop := m.buildModrinthChrome(modrinthStatus, modrinthStatusVisible, meta, discoverHint)
 	rightInner := lipgloss.JoinVertical(lipgloss.Left,
 		rightTop,
-		browseHdr,
+		SectionHeader(m.results.Title, resW),
 		m.results.View(),
 	)
 
 	if !m.compactLayout {
-		hl := lipgloss.Height(libraryInner)
-		hr := lipgloss.Height(rightInner)
-		mx := max(hl, hr)
+		mx := max(lipgloss.Height(libraryInner), lipgloss.Height(rightInner))
 		if mx > 0 {
 			libraryInner = lipgloss.PlaceVertical(mx, lipgloss.Top, libraryInner)
 			rightInner = lipgloss.PlaceVertical(mx, lipgloss.Top, rightInner)
 		}
 	}
 
-	libraryView := m.panelBorderFocused(panelInstalled).Render(libraryInner)
-
-	rightPane := lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder())
-	if m.rightColumnFocused() {
-		rightPane = rightPane.BorderForeground(ColorSuccess)
-	} else {
-		rightPane = rightPane.BorderForeground(ColorZinc800)
+	// Titled panels: each pane's title sits in its top border; accent reflects focus.
+	libAccent := Active.Border
+	if m.modsFocus == panelInstalled {
+		libAccent = Active.Success
 	}
-	browseBox := rightPane.Render(rightInner)
+	browseAccent := Active.BorderFaint
+	if m.rightColumnFocused() {
+		browseAccent = Active.Success
+	}
+	libraryView := Panel(m.installed.Title, libraryInner, libW+4, libAccent)
+	browseBox := Panel("Discover", rightInner, resW+4, browseAccent)
 
 	layout := ""
 	if m.compactLayout {
@@ -207,10 +196,9 @@ func (m *ModsModel) View() string {
 	}
 
 	helpItems := m.footerHelpItems()
-	helpRule := lipgloss.NewStyle().Foreground(ColorZinc700).Render(strings.Repeat("─", min(contentInnerW, 56)))
 	help := lipgloss.JoinVertical(lipgloss.Left,
-		helpRule,
-		lipgloss.NewStyle().Foreground(ColorMuted).MarginTop(1).Render(buildHelpText(helpItems, m.width-6)))
+		Rule(min(contentInnerW, 56)),
+		lipgloss.NewStyle().MarginTop(1).Render(modsRenderHelp(helpItems, m.width-6)))
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top,
 		lipgloss.NewStyle().Padding(1, 2).Render(lipgloss.JoinVertical(lipgloss.Left, layout, "", help)))

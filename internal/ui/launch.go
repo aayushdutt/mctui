@@ -36,10 +36,7 @@ type stepInfo struct {
 
 // NewLaunchModel creates a new launch view. cfg is used for game log verbosity ([v] while playing).
 func NewLaunchModel(instance *core.Instance, cfg *config.Config) *LaunchModel {
-	p := progress.New(
-		progress.WithDefaultGradient(),
-		progress.WithWidth(50),
-	)
+	p := ThemeProgress(50)
 
 	return &LaunchModel{
 		instance: instance,
@@ -202,102 +199,129 @@ func (m *LaunchModel) updateStepStatus(stepName, status string) {
 
 // View implements tea.Model
 func (m *LaunchModel) View() string {
+	// Panel width: derive from content width, clamp to a readable band and
+	// guard against an unset (0) width early in the lifecycle. The progress bar
+	// (width 50) lives just above the panels, so keep panels at least 54 wide.
+	panelW := m.width
+	if panelW > 60 {
+		panelW = 60
+	}
+	if panelW < 54 {
+		panelW = 54
+	}
+
+	// Header: filled accent pill (kept) + instance info line.
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(ColorText).
-		Background(ColorPrimary).
+		Foreground(OnColor(Active.Primary)).
+		Background(Active.Primary).
 		Padding(0, 1)
 
-	// Status message
 	headerText := fmt.Sprintf("Launching: %s", m.instance.Name)
 	if m.status.Step == "Playing" {
 		headerText = fmt.Sprintf("Playing: %s", m.instance.Name)
 	}
 	header := headerStyle.Render(headerText)
 
-	// Instance info
 	info := lipgloss.NewStyle().
-		Foreground(ColorSubtle).
-		Render(fmt.Sprintf("Minecraft %s • %s", m.instance.Version, m.instance.Loader))
+		Foreground(Active.TextSubtle).
+		Render(fmt.Sprintf("Minecraft %s  %s  %s", m.instance.Version, GlyphDot, m.instance.Loader))
 
-	// Progress bar
-	progressView := m.progress.View()
-
-	// Steps
-	var stepsView strings.Builder
-	for _, step := range m.steps {
+	// Progress panel: the bar, then the step rows. The currently-running step is
+	// emphasized bold; done steps are success, pending steps dim.
+	var steps strings.Builder
+	for i, step := range m.steps {
 		var icon string
 		var style lipgloss.Style
 		switch step.status {
 		case "done":
-			icon = "✓"
-			style = lipgloss.NewStyle().Foreground(ColorSuccess)
+			icon = GlyphDone
+			style = lipgloss.NewStyle().Foreground(Active.Success)
 		case "running":
-			icon = "◐"
-			style = lipgloss.NewStyle().Foreground(ColorAmber)
+			icon = GlyphRunning
+			style = lipgloss.NewStyle().Bold(true).Foreground(Active.WarningStrong)
 		case "error":
-			icon = "✗"
-			style = lipgloss.NewStyle().Foreground(ColorError)
+			icon = GlyphFail
+			style = lipgloss.NewStyle().Foreground(Active.Error)
 		default:
-			icon = "○"
-			style = lipgloss.NewStyle().Foreground(ColorMuted)
+			icon = GlyphPending
+			style = lipgloss.NewStyle().Foreground(Active.TextFaint)
 		}
-		stepsView.WriteString(style.Render(fmt.Sprintf("%s %s", icon, step.name)))
-		stepsView.WriteString("\n")
+		if i > 0 {
+			steps.WriteString("\n")
+		}
+		steps.WriteString(style.Render(icon + " " + step.name))
 	}
 
-	// Status message
-	msgStyle := lipgloss.NewStyle().Foreground(ColorSubtle)
-	statusMsg := msgStyle.Render(m.status.Message)
+	// The progress bar renders at its own fixed width, so keep it above the
+	// panel rather than inside (where the bar + percentage would wrap).
+	stepsPanel := Panel("Progress", steps.String(), panelW, Active.Primary)
 
-	// Error or completion
+	// Status message under the progress panel.
+	statusMsg := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(m.status.Message)
+
+	// Completion / error footer or in-flight key hints, all routed via KeyHints.
 	var footer string
 	if m.done {
 		if m.err != nil {
-			footer = lipgloss.NewStyle().
-				Foreground(ColorError).
-				Render(fmt.Sprintf("\n✗ Failed: %v\n\n[r] Retry • [o] Offline Mode • [Enter] Home", m.err))
+			fail := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(Active.Error).
+				Render(fmt.Sprintf("%s Failed: %v", GlyphFail, m.err))
+			hints := KeyHints(panelW,
+				KeyHint{"r", "retry"},
+				KeyHint{"o", "offline mode"},
+				KeyHint{"enter", "home"},
+			)
+			footer = lipgloss.JoinVertical(lipgloss.Left, fail, "", hints)
 		} else {
 			footer = lipgloss.NewStyle().
-				Foreground(ColorSuccess).
-				Render("\n✓ Game Closed. Returning to home...")
+				Bold(true).
+				Foreground(Active.Success).
+				Render(fmt.Sprintf("%s Game closed. Returning to home…", GlyphDone))
+		}
+	} else if m.status.Step == "Playing" {
+		if m.cfg != nil {
+			v := launch.ParseLaunchLogVerbosity(m.cfg.LaunchLogVerbosity)
+			footer = KeyHints(panelW,
+				KeyHint{"ctrl+c", "force quit"},
+				KeyHint{"v", "logs: " + v.ShortLabel()},
+			)
+		} else {
+			footer = KeyHints(panelW, KeyHint{"ctrl+c", "force quit"})
 		}
 	} else {
-		helpText := "[Esc] Cancel • [Ctrl+C] Quit"
-		if m.status.Step == "Playing" {
-			if m.cfg != nil {
-				v := launch.ParseLaunchLogVerbosity(m.cfg.LaunchLogVerbosity)
-				helpText = fmt.Sprintf("[Ctrl+C] Force quit • [v] Logs: %s", v.ShortLabel())
-			} else {
-				helpText = "[Ctrl+C] Force quit"
-			}
-		}
-		footer = lipgloss.NewStyle().
-			Foreground(ColorMuted).
-			Render("\n" + helpText)
+		footer = KeyHints(panelW,
+			KeyHint{"esc", "cancel"},
+			KeyHint{"ctrl+c", "quit"},
+		)
 	}
 
-	// Logs
-	var logsView strings.Builder
-	if len(m.logs) > 0 {
-		logsView.WriteString("\n")
-		logStyle := lipgloss.NewStyle().Foreground(ColorGray)
-		for _, line := range m.logs {
-			logsView.WriteString(logStyle.Render(line) + "\n")
-		}
-	}
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
+	// Assemble: gaps are explicit "" entries rather than embedded "\n".
+	parts := []string{
 		header,
 		info,
 		"",
-		progressView,
+		m.progress.View(),
 		"",
-		stepsView.String(),
-		"",
-		statusMsg,
-		logsView.String(),
-		footer,
-	)
+		stepsPanel,
+	}
+	if m.status.Message != "" {
+		parts = append(parts, "", statusMsg)
+	}
+
+	// Logs panel (only when there are logs).
+	if len(m.logs) > 0 {
+		logStyle := lipgloss.NewStyle().Foreground(Active.TextFaint)
+		styled := make([]string, len(m.logs))
+		for i, line := range m.logs {
+			styled[i] = logStyle.Render(line)
+		}
+		logsPanel := Panel("Logs", strings.Join(styled, "\n"), panelW, Active.BorderSubtle)
+		parts = append(parts, "", logsPanel)
+	}
+
+	parts = append(parts, "", footer)
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

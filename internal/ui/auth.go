@@ -47,7 +47,7 @@ type AuthModel struct {
 func NewAuthModel(dataDir string, clientID string, manager *core.AccountManager) *AuthModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	s.Style = lipgloss.NewStyle().Foreground(Active.Secondary)
 
 	return &AuthModel{
 		state:    AuthStateInit,
@@ -221,65 +221,87 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AuthModel) View() string {
-	doc := lipgloss.NewStyle().Padding(2, 4).Width(m.width).Height(m.height)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.authCard())
+}
 
-	var content string
+// authCard renders the centered content for the current auth state.
+func (m *AuthModel) authCard() string {
+	w := m.width - 8
+	if w > 60 {
+		w = 60
+	}
+	if w < 24 {
+		w = 24
+	}
 
 	switch m.state {
 	case AuthStateInit, AuthStateFetchingCode:
-		content = fmt.Sprintf("%s Contacting Microsoft...", m.spinner.View())
+		return authStatusLine(m.spinner.View(), "Contacting Microsoft…")
+
+	case AuthStateExchange:
+		return authStatusLine(m.spinner.View(), "Signing in to Minecraft…")
+
+	case AuthStateSuccess:
+		ok := lipgloss.NewStyle().Bold(true).Foreground(Active.Success).Render(GlyphDone + " Signed in")
+		name := lipgloss.NewStyle().Foreground(Active.Text).Render("as " + m.account.Name)
+		hint := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("Returning to home…")
+		return lipgloss.JoinVertical(lipgloss.Center, ok, name, "", hint)
+
+	case AuthStateError:
+		bad := lipgloss.NewStyle().Bold(true).Foreground(Active.Error).Render(GlyphFail + " Sign-in failed")
+		body := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(fmt.Sprintf("%v", m.err))
+		panel := Panel("Error", body, w, Active.Error)
+		hints := KeyHints(w, KeyHint{"esc", "back"})
+		return lipgloss.JoinVertical(lipgloss.Left, bad, "", panel, "", hints)
 
 	case AuthStateWaitingForUser:
 		if m.deviceCode == nil {
-			content = "Error: No device code."
-		} else {
-			codeText := m.deviceCode.UserCode
-			if m.copied {
-				codeText += "  ✓ Copied!"
-			} else {
-				codeText += "  📋"
-			}
-
-			box := lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("63")).
-				Padding(1, 2).
-				Render(codeText)
-
-			actionText := "[c] Copy code"
-			if m.copied {
-				actionText = "[✓] Copied!"
-			}
-
-			content = fmt.Sprintf(`
-%s
-
-To sign in, use a web browser to open the page:
-%s
-
-And enter the code:
-%s
-
-%s Waiting for you to sign in...
-%s • [o] Open browser • [esc] Back
-`, "Microsoft Authentication",
-				lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.deviceCode.VerificationURI),
-				box,
-				m.spinner.View(),
-				actionText)
+			return authStatusLine("", "No device code — press [esc] to go back.")
 		}
-
-	case AuthStateExchange:
-		content = fmt.Sprintf("%s Logging in to Minecraft...", m.spinner.View())
-
-	case AuthStateSuccess:
-		content = fmt.Sprintf("✅ Successfully logged in as %s!\n\nRedirecting...", m.account.Name)
-
-	case AuthStateError:
-		content = fmt.Sprintf("❌ Error: %v\n\n[Esc] Back", m.err)
+		return m.authDeviceCard(w)
 	}
+	return ""
+}
 
-	return doc.Render(content)
+// authDeviceCard renders the two-step device-code sign-in flow.
+func (m *AuthModel) authDeviceCard(w int) string {
+	header := ScreenHeader("Microsoft sign-in", "Authorize mctui to use your Minecraft account")
+
+	url := lipgloss.NewStyle().Foreground(Active.SuccessAccent).Underline(true).Render(m.deviceCode.VerificationURI)
+	step1 := authStep("1", "Open this page in your browser", url)
+
+	code := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render(m.deviceCode.UserCode)
+	copyState := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("press [c] to copy")
+	if m.copied {
+		copyState = lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone + " copied")
+	}
+	step2 := authStep("2", "Enter this device code", code+"   "+copyState)
+
+	body := lipgloss.JoinVertical(lipgloss.Left, step1, "", step2)
+	panel := Panel("Sign in", body, w, Active.Primary)
+
+	waiting := lipgloss.NewStyle().
+		Foreground(Active.TextSubtle).
+		Render(m.spinner.View() + " Waiting for you to sign in…")
+	hints := KeyHints(w, KeyHint{"c", "copy code"}, KeyHint{"o", "open browser"}, KeyHint{"esc", "back"})
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, "", panel, "", waiting, "", hints)
+}
+
+// authStatusLine is a spinner + message for transient auth states.
+func authStatusLine(spinner, msg string) string {
+	if spinner != "" {
+		msg = spinner + " " + msg
+	}
+	return lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(msg)
+}
+
+// authStep renders a numbered step with a detail line beneath it.
+func authStep(num, title, detail string) string {
+	n := lipgloss.NewStyle().Bold(true).Foreground(Active.Secondary).Render(num)
+	t := lipgloss.NewStyle().Foreground(Active.Text).Render(title)
+	d := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("   " + detail)
+	return lipgloss.JoinVertical(lipgloss.Left, n+"  "+t, d)
 }
 
 // Messages

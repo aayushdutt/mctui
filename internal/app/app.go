@@ -95,6 +95,10 @@ func defaultKeyMap() keyMap {
 // New creates a new application model
 func New() *Model {
 	cfg, _ := config.Load()
+	if !ui.Apply(cfg.Theme) {
+		ui.Apply("dark")
+		cfg.Theme = "dark"
+	}
 	cfg.EnsureDirs()
 
 	instances := core.NewInstanceManager(cfg.DataDir)
@@ -373,6 +377,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cfg.JVMArgs = msg.JVMArgs
 		m.cfg.ShowSnapshots = msg.ShowSnapshots
 		m.cfg.MSAClientID = msg.MSAClientID
+		m.cfg.Theme = msg.Theme
+		// The theme was applied live during preview; re-dress the long-lived
+		// home list so it picks up the new palette (per-entry screens rebuild
+		// themselves on next navigation).
+		m.home.ApplyTheme()
 		m.state = StateHome
 		m.settings = nil
 		if err := m.cfg.Save(); err != nil {
@@ -643,7 +652,7 @@ func (m *Model) waitForLaunchStatus(ch chan launch.Status) tea.Cmd {
 
 // View implements tea.Model. All screens go through [ui.AppShellStyle] here only — do not pad in leaf views.
 func (m *Model) View() string {
-	return ui.AppShellStyle.Render(m.shellContent())
+	return ui.AppShellStyle.Background(ui.Active.Background).Render(m.shellContent())
 }
 
 // shellContent renders the full-frame body before the app shell. Add a branch for every [State] value

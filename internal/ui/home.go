@@ -139,31 +139,41 @@ func formatRelativeTime(t time.Time) string {
 
 // NewHomeModel creates a new home view model
 func NewHomeModel() *HomeModel {
-	base := list.NewDefaultDelegate()
-	base.Styles.SelectedTitle = base.Styles.SelectedTitle.
-		Foreground(ColorPrimary).
-		BorderLeftForeground(ColorPrimary)
-	base.Styles.SelectedDesc = base.Styles.SelectedDesc.
-		Foreground(ColorSecondary).
-		BorderLeftForeground(ColorPrimary)
+	base := ThemeListDelegate(Active.Primary, Active.Secondary)
 
 	l := list.New([]list.Item{}, &homeInstanceDelegate{DefaultDelegate: base}, 0, 0)
 	l.Title = "🎮 Minecraft Instances"
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
 	l.SetShowTitle(true)
-	l.Styles.Title = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorText).
-		Background(ColorPrimary).
-		Padding(0, 1)
+	l.Styles.Title = homeTitleStyle()
 	l.SetShowHelp(false)
+	ThemeListChrome(&l)
 
 	return &HomeModel{
 		list:    l,
 		keys:    defaultHomeKeyMap(),
 		loading: true,
 	}
+}
+
+// homeTitleStyle is the list's title bar, themed from the active palette.
+func homeTitleStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(OnColor(Active.Primary)).
+		Background(Active.Primary).
+		Padding(0, 1)
+}
+
+// ApplyTheme re-dresses the (long-lived) home list from the active theme. The
+// app calls this after the theme changes so the home screen — which, unlike the
+// per-entry screens, is not rebuilt on navigation — picks up the new palette.
+func (m *HomeModel) ApplyTheme() {
+	base := ThemeListDelegate(Active.Primary, Active.Secondary)
+	m.list.SetDelegate(&homeInstanceDelegate{DefaultDelegate: base})
+	m.list.Styles.Title = homeTitleStyle()
+	ThemeListChrome(&m.list)
 }
 
 // SetInstances updates the instance list. If selectID is non-empty, the cursor moves to that instance (usually index 0 for a new instance).
@@ -385,38 +395,46 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *HomeModel) View() string {
 	if m.loading {
 		return lipgloss.NewStyle().
-			Foreground(ColorSubtle).
+			Foreground(Active.TextSubtle).
 			Render("Loading instances...")
 	}
 
 	if len(m.instances) == 0 {
 		// Delightful empty state with project intro
-		titleStyle := lipgloss.NewStyle().
+		title := lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorPrimary)
-
-		title := titleStyle.Render("🎮  mctui")
+			Foreground(Active.Primary).
+			Render(BrandGlyph + "  mctui")
 
 		tagline := lipgloss.NewStyle().
-			Foreground(ColorSubtle).
+			Foreground(Active.TextSubtle).
 			Italic(true).
 			Render("A terminal-based Minecraft launcher")
 
-		divider := lipgloss.NewStyle().
-			Foreground(ColorZinc700).
-			Render("────────────────────────────")
+		// Size the rule to the content (cap it so it stays a tidy underline).
+		ruleW := m.width / 3
+		if ruleW > 40 {
+			ruleW = 40
+		}
+		if ruleW < 12 {
+			ruleW = 12
+		}
+		divider := Rule(ruleW)
 
 		emptyMsg := lipgloss.NewStyle().
-			Foreground(ColorText).
+			Foreground(Active.Text).
 			MarginTop(1).
 			Render("No instances yet. Let's get started!")
 
 		tips := lipgloss.NewStyle().
-			Foreground(ColorMuted).
 			MarginTop(1).
-			Render(`[n]  Create new instance
-[a]  Add Microsoft account
-[s]  Settings  •  [q]  Quit`)
+			Render(KeyHints(
+				ruleW,
+				KeyHint{"n", "new instance"},
+				KeyHint{"a", "add account"},
+				KeyHint{"s", "settings"},
+				KeyHint{"q", "quit"},
+			))
 
 		content := lipgloss.JoinVertical(
 			lipgloss.Center,
@@ -438,8 +456,6 @@ func (m *HomeModel) View() string {
 			content,
 		)
 	}
-
-	var helpText string
 
 	// Auth line: avoid "signed in" when Microsoft session is invalid or unverified.
 	authStatus := "Not signed in"
@@ -477,39 +493,45 @@ func (m *HomeModel) View() string {
 	}
 
 	// Build help items based on auth status.
-	var helpItems []string
 	noOnlineSession := m.accounts == nil || m.accounts.GetActive() == nil || msaNeedsSignin
-	launchKey := "[↵] launch"
+	launchLabel := "launch"
 	if noOnlineSession {
-		launchKey = "[↵] login & play"
+		launchLabel = "login & play"
 	}
-	modsKey := "[m] mods"
+	modsLabel := "mods"
 	if inst := m.SelectedInstance(); inst != nil && !instanceSupportsModsBrowser(inst) {
-		modsKey = "[m] mods (unsupported)"
+		modsLabel = "mods (unsupported)"
 	}
-	helpItems = []string{launchKey, "[n] new", "[f] folder", "[d] delete", modsKey, "[s] settings", "[a] accounts", "[o] play offline", "[q] quit"}
+	helpItems := []KeyHint{
+		{"↵", launchLabel},
+		{"n", "new"},
+		{"f", "folder"},
+		{"d", "delete"},
+		{"m", modsLabel},
+		{"s", "settings"},
+		{"a", "accounts"},
+		{"o", "play offline"},
+		{"q", "quit"},
+	}
 
-	// Build help text with smart item-wise wrapping
-	helpText = buildHelpText(helpItems, m.width-4)
+	help := KeyHints(m.width, helpItems...)
 
-	help := lipgloss.NewStyle().
-		Foreground(ColorMuted).
-		Render(helpText)
-
-	statusColor := ColorPrimary
+	statusColor := Active.Primary
+	statusGlyph := GlyphDot
 	if authWarn {
-		statusColor = ColorWarning
+		statusColor = Active.Warning
+		statusGlyph = GlyphWarn
 	}
 	status := lipgloss.NewStyle().
 		Foreground(statusColor).
 		Padding(1, 0).
-		Render(authStatus)
+		Render(statusGlyph + " " + authStatus)
 
 	aboveStatus := []string{m.list.View()}
 	if m.transientBanner != "" {
 		aboveStatus = append(aboveStatus, lipgloss.NewStyle().
-			Foreground(ColorWarning).
-			Render(m.transientBanner))
+			Foreground(Active.Warning).
+			Render(GlyphWarn+" "+m.transientBanner))
 	}
 	aboveStatus = append(aboveStatus, status, help)
 
@@ -517,51 +539,60 @@ func (m *HomeModel) View() string {
 
 	// Show delete confirmation overlay if needed
 	if m.confirmDelete && m.deleteTarget != nil {
-		titleStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ColorText).
-			Background(ColorError).
-			Padding(0, 1)
+		panelW := m.width - 8
+		if panelW > 56 {
+			panelW = 56
+		}
+		if panelW < 24 {
+			panelW = 24
+		}
 
-		title := titleStyle.Render("⚠️  Delete Instance?")
+		warn := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(Active.Error).
+			Render(GlyphWarn + " This cannot be undone.")
 
 		msg := lipgloss.NewStyle().
-			Foreground(ColorSubtle).
-			Render(fmt.Sprintf("Are you sure you want to delete \"%s\"?\nThis cannot be undone.", m.deleteTarget.Name))
+			Foreground(Active.TextSubtle).
+			Render(fmt.Sprintf("Delete \"%s\"?", m.deleteTarget.Name))
 
 		yesLbl := "Yes, delete"
 		noLbl := "No, cancel"
-		yesSt := lipgloss.NewStyle().Foreground(ColorMuted)
-		noSt := lipgloss.NewStyle().Foreground(ColorMuted)
+		yesSt := lipgloss.NewStyle().Foreground(Active.TextFaint)
+		noSt := lipgloss.NewStyle().Foreground(Active.TextFaint)
 		if m.deleteFocusYes {
-			yesSt = lipgloss.NewStyle().Bold(true).Foreground(ColorText)
+			yesSt = lipgloss.NewStyle().Bold(true).Foreground(Active.Error)
 		} else {
-			noSt = lipgloss.NewStyle().Bold(true).Foreground(ColorText)
+			noSt = lipgloss.NewStyle().Bold(true).Foreground(Active.Text)
 		}
 		options := lipgloss.NewStyle().
 			MarginTop(1).
 			Render(lipgloss.JoinHorizontal(lipgloss.Left,
 				yesSt.Render(yesLbl),
-				lipgloss.NewStyle().Foreground(ColorZinc600).Render("  ·  "),
+				lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("  ·  "),
 				noSt.Render(noLbl),
 			))
-		hint := lipgloss.NewStyle().
-			Foreground(ColorZinc600).
-			MarginTop(1).
-			Render("[↑↓←→] or Tab · [Enter] choose · [y]/[n] · Esc cancel")
 
-		promptBox := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorError).
-			Padding(1, 2).
-			Render(lipgloss.JoinVertical(
-				lipgloss.Left,
-				title,
-				"",
-				msg,
-				options,
-				hint,
+		body := lipgloss.JoinVertical(
+			lipgloss.Left,
+			msg,
+			"",
+			warn,
+			options,
+		)
+		panel := Panel("Delete instance?", body, panelW, Active.Error)
+
+		hint := lipgloss.NewStyle().
+			MarginTop(1).
+			Render(KeyHints(
+				panelW,
+				KeyHint{"↑↓/Tab", "choose"},
+				KeyHint{"↵", "confirm"},
+				KeyHint{"y/n", ""},
+				KeyHint{"esc", "cancel"},
 			))
+
+		promptBox := lipgloss.JoinVertical(lipgloss.Left, panel, hint)
 
 		return lipgloss.Place(
 			m.width,
@@ -593,8 +624,10 @@ func openInstanceFolder(path string) {
 	_ = cmd.Start()
 }
 
-// buildHelpText builds help text with item-wise wrapping
-// Items are kept together, lines wrap at item boundaries
+// buildHelpText builds help text with item-wise wrapping.
+// Items are kept together; lines wrap at item boundaries. Production help (Home
+// and Mods) now uses the shared KeyHints kit; this remains only for its own unit
+// tests and can be retired with them.
 func buildHelpText(items []string, maxWidth int) string {
 	if maxWidth <= 0 {
 		maxWidth = 80

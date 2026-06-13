@@ -48,7 +48,7 @@ func DefaultConfig() *Config {
 		AssetsDir:          filepath.Join(dataDir, "assets"),
 		LibrariesDir:       filepath.Join(dataDir, "libraries"),
 		JVMArgs:            DefaultJVMArgs(),
-		Theme:              "dark",
+		Theme:              "auto",
 		ShowSnapshots:      false,
 		MSAClientID:        DefaultMSAClientID,
 		LaunchLogVerbosity: "error",

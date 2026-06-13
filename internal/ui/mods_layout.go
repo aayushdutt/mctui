@@ -3,15 +3,13 @@ package ui
 import (
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // Mods screen vertical layout: ModsModel.SetSize derives bubble list heights from the terminal so
 // split/stacked panes and the footer fit. See mods_layout_test.go for size invariants.
 //
 // Recommended minimum: about 32×40 (stacked mode uses more vertical chrome than split).
-// Very long status lines can still wrap past the nominal right-column budget (9 rows).
+// Very long status lines can still wrap past the nominal right-column budget (7 rows).
 //
 // Vertical budget for the mods screen (split + compact). Tuned against View(): outer
 // padding, header block, panel borders, chrome above lists, gaps, and help.
@@ -24,45 +22,54 @@ const (
 
 	modsSplitInterBlockGaps = 2 // blank lines: under header, above help
 
-	// Upper bound for right-column stack above the Modrinth list (query, status, meta, hint).
-	modsRightColumnChromeLines = 9
-	// Section header under that stack (title + rule).
-	modsBrowseSectionHdrLines = 2
+	// Upper bound for right-column stack above the Modrinth list (query, status,
+	// meta, hint). The "Discover" title now lives in the panel border, not here.
+	modsRightColumnChromeLines = 7
+	// Single-line kit SectionHeader under that stack (▸ title ──).
+	modsBrowseSectionHdrLines = 1
 
-	// Installed pane: banner (note, dialog, or toast) + section header (title + rule).
-	modsLibraryChromeLines = 5
+	// Installed pane: banner only (note, dialog, or toast). Its title lives in
+	// the panel border now.
+	modsLibraryChromeLines = 3
 
 	modsHelpRuleLines = 1
 	modsHelpMargin    = 1
 )
 
 // modsScreenHelpItems is the full footer when there is enough terminal space.
-func modsScreenHelpItems() []string {
-	return []string{
-		"[tab] Installed · Search · Modrinth list",
-		"[←] [→] switch panes",
-		"[/] search · [↵] run search or download mod",
-		"Installed: Enter / d / Backspace — confirm remove ([y] or Enter)",
-		"[n] cancel dialog",
-		"[r] refresh lists · mouse wheel scrolls",
-		"[esc] back to home",
+func modsScreenHelpItems() []KeyHint {
+	return []KeyHint{
+		{"tab", "switch pane"},
+		{"←→", "panes"},
+		{"/", "search"},
+		{"↵", "add"},
+		{"d", "remove"},
+		{"r", "refresh"},
+		{"esc", "home"},
 	}
 }
 
-func modsScreenHelpItemsCompact() []string {
-	return []string{
-		"[tab] · [/] search · [↵] add · Installed [↵]/d remove · [y]/[n] dialog · [esc] home",
+func modsScreenHelpItemsCompact() []KeyHint {
+	return []KeyHint{
+		{"tab", "pane"},
+		{"/", "search"},
+		{"↵", "add"},
+		{"d", "remove"},
+		{"esc", "home"},
 	}
 }
 
-func modsScreenHelpItemsMicro() []string {
-	return []string{
-		"[tab][esc] · / search · ↵ add · Inst:↵/d del · y/n",
+func modsScreenHelpItemsMicro() []KeyHint {
+	return []KeyHint{
+		{"tab", "pane"},
+		{"/", "search"},
+		{"↵", "add"},
+		{"esc", "home"},
 	}
 }
 
-// modsHelpItemsPick selects footer text tiers so layout math matches what View renders.
-func modsHelpItemsPick(termH, termW int) []string {
+// modsHelpItemsPick selects footer tiers so layout math matches what View renders.
+func modsHelpItemsPick(termH, termW int) []KeyHint {
 	switch {
 	case termH >= 42 && termW >= 52:
 		return modsScreenHelpItems()
@@ -73,13 +80,19 @@ func modsHelpItemsPick(termH, termW int) []string {
 	}
 }
 
-// modsHelpBodyMaxWidth matches ModsModel.View: buildHelpText(..., m.width-6).
+// modsHelpBodyMaxWidth matches ModsModel.View: modsRenderHelp(..., m.width-6).
 func modsHelpBodyMaxWidth(termW int) int {
 	return max(1, termW-6)
 }
 
-func modsFooterHelpLinesFromItems(items []string, termW int) int {
-	body := buildHelpText(items, modsHelpBodyMaxWidth(termW))
+// modsRenderHelp renders the footer hint bar through the shared kit. View and
+// the height math below both call this, so they can never desync.
+func modsRenderHelp(items []KeyHint, width int) string {
+	return KeyHints(width, items...)
+}
+
+func modsFooterHelpLinesFromItems(items []KeyHint, termW int) int {
+	body := modsRenderHelp(items, modsHelpBodyMaxWidth(termW))
 	textLines := 1
 	if body != "" {
 		textLines = strings.Count(body, "\n") + 1
@@ -116,7 +129,7 @@ func modsSplitListViewportHeight(termH, termW int) int {
 }
 
 // modsCompactFooterItems matches footer choice in compact (stacked) layout for SetSize and View.
-func modsCompactFooterItems(termH, termW int) []string {
+func modsCompactFooterItems(termH, termW int) []KeyHint {
 	if termH >= 40 {
 		return modsHelpItemsPick(termH, termW)
 	}
@@ -150,15 +163,6 @@ func modsCompactListHeights(termH, termW int) (libListH, browseListH int) {
 		libListH = max(1, room-browseListH)
 	}
 	return libListH, browseListH
-}
-
-func modPanelSectionHeader(title, accentHex string, ruleW int) string {
-	w := max(4, ruleW)
-	mark := lipgloss.NewStyle().Foreground(lipgloss.Color(accentHex)).Render("▸")
-	t := lipgloss.NewStyle().Bold(true).Foreground(ColorZinc200).Render(title)
-	line := lipgloss.JoinHorizontal(lipgloss.Left, mark, " ", t)
-	r := lipgloss.NewStyle().Foreground(ColorZinc700).Render(strings.Repeat("─", w))
-	return lipgloss.JoinVertical(lipgloss.Left, line, r)
 }
 
 func formatModHitCount(total int) string {

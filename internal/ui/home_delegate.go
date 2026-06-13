@@ -10,23 +10,28 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Pill-style "new" badge (distinct from instance title typography).
-var (
-	newBadgeNormal = lipgloss.NewStyle().
-			Background(ColorZinc700).
-			Foreground(ColorZinc200).
-			Padding(0, 1)
+// Pill-style "new" badge (distinct from instance title typography). Built per
+// call from the active theme so a theme switch recolors them.
+func newBadgeNormal() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Background(Active.BorderSubtle).
+		Foreground(Active.Title).
+		Padding(0, 1)
+}
 
-	newBadgeSelected = lipgloss.NewStyle().
-				Background(ColorPrimaryDeep).
-				Foreground(ColorText).
-				Padding(0, 1)
+func newBadgeSelected() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Background(Active.PrimaryDeep).
+		Foreground(Active.Text).
+		Padding(0, 1)
+}
 
-	newBadgeDimmed = lipgloss.NewStyle().
-			Background(ColorZinc800).
-			Foreground(ColorZinc600).
-			Padding(0, 1)
-)
+func newBadgeDimmed() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Background(Active.BorderFaint).
+		Foreground(Active.TextMuted).
+		Padding(0, 1)
+}
 
 const titleEllipsis = "…"
 
@@ -54,7 +59,7 @@ func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item
 	textwidth := m.Width() - s.NormalTitle.GetPaddingLeft() - s.NormalTitle.GetPaddingRight()
 	badgeReserve := 0
 	if showBadge {
-		badgeReserve = lipgloss.Width(newBadgeNormal.Render("new")) + 1
+		badgeReserve = lipgloss.Width(newBadgeNormal().Render("new")) + 1
 	}
 
 	title := ansi.Truncate(name, textwidth-badgeReserve, titleEllipsis)
@@ -93,7 +98,7 @@ func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item
 	switch {
 	case emptyFilter:
 		t := s.DimmedTitle.Render(title)
-		titleOut = joinTitle(t, newBadgeDimmed)
+		titleOut = joinTitle(t, newBadgeDimmed())
 		descOut = s.DimmedDesc.Render(desc)
 
 	case isSelected && m.FilterState() != list.Filtering:
@@ -103,7 +108,7 @@ func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item
 			title = lipgloss.StyleRunes(title, matchedRunes, matched, unmatched)
 		}
 		t := s.SelectedTitle.Render(title)
-		titleOut = joinTitle(t, newBadgeSelected)
+		titleOut = joinTitle(t, newBadgeSelected())
 		descOut = s.SelectedDesc.Render(desc)
 
 	default:
@@ -113,7 +118,7 @@ func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item
 			title = lipgloss.StyleRunes(title, matchedRunes, matched, unmatched)
 		}
 		t := s.NormalTitle.Render(title)
-		titleOut = joinTitle(t, newBadgeNormal)
+		titleOut = joinTitle(t, newBadgeNormal())
 		descOut = s.NormalDesc.Render(desc)
 	}
 
