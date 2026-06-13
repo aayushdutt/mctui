@@ -36,6 +36,97 @@ func TestLaunchDownloadKey(t *testing.T) {
 	}
 }
 
+func TestSanitizeInstanceDirName(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"My Fabric Pack", "My Fabric Pack"},
+		{"a/b:c", "a-b-c"},
+		{"weird/name:1", "weird-name-1"},
+		{"  spaced  ", "spaced"},
+		{"trailing... ", "trailing"},
+		{"café 🎮 ok", "café 🎮 ok"},
+		{"....", ""},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := SanitizeInstanceDirName(tc.in); got != tc.want {
+			t.Fatalf("SanitizeInstanceDirName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestInstanceManager_CreateGeneratesUniqueID(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := NewInstanceManager(tmp)
+
+	a := &Instance{Name: "My Pack", Version: "1.21.4", Loader: "vanilla"}
+	if err := mgr.Create(a); err != nil {
+		t.Fatalf("Create a: %v", err)
+	}
+	if a.ID != "My Pack" {
+		t.Fatalf("first ID = %q, want %q", a.ID, "My Pack")
+	}
+
+	// Same display name is allowed; folder/ID must be de-duplicated.
+	b := &Instance{Name: "My Pack", Version: "1.21.4", Loader: "vanilla"}
+	if err := mgr.Create(b); err != nil {
+		t.Fatalf("Create b: %v", err)
+	}
+	if b.ID != "My Pack (2)" {
+		t.Fatalf("second ID = %q, want %q", b.ID, "My Pack (2)")
+	}
+	if b.Name != "My Pack" {
+		t.Fatalf("display name should be unchanged, got %q", b.Name)
+	}
+
+	for _, id := range []string{a.ID, b.ID} {
+		if _, err := os.Stat(filepath.Join(tmp, "instances", id)); err != nil {
+			t.Fatalf("folder for %q missing: %v", id, err)
+		}
+	}
+}
+
+func TestInstanceManager_CreateSanitizesFolderName(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := NewInstanceManager(tmp)
+
+	inst := &Instance{Name: "weird/name:1", Version: "1.21.4", Loader: "vanilla"}
+	if err := mgr.Create(inst); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if inst.ID != "weird-name-1" {
+		t.Fatalf("ID = %q, want weird-name-1", inst.ID)
+	}
+	if inst.Name != "weird/name:1" {
+		t.Fatalf("Name should be kept verbatim, got %q", inst.Name)
+	}
+}
+
+func TestInstanceManager_CreateEmptyNameFallsBack(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := NewInstanceManager(tmp)
+
+	inst := &Instance{Name: "....", Version: "1.21.4", Loader: "vanilla"}
+	if err := mgr.Create(inst); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if inst.ID != "instance" {
+		t.Fatalf("ID = %q, want instance", inst.ID)
+	}
+}
+
+func TestInstanceManager_CreateHonorsExplicitID(t *testing.T) {
+	tmp := t.TempDir()
+	mgr := NewInstanceManager(tmp)
+
+	inst := &Instance{ID: "explicit-id", Name: "Display Name", Version: "1.21.4", Loader: "vanilla"}
+	if err := mgr.Create(inst); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if inst.ID != "explicit-id" {
+		t.Fatalf("ID = %q, want explicit-id (explicit IDs must be honored)", inst.ID)
+	}
+}
+
 func TestInstanceManager_CreateAndLoad(t *testing.T) {
 	// Setup temp directory
 	tmpDir := t.TempDir()

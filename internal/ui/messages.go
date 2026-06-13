@@ -112,6 +112,22 @@ type (
 		Path      string
 		Err       error
 	}
+
+	// RetryLoadVersions re-fetches the Mojang version manifest after a failure in the wizard.
+	RetryLoadVersions struct{}
+
+	// PersistShowSnapshots persists the wizard's snapshot-visibility toggle to config.
+	PersistShowSnapshots struct {
+		Value bool
+	}
+
+	// SettingsSaved carries the edited settings back to the app to apply and persist.
+	SettingsSaved struct {
+		JavaPath      string
+		JVMArgs       []string
+		ShowSnapshots bool
+		MSAClientID   string
+	}
 )
 
 // ActiveSessionCheckStatus is the outcome of validating the active account against Minecraft Services.

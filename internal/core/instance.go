@@ -4,6 +4,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,29 @@ type Instance struct {
 	// InstallStarterFabricMods is true when the user opted into the default Fabric bundle at instance creation.
 	// Cleared after that bundle is installed successfully at launch (see mods package).
 	InstallStarterFabricMods bool `json:"installStarterFabricMods,omitempty"`
+}
+
+// SanitizeInstanceDirName turns a display name into a filesystem-safe folder base name.
+// It mirrors how launchers like PrismLauncher derive an instance folder from its name:
+// path-invalid characters become '-', control characters are dropped, and trailing dots
+// or spaces (invalid on Windows) are trimmed. Spaces, case, and unicode are preserved so
+// the folder stays recognizable. May return "" (e.g. a name that is all dots); callers
+// should fall back to a default in that case.
+func SanitizeInstanceDirName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r < 0x20:
+			// drop control characters
+		case strings.ContainsRune(`<>:"/\|?*`, r):
+			b.WriteRune('-')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := strings.TrimSpace(b.String())
+	out = strings.TrimRight(out, ". ")
+	return strings.TrimSpace(out)
 }
 
 // LaunchDownloadKey fingerprints game version, loader, and loader version for download skip logic.
@@ -135,8 +159,38 @@ func (im *InstanceManager) Get(id string) (*Instance, bool) {
 	return inst, ok
 }
 
-// Create creates a new instance
+// idTaken reports whether an instance ID (folder basename) is already in use,
+// either in memory or on disk.
+func (im *InstanceManager) idTaken(id string) bool {
+	if _, ok := im.instances[id]; ok {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(im.basePath, "instances", id))
+	return err == nil
+}
+
+// generateInstanceID derives a unique, filesystem-safe folder name from a display
+// name. Duplicates get a " (2)", " (3)", … suffix (PrismLauncher-style), so display
+// names may collide freely while folder names stay unique and recognizable.
+func (im *InstanceManager) generateInstanceID(name string) string {
+	base := SanitizeInstanceDirName(name)
+	if base == "" {
+		base = "instance"
+	}
+	id := base
+	for n := 2; im.idTaken(id); n++ {
+		id = fmt.Sprintf("%s (%d)", base, n)
+	}
+	return id
+}
+
+// Create creates a new instance. If inst.ID is empty it is derived from inst.Name
+// (sanitized + de-duplicated); the display Name is kept verbatim and stays editable
+// independently of the folder/ID.
 func (im *InstanceManager) Create(inst *Instance) error {
+	if inst.ID == "" {
+		inst.ID = im.generateInstanceID(inst.Name)
+	}
 	instPath := filepath.Join(im.basePath, "instances", inst.ID)
 
 	// Create instance directory

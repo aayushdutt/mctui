@@ -1,36 +1,36 @@
 package ui
 
 import (
+	"errors"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestValidateInstanceName(t *testing.T) {
-	existing := map[string]struct{}{
-		"vanilla": {},
-	}
-
+	// Display names are freeform now: path characters, duplicates, and trailing
+	// spaces/periods are allowed (folder safety/uniqueness is handled at Create).
+	// Only empty/whitespace-only and control characters are rejected.
 	cases := []struct {
 		name    string
 		wantErr bool
 	}{
 		{name: "My Instance", wantErr: false},
-		{name: "vanilla", wantErr: true},
-		{name: "Vanilla", wantErr: true},
-		{name: ".", wantErr: true},
-		{name: "..", wantErr: true},
-		{name: "bad/char", wantErr: true},
-		{name: "bad\\char", wantErr: true},
-		{name: "bad:char", wantErr: true},
-		{name: "bad*char", wantErr: true},
-		{name: "trailingspace ", wantErr: true},
-		{name: "trailingperiod.", wantErr: true},
+		{name: "bad/char", wantErr: false},
+		{name: "bad\\char", wantErr: false},
+		{name: "bad:char", wantErr: false},
+		{name: "bad*char", wantErr: false},
+		{name: "trailingspace ", wantErr: false},
+		{name: "trailingperiod.", wantErr: false},
+		{name: ".", wantErr: false},
+		{name: "café 🎮", wantErr: false},
+		{name: "", wantErr: true},
+		{name: "   ", wantErr: true},
 		{name: "contains\tcontrol", wantErr: true},
 	}
 
 	for _, tc := range cases {
-		err := validateInstanceName(tc.name, existing)
+		err := validateInstanceName(tc.name)
 		if tc.wantErr && err == nil {
 			t.Fatalf("expected error for %q, got nil", tc.name)
 		}
@@ -41,7 +41,7 @@ func TestValidateInstanceName(t *testing.T) {
 }
 
 func TestNameStep_spaceTogglesFabricStarterCheckbox(t *testing.T) {
-	m := NewWizardModel(nil)
+	m := NewWizardModel(false)
 	m.step = StepEnterName
 	m.selectedLoader = "fabric"
 	m.nameStepSetFocus(focusWizardStarterCheckbox)
@@ -57,6 +57,70 @@ func TestNameStep_spaceTogglesFabricStarterCheckbox(t *testing.T) {
 		w := next.(*WizardModel)
 		if !w.installStarterMods {
 			t.Fatalf("key %+v should toggle installStarterMods on", k)
+		}
+	}
+}
+
+func TestNewWizardModel_SeedsShowSnapshots(t *testing.T) {
+	if !NewWizardModel(true).showSnaps {
+		t.Fatal("showSnaps should be seeded true")
+	}
+	if NewWizardModel(false).showSnaps {
+		t.Fatal("showSnaps should be seeded false")
+	}
+}
+
+func TestWizard_TabTogglesAndPersistsSnapshots(t *testing.T) {
+	m := NewWizardModel(false)
+	m.step = StepSelectVersion
+
+	next, cmd := m.Update(tea.KeyMsg(tea.Key{Type: tea.KeyTab}))
+	w := next.(*WizardModel)
+	if !w.showSnaps {
+		t.Fatal("Tab on the version step should toggle showSnaps on")
+	}
+	if cmd == nil {
+		t.Fatal("expected a PersistShowSnapshots command")
+	}
+	p, ok := cmd().(PersistShowSnapshots)
+	if !ok {
+		t.Fatalf("expected PersistShowSnapshots, got %T", cmd())
+	}
+	if !p.Value {
+		t.Fatalf("PersistShowSnapshots.Value = %v, want true", p.Value)
+	}
+}
+
+func TestWizard_RetryKeyResetsErrorAndEmitsRetry(t *testing.T) {
+	m := NewWizardModel(false)
+	m.err = errors.New("boom")
+	m.loading = false
+
+	next, cmd := m.Update(tea.KeyMsg(tea.Key{Type: tea.KeyRunes, Runes: []rune{'r'}}))
+	w := next.(*WizardModel)
+	if w.err != nil {
+		t.Fatalf("retry should clear err, got %v", w.err)
+	}
+	if !w.loading {
+		t.Fatal("retry should set loading true")
+	}
+	if cmd == nil {
+		t.Fatal("expected a RetryLoadVersions command")
+	}
+	if _, ok := cmd().(RetryLoadVersions); !ok {
+		t.Fatalf("expected RetryLoadVersions, got %T", cmd())
+	}
+}
+
+func TestWizard_RetryKeyNoopWithoutError(t *testing.T) {
+	m := NewWizardModel(false)
+	m.err = nil
+
+	// 'r' with no error must not emit RetryLoadVersions, so it stays usable as a filter char.
+	_, cmd := m.Update(tea.KeyMsg(tea.Key{Type: tea.KeyRunes, Runes: []rune{'r'}}))
+	if cmd != nil {
+		if _, ok := cmd().(RetryLoadVersions); ok {
+			t.Fatal("'r' without an error must not emit RetryLoadVersions")
 		}
 	}
 }

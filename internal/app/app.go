@@ -38,11 +38,12 @@ type Model struct {
 	height int
 
 	// Child models for each view
-	home   *ui.HomeModel
-	wizard *ui.WizardModel
-	launch *ui.LaunchModel
-	mods   *ui.ModsModel
-	auth   *ui.AuthModel
+	home     *ui.HomeModel
+	wizard   *ui.WizardModel
+	launch   *ui.LaunchModel
+	mods     *ui.ModsModel
+	auth     *ui.AuthModel
+	settings *ui.SettingsModel
 
 	// Core services
 	cfg       *config.Config
@@ -268,6 +269,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.auth != nil {
 			m.auth.SetSize(cw, ch)
 		}
+		if m.settings != nil {
+			m.settings.SetSize(cw, ch)
+		}
 
 	// Navigation messages
 	case ui.NavigateToHome:
@@ -276,17 +280,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state = StateHome
 		m.mods = nil
+		m.settings = nil
 		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 
 	case ui.NavigateToSettings:
 		m.state = StateSettings
+		m.settings = ui.NewSettingsModel(m.cfg)
 		cw, ch := m.contentSize()
-		m.home.SetSize(cw, ch)
-		return m, nil
+		m.settings.SetSize(cw, ch)
+		return m, m.settings.Init()
 
 	case ui.NavigateToNewInstance:
 		m.state = StateNewInstance
-		m.wizard = ui.NewWizardModel(m.instances.List())
+		m.wizard = ui.NewWizardModel(m.cfg.ShowSnapshots)
 		cw, ch := m.contentSize()
 		m.wizard.SetSize(cw, ch)
 		return m, tea.Batch(
@@ -351,6 +357,31 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ui.NavigateToAuth:
 		return m, m.prepareAuthScreen()
+
+	case ui.RetryLoadVersions:
+		return m, m.loadVersions()
+
+	case ui.PersistShowSnapshots:
+		m.cfg.ShowSnapshots = msg.Value
+		if err := m.cfg.Save(); err != nil {
+			m.home.SetTransientBanner(fmt.Sprintf("Couldn't save snapshot preference: %v", err))
+		}
+		return m, nil
+
+	case ui.SettingsSaved:
+		m.cfg.JavaPath = msg.JavaPath
+		m.cfg.JVMArgs = msg.JVMArgs
+		m.cfg.ShowSnapshots = msg.ShowSnapshots
+		m.cfg.MSAClientID = msg.MSAClientID
+		m.state = StateHome
+		m.settings = nil
+		if err := m.cfg.Save(); err != nil {
+			m.home.SetTransientBanner(fmt.Sprintf("Applied for this session, but couldn't write config: %v", err))
+		} else {
+			m.home.SetTransientBanner("Settings saved.")
+		}
+		// MSA client ID may have changed; re-validate the active session.
+		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 
 	case ui.ModInstallDoneMsg:
 		if m.mods != nil {
@@ -435,11 +466,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == StateHome {
 				return m, tea.Quit
 			}
-		case key.Matches(msg, m.keys.Back):
-			if m.state == StateSettings {
-				m.state = StateHome
-				return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
-			}
 		}
 	}
 
@@ -473,6 +499,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mods != nil {
 			newMods, cmd := m.mods.Update(msg)
 			m.mods = newMods.(*ui.ModsModel)
+			cmds = append(cmds, cmd)
+		}
+	case StateSettings:
+		if m.settings != nil {
+			newSettings, cmd := m.settings.Update(msg)
+			m.settings = newSettings.(*ui.SettingsModel)
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -640,7 +672,9 @@ func (m *Model) shellContent() string {
 			return m.mods.View()
 		}
 	case StateSettings:
-		return "Settings — coming soon\n\n[esc] Back to home"
+		if m.settings != nil {
+			return m.settings.View()
+		}
 	}
 	return "Unknown state"
 }

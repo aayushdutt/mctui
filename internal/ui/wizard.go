@@ -65,8 +65,6 @@ type WizardModel struct {
 	installStarterMods bool
 	nameFormFocus      nameFormFocus
 
-	existingNames map[string]struct{}
-
 	// State
 	loading bool
 	err     error
@@ -90,8 +88,9 @@ func (i versionItem) Description() string {
 }
 func (i versionItem) FilterValue() string { return i.version.ID }
 
-// NewWizardModel creates a new wizard
-func NewWizardModel(instances []*core.Instance) *WizardModel {
+// NewWizardModel creates a new wizard. showSnapshots seeds the version-list
+// snapshot filter from config; toggling it in-wizard persists back via [PersistShowSnapshots].
+func NewWizardModel(showSnapshots bool) *WizardModel {
 	// Version list
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
@@ -119,11 +118,6 @@ func NewWizardModel(instances []*core.Instance) *WizardModel {
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(ColorZinc500)
 	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 
-	existingNames := make(map[string]struct{})
-	for _, inst := range instances {
-		existingNames[strings.ToLower(inst.Name)] = struct{}{}
-	}
-
 	return &WizardModel{
 		step:        StepSelectVersion,
 		versionList: vl,
@@ -137,7 +131,7 @@ func NewWizardModel(instances []*core.Instance) *WizardModel {
 		nameInput:          ti,
 		installStarterMods: true,
 		loading:            true,
-		existingNames:      existingNames,
+		showSnaps:          showSnapshots,
 	}
 }
 
@@ -205,11 +199,20 @@ func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, func() tea.Msg { return NavigateToHome{} }
 
+		case "r":
+			// Retry the version-manifest fetch after a load failure.
+			if m.err != nil {
+				m.err = nil
+				m.loading = true
+				return m, func() tea.Msg { return RetryLoadVersions{} }
+			}
+
 		case "tab":
 			if m.step == StepSelectVersion {
 				m.showSnaps = !m.showSnaps
 				m.updateVersionList("")
-				return m, nil
+				show := m.showSnaps
+				return m, func() tea.Msg { return PersistShowSnapshots{Value: show} }
 			}
 			if m.step == StepEnterName {
 				m.nameStepCycleFocus(1)
@@ -361,15 +364,16 @@ func (m *WizardModel) submitNameStep() (*WizardModel, tea.Cmd) {
 	if name == "" {
 		name = "New Instance"
 	}
-	if err := validateInstanceName(name, m.existingNames); err != nil {
+	if err := validateInstanceName(name); err != nil {
 		m.nameErr = err.Error()
 		m.nameStepSetFocus(focusWizardName)
 		return m, textinput.Blink
 	}
 	m.nameErr = ""
 
+	// ID is intentionally left empty: InstanceManager.Create derives a unique,
+	// filesystem-safe folder name from Name. The display Name stays freeform.
 	inst := &core.Instance{
-		ID:                       name,
 		Name:                     name,
 		Version:                  m.selectedVersion,
 		Loader:                   m.selectedLoader,
@@ -415,9 +419,14 @@ func (m *WizardModel) moveLoaderSelection(delta int) {
 // View implements tea.Model
 func (m *WizardModel) View() string {
 	if m.err != nil {
-		return lipgloss.NewStyle().
+		errLine := lipgloss.NewStyle().
 			Foreground(ColorError).
-			Render(fmt.Sprintf("Error: %v\n\nPress Esc to go back", m.err))
+			Render(fmt.Sprintf("Couldn't load versions: %v", m.err))
+		help := lipgloss.NewStyle().
+			Foreground(ColorZinc600).
+			MarginTop(1).
+			Render("[r] Retry · [Esc] Back to home")
+		return lipgloss.JoinVertical(lipgloss.Left, errLine, help)
 	}
 
 	var content string
@@ -656,26 +665,17 @@ func helpTextNameStep(fabric bool) string {
 	return base
 }
 
-func validateInstanceName(name string, existingNames map[string]struct{}) error {
-	if name == "." || name == ".." {
-		return fmt.Errorf("Name cannot be '.' or '..'")
-	}
-	if strings.ContainsAny(name, "<>:\"/\\|?*") {
-		return fmt.Errorf("Name contains invalid characters")
-	}
-	if strings.HasSuffix(name, " ") || strings.HasSuffix(name, ".") {
-		return fmt.Errorf("Name cannot end with a space or period")
+// validateInstanceName validates the freeform display name only. Filesystem safety
+// and uniqueness are handled when the folder/ID is derived (see core.SanitizeInstanceDirName
+// and InstanceManager.Create), so names may contain path characters and may duplicate.
+func validateInstanceName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("Name cannot be empty")
 	}
 	for _, r := range name {
-		if r < 32 {
-			return fmt.Errorf("Name contains invalid characters")
+		if r < 0x20 {
+			return fmt.Errorf("Name contains control characters")
 		}
 	}
-
-	key := strings.ToLower(name)
-	if _, ok := existingNames[key]; ok {
-		return fmt.Errorf("Name already exists")
-	}
-
 	return nil
 }
