@@ -3,10 +3,10 @@ package ui
 import (
 	"fmt"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/dustin/go-humanize"
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/mods"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/dustin/go-humanize"
 )
 
 const splitMinWidth = 78
@@ -45,13 +45,13 @@ type modListItem struct {
 }
 
 func (i modListItem) Title() string {
-	t := lipgloss.NewStyle().Foreground(lipgloss.Color("#F4F4F5")).Render(i.hit.Title)
+	t := lipgloss.NewStyle().Foreground(ColorZinc100).Render(i.hit.Title)
 	switch i.rowNote {
 	case modRowInstalled:
-		dot := lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399")).Render("● ")
+		dot := lipgloss.NewStyle().Foreground(ColorAccent).Render("● ")
 		return dot + t
 	case modRowInstalling:
-		dot := lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24")).Render("◆ ")
+		dot := lipgloss.NewStyle().Foreground(ColorWarning).Render("◆ ")
 		return dot + t
 	default:
 		return i.hit.Title
@@ -60,24 +60,24 @@ func (i modListItem) Title() string {
 
 func (i modListItem) Description() string {
 	meta := fmt.Sprintf("%s • %s", api.FormatDownloads(i.hit.Downloads), i.hit.Slug)
-	metaStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#71717A")).Render(meta)
+	metaStyled := lipgloss.NewStyle().Foreground(ColorZinc500).Render(meta)
 	switch i.rowNote {
 	case modRowInstalled:
 		pill := lipgloss.NewStyle().
-			Background(lipgloss.Color("#14532D")).
-			Foreground(lipgloss.Color("#A7F3D0")).
+			Background(ColorSuccessBg).
+			Foreground(ColorSuccessFaint).
 			Padding(0, 1).
 			Render("installed")
 		return lipgloss.JoinHorizontal(lipgloss.Left, pill, " ", metaStyled)
 	case modRowInstalling:
 		pill := lipgloss.NewStyle().
-			Background(lipgloss.Color("#422006")).
-			Foreground(lipgloss.Color("#FCD34D")).
+			Background(ColorAmberBg).
+			Foreground(ColorAmberSubtle).
 			Padding(0, 1).
 			Render("installing")
 		return lipgloss.JoinHorizontal(lipgloss.Left, pill, " ", metaStyled)
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#A1A1AA")).Render(meta)
+		return lipgloss.NewStyle().Foreground(ColorSubtle).Render(meta)
 	}
 }
 

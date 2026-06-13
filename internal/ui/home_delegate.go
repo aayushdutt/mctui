@@ -13,18 +13,18 @@ import (
 // Pill-style "new" badge (distinct from instance title typography).
 var (
 	newBadgeNormal = lipgloss.NewStyle().
-			Background(lipgloss.Color("#3F3F46")).
-			Foreground(lipgloss.Color("#E4E4E7")).
+			Background(ColorZinc700).
+			Foreground(ColorZinc200).
 			Padding(0, 1)
 
 	newBadgeSelected = lipgloss.NewStyle().
-				Background(lipgloss.Color("#6D28D9")).
-				Foreground(lipgloss.Color("#FAFAFA")).
+				Background(ColorPrimaryDeep).
+				Foreground(ColorText).
 				Padding(0, 1)
 
 	newBadgeDimmed = lipgloss.NewStyle().
-			Background(lipgloss.Color("#27272A")).
-			Foreground(lipgloss.Color("#52525B")).
+			Background(ColorZinc800).
+			Foreground(ColorZinc600).
 			Padding(0, 1)
 )
 

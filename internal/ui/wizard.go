@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aayushdutt/mctui/internal/core"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/aayushdutt/mctui/internal/core"
 )
 
 // WizardStep represents the current wizard step
@@ -95,11 +95,11 @@ func NewWizardModel(instances []*core.Instance) *WizardModel {
 	// Version list
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
-		Foreground(lipgloss.Color("#10B981")).
-		BorderLeftForeground(lipgloss.Color("#10B981"))
+		Foreground(ColorSuccess).
+		BorderLeftForeground(ColorSuccess)
 	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
-		Foreground(lipgloss.Color("#6EE7B7")).
-		BorderLeftForeground(lipgloss.Color("#10B981"))
+		Foreground(ColorSuccessSubtle).
+		BorderLeftForeground(ColorSuccess)
 
 	vl := list.New([]list.Item{}, delegate, 0, 0)
 	vl.Title = "Select Minecraft Version"
@@ -107,8 +107,8 @@ func NewWizardModel(instances []*core.Instance) *WizardModel {
 	vl.SetFilteringEnabled(true)
 	vl.Styles.Title = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#10B981")).
+		Foreground(ColorText).
+		Background(ColorSuccess).
 		Padding(0, 1)
 
 	// Name input
@@ -116,8 +116,8 @@ func NewWizardModel(instances []*core.Instance) *WizardModel {
 	ti.Placeholder = "My Instance"
 	ti.CharLimit = 64
 	ti.Width = 40
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#71717A"))
-	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA"))
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(ColorZinc500)
+	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 
 	existingNames := make(map[string]struct{})
 	for _, inst := range instances {
@@ -416,7 +416,7 @@ func (m *WizardModel) moveLoaderSelection(delta int) {
 func (m *WizardModel) View() string {
 	if m.err != nil {
 		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#EF4444")).
+			Foreground(ColorError).
 			Render(fmt.Sprintf("Error: %v\n\nPress Esc to go back", m.err))
 	}
 
@@ -434,11 +434,11 @@ func (m *WizardModel) View() string {
 	steps := []string{"Version", "Loader", "Name"}
 	var progress strings.Builder
 	for i, s := range steps {
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
+		style := lipgloss.NewStyle().Foreground(ColorMuted)
 		if i == int(m.step) {
-			style = style.Bold(true).Foreground(lipgloss.Color("#10B981"))
+			style = style.Bold(true).Foreground(ColorSuccess)
 		} else if i < int(m.step) {
-			style = style.Foreground(lipgloss.Color("#10B981"))
+			style = style.Foreground(ColorSuccess)
 		}
 		if i > 0 {
 			progress.WriteString(" → ")
@@ -448,7 +448,7 @@ func (m *WizardModel) View() string {
 
 	header := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
+		Foreground(ColorText).
 		Render("New Instance")
 
 	return lipgloss.JoinVertical(
@@ -473,7 +473,7 @@ func (m *WizardModel) viewVersionStep() string {
 	}
 
 	help := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#626262")).
+		Foreground(ColorMuted).
 		Render(snapsToggle + " • [Enter] Select • [Esc] Cancel")
 
 	return lipgloss.JoinVertical(
@@ -486,7 +486,7 @@ func (m *WizardModel) viewVersionStep() string {
 func (m *WizardModel) viewLoaderStep() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
+		Foreground(ColorText).
 		Render(fmt.Sprintf("Select Mod Loader for %s", m.selectedVersion))
 
 	var loaderList strings.Builder
@@ -496,9 +496,9 @@ func (m *WizardModel) viewLoaderStep() string {
 		prefix := "  "
 		if i == m.loaderIndex {
 			prefix = "▸ "
-			style = style.Bold(true).Foreground(lipgloss.Color("#10B981"))
+			style = style.Bold(true).Foreground(ColorSuccess)
 		} else if ch.ComingSoon {
-			style = style.Foreground(lipgloss.Color("#626262"))
+			style = style.Foreground(ColorMuted)
 		}
 		style = style.SetString(prefix + label)
 		loaderList.WriteString(style.Render())
@@ -508,12 +508,12 @@ func (m *WizardModel) viewLoaderStep() string {
 	hintBlock := ""
 	if m.loaderHint != "" {
 		hintBlock = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FBBF24")).
+			Foreground(ColorWarning).
 			Render(m.loaderHint) + "\n\n"
 	}
 
 	help := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#626262")).
+		Foreground(ColorMuted).
 		Render("[↑↓] Select • [Enter] Next • [Esc] Back")
 
 	return lipgloss.JoinVertical(
@@ -529,22 +529,22 @@ func (m *WizardModel) viewLoaderStep() string {
 func (m *WizardModel) viewNameStep() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
+		Foreground(ColorText).
 		MarginBottom(0).
 		Render("Name your instance")
 
 	summary := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#A1A1AA")).
+		Foreground(ColorSubtle).
 		MarginBottom(0).
 		Render(fmt.Sprintf("Minecraft %s · %s", m.selectedVersion, m.selectedLoaderLabel))
 
 	nameFocused := m.nameFormFocus == focusWizardName
-	nameBorder := lipgloss.Color("#3F3F46")
+	nameBorder := ColorZinc700
 	if nameFocused {
-		nameBorder = lipgloss.Color("#10B981")
+		nameBorder = ColorSuccess
 	}
 	fieldLabel := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#71717A")).
+		Foreground(ColorZinc500).
 		MarginBottom(0).
 		Render("Instance name")
 
@@ -556,7 +556,7 @@ func (m *WizardModel) viewNameStep() string {
 	errText := ""
 	if m.nameErr != "" {
 		errText = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#EF4444")).
+			Foreground(ColorError).
 			MarginTop(1).
 			Render(m.nameErr)
 	}
@@ -572,8 +572,8 @@ func (m *WizardModel) viewNameStep() string {
 	if m.selectedLoader == "fabric" {
 		cbFocused := m.nameFormFocus == focusWizardStarterCheckbox
 		mark := wizardCheckboxGlyph(m.installStarterMods, cbFocused)
-		titleLine := lipgloss.NewStyle().Foreground(lipgloss.Color("#E4E4E7")).Render("Install recommended Fabric mods")
-		sub := lipgloss.NewStyle().Foreground(lipgloss.Color("#71717A")).Render("Fabric API · Mod Menu · Sodium · Lithium")
+		titleLine := lipgloss.NewStyle().Foreground(ColorZinc200).Render("Install recommended Fabric mods")
+		sub := lipgloss.NewStyle().Foreground(ColorZinc500).Render("Fabric API · Mod Menu · Sodium · Lithium")
 		labelCol := lipgloss.JoinVertical(lipgloss.Left, titleLine, sub)
 		row := lipgloss.JoinHorizontal(lipgloss.Top, mark, "  ", labelCol)
 		starterInner := lipgloss.JoinVertical(lipgloss.Left, row)
@@ -582,8 +582,8 @@ func (m *WizardModel) viewNameStep() string {
 		if cbFocused {
 			rowStyle = lipgloss.NewStyle().
 				Border(lipgloss.NormalBorder(), false, false, false, true).
-				BorderForeground(lipgloss.Color("#10B981")).
-				Background(lipgloss.Color("#27272A")).
+				BorderForeground(ColorSuccess).
+				Background(ColorZinc800).
 				PaddingLeft(1).
 				PaddingRight(1)
 		}
@@ -598,7 +598,7 @@ func (m *WizardModel) viewNameStep() string {
 	buttonRow := lipgloss.NewStyle().MarginTop(formSectionGap).Render(createBtn)
 
 	help := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#52525B")).
+		Foreground(ColorZinc600).
 		MarginTop(formSectionGap).
 		Render(helpTextNameStep(m.selectedLoader == "fabric"))
 
@@ -618,12 +618,12 @@ func (m *WizardModel) viewNameStep() string {
 func wizardCheckboxGlyph(checked, focused bool) string {
 	if checked {
 		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#34D399")).
+			Foreground(ColorAccent).
 			Render("■")
 	}
-	st := lipgloss.NewStyle().Foreground(lipgloss.Color("#52525B"))
+	st := lipgloss.NewStyle().Foreground(ColorZinc600)
 	if focused {
-		st = st.Foreground(lipgloss.Color("#10B981"))
+		st = st.Foreground(ColorSuccess)
 	}
 	return st.Render("□")
 }
@@ -634,15 +634,15 @@ func wizardFormButton(label string, focused, primary bool) string {
 		Border(lipgloss.RoundedBorder())
 	if primary {
 		if focused {
-			st = st.BorderForeground(lipgloss.Color("#10B981")).Foreground(lipgloss.Color("#FAFAFA")).Bold(true)
+			st = st.BorderForeground(ColorSuccess).Foreground(ColorText).Bold(true)
 		} else {
-			st = st.BorderForeground(lipgloss.Color("#3F3F46")).Foreground(lipgloss.Color("#A1A1AA"))
+			st = st.BorderForeground(ColorZinc700).Foreground(ColorSubtle)
 		}
 	} else {
 		if focused {
-			st = st.BorderForeground(lipgloss.Color("#71717A")).Foreground(lipgloss.Color("#E4E4E7"))
+			st = st.BorderForeground(ColorZinc500).Foreground(ColorZinc200)
 		} else {
-			st = st.BorderForeground(lipgloss.Color("#27272A")).Foreground(lipgloss.Color("#71717A"))
+			st = st.BorderForeground(ColorZinc800).Foreground(ColorZinc500)
 		}
 	}
 	return st.Render(label)

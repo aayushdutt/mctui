@@ -155,9 +155,9 @@ func modsCompactListHeights(termH, termW int) (libListH, browseListH int) {
 func modPanelSectionHeader(title, accentHex string, ruleW int) string {
 	w := max(4, ruleW)
 	mark := lipgloss.NewStyle().Foreground(lipgloss.Color(accentHex)).Render("▸")
-	t := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E4E4E7")).Render(title)
+	t := lipgloss.NewStyle().Bold(true).Foreground(ColorZinc200).Render(title)
 	line := lipgloss.JoinHorizontal(lipgloss.Left, mark, " ", t)
-	r := lipgloss.NewStyle().Foreground(lipgloss.Color("#3F3F46")).Render(strings.Repeat("─", w))
+	r := lipgloss.NewStyle().Foreground(ColorZinc700).Render(strings.Repeat("─", w))
 	return lipgloss.JoinVertical(lipgloss.Left, line, r)
 }
 

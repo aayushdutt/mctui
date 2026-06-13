@@ -437,7 +437,7 @@ func (l *Launcher) buildArguments() []string {
 		args = append(args, l.cfg.JVMArgs...)
 	} else {
 		// Sensible defaults
-		args = append(args, "-Xmx2G", "-Xms512M")
+		args = append(args, config.DefaultJVMArgs()...)
 	}
 
 	// MacOS specific flags for LWJGL

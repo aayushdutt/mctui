@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/loader"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/aayushdutt/mctui/internal/core"
-	"github.com/aayushdutt/mctui/internal/loader"
 )
 
 // HomeModel is the main instance list view
@@ -141,11 +141,11 @@ func formatRelativeTime(t time.Time) string {
 func NewHomeModel() *HomeModel {
 	base := list.NewDefaultDelegate()
 	base.Styles.SelectedTitle = base.Styles.SelectedTitle.
-		Foreground(lipgloss.Color("#7C3AED")).
-		BorderLeftForeground(lipgloss.Color("#7C3AED"))
+		Foreground(ColorPrimary).
+		BorderLeftForeground(ColorPrimary)
 	base.Styles.SelectedDesc = base.Styles.SelectedDesc.
-		Foreground(lipgloss.Color("#A78BFA")).
-		BorderLeftForeground(lipgloss.Color("#7C3AED"))
+		Foreground(ColorSecondary).
+		BorderLeftForeground(ColorPrimary)
 
 	l := list.New([]list.Item{}, &homeInstanceDelegate{DefaultDelegate: base}, 0, 0)
 	l.Title = "🎮 Minecraft Instances"
@@ -154,8 +154,8 @@ func NewHomeModel() *HomeModel {
 	l.SetShowTitle(true)
 	l.Styles.Title = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7C3AED")).
+		Foreground(ColorText).
+		Background(ColorPrimary).
 		Padding(0, 1)
 	l.SetShowHelp(false)
 
@@ -385,7 +385,7 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *HomeModel) View() string {
 	if m.loading {
 		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A1A1AA")).
+			Foreground(ColorSubtle).
 			Render("Loading instances...")
 	}
 
@@ -393,26 +393,26 @@ func (m *HomeModel) View() string {
 		// Delightful empty state with project intro
 		titleStyle := lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#7C3AED"))
+			Foreground(ColorPrimary)
 
 		title := titleStyle.Render("🎮  mctui")
 
 		tagline := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A1A1AA")).
+			Foreground(ColorSubtle).
 			Italic(true).
 			Render("A terminal-based Minecraft launcher")
 
 		divider := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#3F3F46")).
+			Foreground(ColorZinc700).
 			Render("────────────────────────────")
 
 		emptyMsg := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FAFAFA")).
+			Foreground(ColorText).
 			MarginTop(1).
 			Render("No instances yet. Let's get started!")
 
 		tips := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#626262")).
+			Foreground(ColorMuted).
 			MarginTop(1).
 			Render(`[n]  Create new instance
 [a]  Add Microsoft account
@@ -493,12 +493,12 @@ func (m *HomeModel) View() string {
 	helpText = buildHelpText(helpItems, m.width-4)
 
 	help := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#626262")).
+		Foreground(ColorMuted).
 		Render(helpText)
 
-	statusColor := lipgloss.Color("#7C3AED")
+	statusColor := ColorPrimary
 	if authWarn {
-		statusColor = lipgloss.Color("#FBBF24")
+		statusColor = ColorWarning
 	}
 	status := lipgloss.NewStyle().
 		Foreground(statusColor).
@@ -508,7 +508,7 @@ func (m *HomeModel) View() string {
 	aboveStatus := []string{m.list.View()}
 	if m.transientBanner != "" {
 		aboveStatus = append(aboveStatus, lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FBBF24")).
+			Foreground(ColorWarning).
 			Render(m.transientBanner))
 	}
 	aboveStatus = append(aboveStatus, status, help)
@@ -519,40 +519,40 @@ func (m *HomeModel) View() string {
 	if m.confirmDelete && m.deleteTarget != nil {
 		titleStyle := lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FAFAFA")).
-			Background(lipgloss.Color("#EF4444")).
+			Foreground(ColorText).
+			Background(ColorError).
 			Padding(0, 1)
 
 		title := titleStyle.Render("⚠️  Delete Instance?")
 
 		msg := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A1A1AA")).
+			Foreground(ColorSubtle).
 			Render(fmt.Sprintf("Are you sure you want to delete \"%s\"?\nThis cannot be undone.", m.deleteTarget.Name))
 
 		yesLbl := "Yes, delete"
 		noLbl := "No, cancel"
-		yesSt := lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
-		noSt := lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
+		yesSt := lipgloss.NewStyle().Foreground(ColorMuted)
+		noSt := lipgloss.NewStyle().Foreground(ColorMuted)
 		if m.deleteFocusYes {
-			yesSt = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA"))
+			yesSt = lipgloss.NewStyle().Bold(true).Foreground(ColorText)
 		} else {
-			noSt = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FAFAFA"))
+			noSt = lipgloss.NewStyle().Bold(true).Foreground(ColorText)
 		}
 		options := lipgloss.NewStyle().
 			MarginTop(1).
 			Render(lipgloss.JoinHorizontal(lipgloss.Left,
 				yesSt.Render(yesLbl),
-				lipgloss.NewStyle().Foreground(lipgloss.Color("#52525B")).Render("  ·  "),
+				lipgloss.NewStyle().Foreground(ColorZinc600).Render("  ·  "),
 				noSt.Render(noLbl),
 			))
 		hint := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#52525B")).
+			Foreground(ColorZinc600).
 			MarginTop(1).
 			Render("[↑↓←→] or Tab · [Enter] choose · [y]/[n] · Esc cancel")
 
 		promptBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#EF4444")).
+			BorderForeground(ColorError).
 			Padding(1, 2).
 			Render(lipgloss.JoinVertical(
 				lipgloss.Left,

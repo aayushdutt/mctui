@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/progress"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aayushdutt/mctui/internal/config"
 	"github.com/aayushdutt/mctui/internal/core"
 	"github.com/aayushdutt/mctui/internal/launch"
+	"github.com/charmbracelet/bubbles/progress"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // LaunchModel shows launch progress
@@ -204,8 +204,8 @@ func (m *LaunchModel) updateStepStatus(stepName, status string) {
 func (m *LaunchModel) View() string {
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7C3AED")).
+		Foreground(ColorText).
+		Background(ColorPrimary).
 		Padding(0, 1)
 
 	// Status message
@@ -217,7 +217,7 @@ func (m *LaunchModel) View() string {
 
 	// Instance info
 	info := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#A1A1AA")).
+		Foreground(ColorSubtle).
 		Render(fmt.Sprintf("Minecraft %s • %s", m.instance.Version, m.instance.Loader))
 
 	// Progress bar
@@ -231,23 +231,23 @@ func (m *LaunchModel) View() string {
 		switch step.status {
 		case "done":
 			icon = "✓"
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10B981"))
+			style = lipgloss.NewStyle().Foreground(ColorSuccess)
 		case "running":
 			icon = "◐"
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B"))
+			style = lipgloss.NewStyle().Foreground(ColorAmber)
 		case "error":
 			icon = "✗"
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444"))
+			style = lipgloss.NewStyle().Foreground(ColorError)
 		default:
 			icon = "○"
-			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
+			style = lipgloss.NewStyle().Foreground(ColorMuted)
 		}
 		stepsView.WriteString(style.Render(fmt.Sprintf("%s %s", icon, step.name)))
 		stepsView.WriteString("\n")
 	}
 
 	// Status message
-	msgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#A1A1AA"))
+	msgStyle := lipgloss.NewStyle().Foreground(ColorSubtle)
 	statusMsg := msgStyle.Render(m.status.Message)
 
 	// Error or completion
@@ -255,11 +255,11 @@ func (m *LaunchModel) View() string {
 	if m.done {
 		if m.err != nil {
 			footer = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#EF4444")).
+				Foreground(ColorError).
 				Render(fmt.Sprintf("\n✗ Failed: %v\n\n[r] Retry • [o] Offline Mode • [Enter] Home", m.err))
 		} else {
 			footer = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#10B981")).
+				Foreground(ColorSuccess).
 				Render("\n✓ Game Closed. Returning to home...")
 		}
 	} else {
@@ -273,7 +273,7 @@ func (m *LaunchModel) View() string {
 			}
 		}
 		footer = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#626262")).
+			Foreground(ColorMuted).
 			Render("\n" + helpText)
 	}
 
@@ -281,7 +281,7 @@ func (m *LaunchModel) View() string {
 	var logsView strings.Builder
 	if len(m.logs) > 0 {
 		logsView.WriteString("\n")
-		logStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+		logStyle := lipgloss.NewStyle().Foreground(ColorGray)
 		for _, line := range m.logs {
 			logsView.WriteString(logStyle.Render(line) + "\n")
 		}

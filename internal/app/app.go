@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/config"
 	"github.com/aayushdutt/mctui/internal/core"
@@ -17,6 +15,8 @@ import (
 	"github.com/aayushdutt/mctui/internal/loader"
 	"github.com/aayushdutt/mctui/internal/mods"
 	"github.com/aayushdutt/mctui/internal/ui"
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // State represents the current view/screen of the application
@@ -312,7 +312,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.launch.SetSize(cw, ch)
 			return m, tea.Batch(
 				m.launch.Init(),
-				m.startLaunch(msg.Instance, true),
+				m.beginLaunch(msg.Instance, true),
 			)
 		}
 		return m, m.gateOnlineLaunch(msg.Instance)
@@ -324,7 +324,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.launch.SetSize(cw, ch)
 		return m, tea.Batch(
 			m.launch.Init(),
-			m.startLaunch(msg.Instance, false),
+			m.beginLaunch(msg.Instance, false),
 		)
 
 	case ui.SessionGateFailed:
@@ -362,14 +362,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ui.DeleteInstance:
 		if msg.Instance != nil {
-			_ = m.instances.Delete(msg.Instance.ID)
+			if err := m.instances.Delete(msg.Instance.ID); err != nil {
+				m.home.SetTransientBanner(fmt.Sprintf("Couldn't delete instance: %v", err))
+			}
 			return m, m.loadInstances()
 		}
 	// Instance management
 	case ui.InstanceCreated:
 		if err := m.instances.Create(msg.Instance); err != nil {
-			// TODO: Show error
-			return m, nil
+			m.state = StateHome
+			m.home.SetTransientBanner(fmt.Sprintf("Couldn't create instance: %v", err))
+			return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 		}
 		m.state = StateHome
 		id := msg.Instance.ID
@@ -377,11 +380,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Launch status updates - continue subscription
 	case ui.LaunchStatusUpdate:
+		var cmd tea.Cmd
 		if m.launch != nil {
-			m.launch.Update(msg)
+			_, cmd = m.launch.Update(msg)
 		}
 		// Continue listening for more status updates
-		return m, m.waitForLaunchStatus()
+		return m, tea.Batch(cmd, m.waitForLaunchStatus(m.launchStatusChan))
 
 	// Cancel launch - user pressed ESC
 	case ui.CancelLaunch:
@@ -416,7 +420,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.launch != nil {
 			inst := m.launch.GetInstance()
 			if msg.Offline {
-				return m, m.startLaunch(inst, true)
+				return m, m.beginLaunch(inst, true)
 			}
 			return m, m.gateOnlineLaunch(inst)
 		}
@@ -476,11 +480,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithCancel(context.Background())
-		m.launchCtxCancel = cancel
+// beginLaunch sets up the launch context and status channel on the event loop
+// (so reads/writes of m.launchCtxCancel and m.launchStatusChan stay single-threaded),
+// then hands them to startLaunch's command goroutine.
+func (m *Model) beginLaunch(inst *core.Instance, offline bool) tea.Cmd {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.launchCtxCancel = cancel
+	m.launchStatusChan = make(chan launch.Status, 10)
+	return m.startLaunch(ctx, m.launchStatusChan, inst, offline)
+}
 
+func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, inst *core.Instance, offline bool) tea.Cmd {
+	return func() tea.Msg {
 		// Find version info (vanilla or merged loader profile)
 		details, err := loader.ResolveVersionDetails(ctx, m.mojang, inst, offline)
 		if err != nil {
@@ -494,9 +505,6 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 		if details.MainClass == "" {
 			return ui.LaunchComplete{Error: fmt.Errorf("invalid version info: missing main class")}
 		}
-
-		// Create status channel
-		m.launchStatusChan = make(chan launch.Status, 10)
 
 		// Determine player info
 		playerName := "Player"
@@ -524,19 +532,19 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 						if total > 0 {
 							p = float64(i) / float64(total) * 0.12
 						}
-						m.launchStatusChan <- launch.Status{
+						statusChan <- launch.Status{
 							Step:     "Installing starter mods",
 							Message:  fmt.Sprintf("Downloading %s (%d/%d). Slow connections may take several minutes.", label, i+1, total),
 							Progress: p,
 						}
 					})
 					if err != nil {
-						m.launchStatusChan <- launch.Status{
+						statusChan <- launch.Status{
 							Step:    "Installing starter mods",
 							Message: err.Error(),
 							Error:   err,
 						}
-						close(m.launchStatusChan)
+						close(statusChan)
 						return
 					}
 					inst.InstallStarterFabricMods = false
@@ -554,34 +562,36 @@ func (m *Model) startLaunch(inst *core.Instance, offline bool) tea.Cmd {
 				Config:           m.cfg,
 				UpdateLastPlayed: m.instances.UpdateLastPlayed,
 				UpdateInstance:   m.instances.Update,
-			}, m.launchStatusChan)
+			}, statusChan)
 
 			err := launcher.Launch(ctx)
 
 			// Send final status then close
 			if err != nil {
-				m.launchStatusChan <- launch.Status{
+				statusChan <- launch.Status{
 					Step:    "Error",
 					Message: err.Error(),
 					Error:   err,
 				}
 			}
-			close(m.launchStatusChan)
+			close(statusChan)
 		}()
 
 		// Return first status update command
-		return m.waitForLaunchStatus()()
+		return m.waitForLaunchStatus(statusChan)()
 	}
 }
 
-// waitForLaunchStatus creates a command that waits for the next launch status
-func (m *Model) waitForLaunchStatus() tea.Cmd {
+// waitForLaunchStatus creates a command that waits for the next launch status.
+// The channel is captured by value so the command goroutine never reads the
+// m.launchStatusChan field (which the event loop may set to nil on cancel/complete).
+func (m *Model) waitForLaunchStatus(ch chan launch.Status) tea.Cmd {
 	return func() tea.Msg {
-		if m.launchStatusChan == nil {
+		if ch == nil {
 			return ui.LaunchComplete{}
 		}
 
-		status, ok := <-m.launchStatusChan
+		status, ok := <-ch
 		if !ok {
 			// Channel closed, launch complete
 			return ui.LaunchComplete{}

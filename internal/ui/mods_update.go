@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aayushdutt/mctui/internal/mods"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/aayushdutt/mctui/internal/mods"
 )
 
 // Update implements tea.Model.

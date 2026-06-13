@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/core"
 	"github.com/aayushdutt/mctui/internal/loader"
 	"github.com/aayushdutt/mctui/internal/mods"
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ModsModel: left = installed, right = Modrinth (split) or stacked when narrow.
@@ -67,11 +67,11 @@ func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
 
 	instDel := list.NewDefaultDelegate()
 	instDel.Styles.SelectedTitle = instDel.Styles.SelectedTitle.
-		Foreground(lipgloss.Color("#FBBF24")).
-		BorderLeftForeground(lipgloss.Color("#FBBF24"))
+		Foreground(ColorWarning).
+		BorderLeftForeground(ColorWarning)
 	instDel.Styles.SelectedDesc = instDel.Styles.SelectedDesc.
-		Foreground(lipgloss.Color("#FCD34D")).
-		BorderLeftForeground(lipgloss.Color("#FBBF24"))
+		Foreground(ColorAmberSubtle).
+		BorderLeftForeground(ColorWarning)
 	installedList := list.New([]list.Item{}, instDel, 0, 0)
 	installedList.Title = "Installed (0)"
 	installedList.SetShowTitle(false)
@@ -83,16 +83,16 @@ func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
 	ti.Placeholder = "Search Fabric mods, or leave empty for popular picks…"
 	ti.CharLimit = 200
 	ti.Width = 50
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#71717A"))
-	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA"))
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(ColorZinc500)
+	ti.TextStyle = lipgloss.NewStyle().Foreground(ColorText)
 
 	browseDel := list.NewDefaultDelegate()
 	browseDel.Styles.SelectedTitle = browseDel.Styles.SelectedTitle.
-		Foreground(lipgloss.Color("#10B981")).
-		BorderLeftForeground(lipgloss.Color("#10B981"))
+		Foreground(ColorSuccess).
+		BorderLeftForeground(ColorSuccess)
 	browseDel.Styles.SelectedDesc = browseDel.Styles.SelectedDesc.
-		Foreground(lipgloss.Color("#6EE7B7")).
-		BorderLeftForeground(lipgloss.Color("#10B981"))
+		Foreground(ColorSuccessSubtle).
+		BorderLeftForeground(ColorSuccess)
 
 	browseList := list.New([]list.Item{}, browseDel, 0, 0)
 	browseList.Title = "Modrinth"
@@ -354,12 +354,12 @@ func (m *ModsModel) cycleTab() {
 func (m *ModsModel) panelBorderFocused(p modsPanel) lipgloss.Style {
 	s := lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder())
 	if m.modsFocus == p {
-		return s.BorderForeground(lipgloss.Color("#10B981"))
+		return s.BorderForeground(ColorSuccess)
 	}
 	if p == panelInstalled {
-		return s.BorderForeground(lipgloss.Color("#57534E"))
+		return s.BorderForeground(ColorStone)
 	}
-	return s.BorderForeground(lipgloss.Color("#27272A"))
+	return s.BorderForeground(ColorZinc800)
 }
 
 func (m *ModsModel) rightColumnFocused() bool {

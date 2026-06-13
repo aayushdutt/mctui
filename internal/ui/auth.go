@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	
+
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/core"
 )
@@ -21,7 +21,7 @@ const (
 	AuthStateInit AuthState = iota
 	AuthStateFetchingCode
 	AuthStateWaitingForUser // Polling
-	AuthStateExchange // Swapping tokens
+	AuthStateExchange       // Swapping tokens
 	AuthStateSuccess
 	AuthStateError
 )
@@ -73,7 +73,7 @@ func (m *AuthModel) SetSize(w, h int) {
 func (m *AuthModel) startAuthFlow() tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	dc, err := m.client.RequestDeviceCode(ctx)
 	if err != nil {
 		return errMsg{err: err}
@@ -131,7 +131,7 @@ func (m *AuthModel) exchangeTokens(msaToken string) tea.Cmd {
 			AccessToken: mcResp.AccessToken,
 			ExpiresAt:   time.Now().Add(time.Duration(mcResp.ExpiresIn) * time.Second),
 			// Refresh token from MSA? The PollForToken returns it.
-			// But I need to thread it through. 
+			// But I need to thread it through.
 			// For now, MVP assumes success.
 		}
 		return accountCreatedMsg{acc: acc}
@@ -200,7 +200,7 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = AuthStateError
 		m.err = msg.err
 		return m, nil // Wait for quit
-	
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -222,7 +222,7 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *AuthModel) View() string {
 	doc := lipgloss.NewStyle().Padding(2, 4).Width(m.width).Height(m.height)
-	
+
 	var content string
 
 	switch m.state {
@@ -239,7 +239,7 @@ func (m *AuthModel) View() string {
 			} else {
 				codeText += "  📋"
 			}
-			
+
 			box := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("63")).
@@ -283,10 +283,10 @@ And enter the code:
 }
 
 // Messages
-type deviceCodeMsg struct { resp *api.DeviceCodeResponse }
-type msaTokenMsg struct { resp *api.MSATokenResponse }
-type accountCreatedMsg struct { acc *core.Account }
-type errMsg struct { err error }
+type deviceCodeMsg struct{ resp *api.DeviceCodeResponse }
+type msaTokenMsg struct{ resp *api.MSATokenResponse }
+type accountCreatedMsg struct{ acc *core.Account }
+type errMsg struct{ err error }
 
 func openBrowser(url string) {
 	var err error
@@ -320,23 +320,23 @@ func copyToClipboard(text string) error {
 	default:
 		return fmt.Errorf("unsupported platform")
 	}
-	
+
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return err
 	}
-	
+
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	
+
 	if _, err := in.Write([]byte(text)); err != nil {
 		return err
 	}
 	if err := in.Close(); err != nil {
 		return err
 	}
-	
+
 	return cmd.Wait()
 }
 

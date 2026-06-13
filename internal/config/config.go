@@ -34,6 +34,11 @@ const (
 	DefaultMSAClientID = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb"
 )
 
+// DefaultJVMArgs returns the default JVM arguments for a new instance/config.
+func DefaultJVMArgs() []string {
+	return []string{"-Xmx2G", "-Xms512M"}
+}
+
 // DefaultConfig returns a config with sensible defaults
 func DefaultConfig() *Config {
 	dataDir := getDefaultDataDir()
@@ -42,7 +47,7 @@ func DefaultConfig() *Config {
 		InstancesDir:       filepath.Join(dataDir, "instances"),
 		AssetsDir:          filepath.Join(dataDir, "assets"),
 		LibrariesDir:       filepath.Join(dataDir, "libraries"),
-		JVMArgs:            []string{"-Xmx2G", "-Xms512M"},
+		JVMArgs:            DefaultJVMArgs(),
 		Theme:              "dark",
 		ShowSnapshots:      false,
 		MSAClientID:        DefaultMSAClientID,
