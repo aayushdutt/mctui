@@ -4,12 +4,13 @@ A fast, terminal-based Minecraft launcher written in Go.
 
 ## Features
 
-- **Instances** — Create vanilla or **Fabric** instances, pick Minecraft versions, and launch online (Microsoft account) or offline.
-- **Fabric** — Loader resolution merges Mojang metadata with Fabric’s profile (`meta.fabricmc.net`), caches merged profiles, and keeps the classpath consistent when you change game version or loader.
-- **Modrinth (Fabric)** — From the home screen, open an in-terminal **mod browser**: search Modrinth, install Fabric mods into the instance, remove jars, and see what was installed via mctui. Optional **starter bundle** (Fabric API, Mod Menu, Sodium, Lithium) when creating a Fabric instance.
-- **Microsoft authentication** — Device code flow; **online launch** checks that your Minecraft session is still valid. The home screen shows session status; you can still **play offline** when supported.
-- **Launch screen** — Progress while downloading and starting the game; press **`v`** to cycle **game log verbosity** (errors / warnings / all). The choice is saved in config (`launchLogVerbosity`).
-- **TUI** — Keyboard-first workflow, mouse wheel where it helps, and a clear layout across home, wizard, launch, and mods.
+- **Instances**: Create vanilla or **Fabric** instances, pick Minecraft versions, and launch online (Microsoft account) or offline.
+- **Fabric**: Loader resolution merges Mojang metadata with Fabric’s profile (`meta.fabricmc.net`), caches merged profiles, and keeps the classpath consistent when you change game version or loader.
+- **Modrinth (Fabric)**: From the home screen, open an in-terminal **mod browser**: search Modrinth , install mods into the instance with **required dependencies resolved and downloaded automatically**, remove jars, and see what was installed via mctui. Optional **starter bundle** (Fabric API, Mod Menu, Sodium, Lithium) when creating a Fabric instance.
+- **Microsoft authentication**: Device code flow; sessions are refreshed in the background so you stay signed in instead of re-authenticating every day. **Online launch** verifies your Minecraft session; the home screen shows session status, and you can still **play offline** when supported.
+- **Settings**: In-app settings screen (`s`): Java path, JVM arguments, show-snapshots toggle, Microsoft client ID, and live **theme** switching.
+- **Launch screen**: Progress while downloading and starting the game; press **`v`** to cycle **game log verbosity** (errors / warnings / all). The choice is saved in config (`launchLogVerbosity`).
+- **TUI**: Keyboard-first workflow, mouse wheel where it helps, and a clear layout across home, wizard, launch, and mods.
 
 ## Install from releases (fastest)
 
@@ -29,7 +30,7 @@ You do **not** need Go installed to run a prebuilt binary.
 
 ### Install with Go (`go install`)
 
-If you have Go 1.21+, you can install the latest tagged release **without** downloading a release archive (builds on your machine—often simpler on **macOS** where prebuilt binaries may trigger Gatekeeper):
+If you have Go installed, you can install the latest tagged release **without** downloading a release archive:
 
 ```bash
 go install github.com/aayushdutt/mctui@latest
@@ -48,7 +49,13 @@ make build
 ./mctui
 ```
 
-See the `Makefile` for `test`, `lint`, cross-builds (`build-all`), and dev helpers.
+### Testing
+
+```bash
+make test                 # whole suite (unit + integration + e2e)
+```
+
+See the `Makefile` for more (`lint`, cross-builds via `build-all`, coverage, and dev helpers).
 
 ## Project structure
 
@@ -64,8 +71,7 @@ mctui/
 │   ├── mods/         # Modrinth search/install, catalog, starter mods
 │   ├── api/          # Mojang, Modrinth, Microsoft / Minecraft auth
 │   └── config/       # Paths and settings
-├── Makefile
-└── BEST_PRACTICES.md
+└── Makefile
 ```
 
 ## Keybindings (home)
@@ -77,7 +83,7 @@ mctui/
 | `o`                | Play offline                    |
 | `n`                | New instance                    |
 | `m`                | Mods browser (Fabric instances) |
-| `s`                | Settings (placeholder)          |
+| `s`                | Settings (Java, JVM args, theme…) |
 | `a`                | Accounts                        |
 | `f`                | Open instance folder            |
 | `d`                | Delete instance                 |
