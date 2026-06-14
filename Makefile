@@ -1,4 +1,4 @@
-.PHONY: build run dev test test-cover lint fmt tidy clean build-all reset-auth damage-auth reset-all
+.PHONY: build run dev test fmt-check verify lint fmt tidy clean build-all reset-auth damage-auth reset-all
 
 # Build the binary
 build:
@@ -12,14 +12,34 @@ run:
 dev:
 	air
 
-# Run tests
-test:
-	go test -v ./...
+# Run tests. One target, composable modifiers:
+#   make test                      whole suite (unit + integration + e2e)
+#   make test SCOPE=unit           all packages except the e2e package
+#   make test SCOPE=e2e            the teatest end-to-end scenarios
+#   make test RACE=1               under the race detector
+#   make test COVER=1              with coverage -> coverage.{out,html}
+#   make test V=1                  verbose
+#   make test RUN=TestName         filter by test name (regex)
+#   make test SCOPE=e2e RACE=1 V=1 modifiers compose
+SCOPE ?= all
+ifeq ($(SCOPE),unit)
+  TEST_PKGS := $(shell go list ./... | grep -v '/internal/app')
+else ifeq ($(SCOPE),e2e)
+  TEST_PKGS := ./internal/app
+  TEST_RUN  := E2E
+else
+  TEST_PKGS := ./...
+endif
+RUN ?= $(TEST_RUN)
 
-# Run tests with coverage
-test-cover:
-	go test -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
+test:
+	go test \
+		$(if $(filter 1,$(RACE)),-race,) \
+		$(if $(filter 1,$(V)),-v,) \
+		$(if $(filter 1,$(COVER)),-coverprofile=coverage.out,) \
+		$(if $(RUN),-run $(RUN),) \
+		$(TEST_PKGS)
+	@if [ "$(COVER)" = "1" ]; then go tool cover -html=coverage.out -o coverage.html; fi
 
 # Lint (tries golangci-lint, falls back to go vet)
 lint:
@@ -36,6 +56,18 @@ fmt:
 	@if command -v goimports >/dev/null; then \
 		goimports -w .; \
 	fi
+
+# Fail if any file is not gofmt-clean (CI-friendly)
+fmt-check:
+	@unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "Not gofmt-clean:"; echo "$$unformatted"; exit 1; \
+	fi
+
+# Full pre-PR / CI gate: format check, vet, and race-enabled tests
+verify: fmt-check
+	go vet ./...
+	go test -race ./...
 
 # Tidy dependencies
 tidy:

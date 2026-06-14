@@ -20,10 +20,10 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 
 	// Create a dummy instance
 	inst := &core.Instance{
-		ID:        "test-inst",
-		Name:      "Test Instance",
-		Path:      tmpDir,
-		Version:   "1.21.4",
+		ID:      "test-inst",
+		Name:    "Test Instance",
+		Path:    tmpDir,
+		Version: "1.21.4",
 	}
 
 	// Create dummy version info with a library that definitely doesn't exist
@@ -51,7 +51,7 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 
 	t.Run("AlreadyDownloaded_True", func(t *testing.T) {
 		inst.IsFullyDownloaded = true
-		
+
 		l := NewLauncher(&Options{
 			Instance:    inst,
 			VersionInfo: version,
@@ -67,7 +67,7 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 		// Launcher doesn't export downloadLibraries.
 		// But verify behaviour via log/status if possible?
 		// Or assume checkJava passes if we provide a dummy java path.
-		
+
 		l.opts.JavaPath = "dummy-java" // Skip checkJava
 
 		// However, downloadLibraries is step 2.
@@ -76,7 +76,7 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 		// Assets also has items? VersionInfo has AssetIndex.
 		// If we leave AssetIndex empty or dummy, it might fail there if not skipped.
 		// We want verification that it SKIPPED.
-		
+
 		// Let's set the AssetIndex URL to bad too.
 		version.AssetIndex = core.AssetIndexRef{
 			ID:  "test-assets",
@@ -90,12 +90,12 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 		// because of the flag.
 		// It will eventually fail at "Launching" because Java path is dummy or game jar missing.
 		// But if it fails at "Downloading ...", then the flag didn't work.
-		
+
 		err = l.Launch(ctx)
-		
+
 		// We expect error at "Launching" or "Preparing game", NOT download.
 		// "Preparing game" makes dirs. "Launching" fails exec.
-		
+
 		if err == nil {
 			// It shouldn't succeed fully with dummy java
 		} else {
@@ -118,7 +118,7 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 
 		// Should try to download and fail because of bad URL
 		err := l.Launch(context.Background())
-		
+
 		if err == nil {
 			t.Error("Expected download error, got success")
 		} else {
@@ -134,6 +134,6 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && 
+	return len(s) >= len(substr) &&
 		(s[0:len(substr)] == substr || contains(s[1:], substr))
 }
