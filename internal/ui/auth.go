@@ -36,6 +36,11 @@ type AuthModel struct {
 	account    *core.Account
 	copied     bool
 
+	// pendingLaunch is the instance the user was trying to launch when this auth
+	// screen opened (nil when opened from the Accounts menu). When set, the screen
+	// offers an "[o] play offline" escape hatch that launches it without signing in.
+	pendingLaunch *core.Instance
+
 	spinner spinner.Model
 
 	// Dependencies
@@ -44,17 +49,18 @@ type AuthModel struct {
 	clientID string
 }
 
-func NewAuthModel(dataDir string, clientID string, manager *core.AccountManager) *AuthModel {
+func NewAuthModel(dataDir string, clientID string, manager *core.AccountManager, pendingLaunch *core.Instance) *AuthModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(Active.Secondary)
 
 	return &AuthModel{
-		state:    AuthStateInit,
-		spinner:  s,
-		manager:  manager,
-		clientID: clientID,
-		client:   api.NewAuthClient(clientID),
+		state:         AuthStateInit,
+		spinner:       s,
+		manager:       manager,
+		clientID:      clientID,
+		client:        api.NewAuthClient(clientID),
+		pendingLaunch: pendingLaunch,
 	}
 }
 
@@ -138,6 +144,12 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q":
 			return m, func() tea.Msg { return NavigateToHome{} }
 		case "o":
+			// Escape hatch: play the pending instance offline instead of signing in.
+			if m.pendingLaunch != nil {
+				inst := m.pendingLaunch
+				return m, func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: true} }
+			}
+		case "b":
 			if m.state == AuthStateWaitingForUser && m.deviceCode != nil {
 				openBrowser(m.deviceCode.VerificationURI)
 			}
@@ -237,7 +249,11 @@ func (m *AuthModel) authCard() string {
 		bad := lipgloss.NewStyle().Bold(true).Foreground(Active.Error).Render(GlyphFail + " Sign-in failed")
 		body := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(fmt.Sprintf("%v", m.err))
 		panel := Panel("Error", body, w, Active.Error)
-		hints := KeyHints(w, KeyHint{"esc", "back"})
+		errHints := []KeyHint{{"esc", "back"}}
+		if m.pendingLaunch != nil {
+			errHints = append([]KeyHint{{"o", "play offline"}}, errHints...)
+		}
+		hints := KeyHints(w, errHints...)
 		return lipgloss.JoinVertical(lipgloss.Left, bad, "", panel, "", hints)
 
 	case AuthStateWaitingForUser:
@@ -269,7 +285,12 @@ func (m *AuthModel) authDeviceCard(w int) string {
 	waiting := lipgloss.NewStyle().
 		Foreground(Active.TextSubtle).
 		Render(m.spinner.View() + " Waiting for you to sign in…")
-	hints := KeyHints(w, KeyHint{"c", "copy code"}, KeyHint{"o", "open browser"}, KeyHint{"esc", "back"})
+	cardHints := []KeyHint{{"c", "copy code"}, {"b", "open browser"}}
+	if m.pendingLaunch != nil {
+		cardHints = append(cardHints, KeyHint{"o", "play offline"})
+	}
+	cardHints = append(cardHints, KeyHint{"esc", "back"})
+	hints := KeyHints(w, cardHints...)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, "", panel, "", waiting, "", hints)
 }

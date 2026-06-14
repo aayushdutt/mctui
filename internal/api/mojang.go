@@ -139,8 +139,13 @@ func (c *MojangClient) ResolveVersionDetails(ctx context.Context, versionID stri
 		return nil, err
 	}
 
+	// "offline" means an offline account, not necessarily no network: use the
+	// cached version details when present, otherwise fall through to resolve
+	// online (a never-launched instance has nothing cached yet).
 	if offline {
-		return c.loadVersionDetails(versionID)
+		if details, err := c.loadVersionDetails(versionID); err == nil {
+			return details, nil
+		}
 	}
 
 	version, err := c.FindVersion(ctx, versionID)

@@ -92,8 +92,9 @@ type (
 
 	// SessionGateFailed blocks online launch until the user re-authenticates or network is available.
 	SessionGateFailed struct {
-		NeedAuth bool  // missing account, locally expired, or API rejected token (401)
-		Err      error // network / server error when NeedAuth is false
+		NeedAuth bool           // missing account, locally expired, or API rejected token (401)
+		Err      error          // network / server error when NeedAuth is false
+		Instance *core.Instance // the instance being launched, so auth can offer "play offline"
 	}
 
 	// ActiveSessionCheckStarted signals a background Minecraft session check has begun.

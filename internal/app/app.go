@@ -154,9 +154,12 @@ func (m *Model) effectiveMSAClientID() string {
 	return config.DefaultMSAClientID
 }
 
-func (m *Model) prepareAuthScreen() tea.Cmd {
+// prepareAuthScreen opens the device-code sign-in. When pendingLaunch is non-nil
+// (auth was triggered by an online-launch attempt), the auth screen offers an
+// "play offline" escape hatch for that instance.
+func (m *Model) prepareAuthScreen(pendingLaunch *core.Instance) tea.Cmd {
 	m.state = StateAuth
-	m.auth = ui.NewAuthModel(m.cfg.DataDir, m.effectiveMSAClientID(), m.accounts)
+	m.auth = ui.NewAuthModel(m.cfg.DataDir, m.effectiveMSAClientID(), m.accounts, pendingLaunch)
 	cw, ch := m.contentSize()
 	m.auth.SetSize(cw, ch)
 	return m.auth.Init()
@@ -259,7 +262,7 @@ func (m *Model) gateOnlineLaunch(inst *core.Instance) tea.Cmd {
 	return func() tea.Msg {
 		acc := m.accounts.GetActive()
 		if acc == nil {
-			return ui.NavigateToAuth{}
+			return ui.SessionGateFailed{NeedAuth: true, Instance: inst}
 		}
 		switch acc.Type {
 		case core.AccountTypeOffline:
@@ -268,7 +271,7 @@ func (m *Model) gateOnlineLaunch(inst *core.Instance) tea.Cmd {
 		case core.AccountTypeMSA:
 			// continue below
 		default:
-			return ui.NavigateToAuth{}
+			return ui.SessionGateFailed{NeedAuth: true, Instance: inst}
 		}
 		if acc.IsExpired() {
 			// Attempt a silent refresh so launch proceeds without a detour to the
@@ -277,13 +280,13 @@ func (m *Model) gateOnlineLaunch(inst *core.Instance) tea.Cmd {
 			if acc.MSARefreshToken != "" {
 				return launchRefreshTriggerMsg{instance: inst}
 			}
-			return ui.SessionGateFailed{NeedAuth: true}
+			return ui.SessionGateFailed{NeedAuth: true, Instance: inst}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		err := m.validateMSAccessToken(ctx, acc)
 		if errors.Is(err, api.ErrMinecraftSessionInvalid) {
-			return ui.SessionGateFailed{NeedAuth: true}
+			return ui.SessionGateFailed{NeedAuth: true, Instance: inst}
 		}
 		if err != nil {
 			return ui.SessionGateFailed{Err: err}
@@ -426,7 +429,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ui.SessionGateFailed:
 		if msg.NeedAuth {
-			return m, m.prepareAuthScreen()
+			return m, m.prepareAuthScreen(msg.Instance)
 		}
 		m.state = StateHome
 		if m.launchCtxCancel != nil {
@@ -461,7 +464,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Online launch gate asked us to silently refresh before launching.
 		acc := m.accounts.GetActive()
 		if acc == nil || acc.Type != core.AccountTypeMSA || acc.MSARefreshToken == "" {
-			return m, func() tea.Msg { return ui.SessionGateFailed{NeedAuth: true} }
+			inst := msg.instance
+			return m, func() tea.Msg { return ui.SessionGateFailed{NeedAuth: true, Instance: inst} }
 		}
 		return m, m.refreshActiveSession(acc, msg.instance)
 
@@ -474,7 +478,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.authError {
 				// Refresh token rejected — must re-login via device code.
 				if msg.launch != nil {
-					return m, func() tea.Msg { return ui.SessionGateFailed{NeedAuth: true} }
+					inst := msg.launch
+					return m, func() tea.Msg { return ui.SessionGateFailed{NeedAuth: true, Instance: inst} }
 				}
 				m.home.ApplyActiveSessionCheckResult(ui.ActiveSessionCheckResult{Status: ui.ActiveSessionInvalid})
 				return m, nil
@@ -502,7 +507,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ui.NavigateToAuth:
-		return m, m.prepareAuthScreen()
+		return m, m.prepareAuthScreen(nil)
 
 	case ui.RetryLoadVersions:
 		return m, m.loadVersions()

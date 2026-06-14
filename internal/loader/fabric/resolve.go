@@ -40,20 +40,18 @@ func ResolveVersion(ctx context.Context, mojang *api.MojangClient, inst *core.In
 	loaderVer := inst.LoaderVer
 	cacheDir := mojang.VersionCacheDir()
 
-	if offline {
-		if loaderVer == "" {
-			return nil, fmt.Errorf("fabric offline needs a saved loader version; connect once after choosing Fabric")
-		}
+	// "offline" here means an offline *account* (skip Microsoft auth), not
+	// necessarily no network. Prefer the cache so a fully-cached instance launches
+	// without touching the network (true airplane mode); otherwise fall through to
+	// the online resolution below, which also handles a never-launched instance.
+	if offline && loaderVer != "" {
 		cacheFile := mergedProfileCacheFile(cacheDir, gameVer, loaderVer)
-		data, err := os.ReadFile(cacheFile)
-		if err != nil {
-			return nil, fmt.Errorf("offline fabric launch needs cached profile %s: %w", filepath.Base(cacheFile), err)
+		if data, err := os.ReadFile(cacheFile); err == nil {
+			var details core.VersionDetails
+			if json.Unmarshal(data, &details) == nil && details.MainClass != "" {
+				return &details, nil
+			}
 		}
-		var details core.VersionDetails
-		if err := json.Unmarshal(data, &details); err != nil {
-			return nil, fmt.Errorf("read fabric cache: %w", err)
-		}
-		return &details, nil
 	}
 
 	parent, err := mojang.ResolveVersionDetails(ctx, gameVer, false)

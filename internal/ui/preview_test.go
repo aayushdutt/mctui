@@ -68,7 +68,7 @@ func TestUIPreview(t *testing.T) {
 	fmt.Println(launch.View())
 
 	// Auth — device-code card (white-box: set the state directly)
-	auth := NewAuthModel(os.TempDir(), config.DefaultMSAClientID, core.NewAccountManager(os.TempDir()))
+	auth := NewAuthModel(os.TempDir(), config.DefaultMSAClientID, core.NewAccountManager(os.TempDir()), nil)
 	auth.width, auth.height = w, h
 	auth.state = AuthStateWaitingForUser
 	auth.deviceCode = &api.DeviceCodeResponse{UserCode: "ABCD-EFGH", VerificationURI: "https://microsoft.com/link"}
