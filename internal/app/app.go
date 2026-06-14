@@ -105,6 +105,21 @@ func New() *Model {
 	accounts := core.NewAccountManager(cfg.DataDir)
 	accounts.Load()
 
+	return newWithDeps(
+		cfg,
+		instances,
+		accounts,
+		api.NewMojangClient(cfg.DataDir),
+		api.NewModrinthClient(),
+	)
+}
+
+// newWithDeps builds a Model from already-constructed dependencies. It is the
+// dependency-injection seam New() delegates to: tests construct temp-dir-backed
+// managers and a Modrinth client pointed at a test server, then call this
+// directly to exercise the full app without touching the real data dir or
+// network. Production callers should use New().
+func newWithDeps(cfg *config.Config, instances *core.InstanceManager, accounts *core.AccountManager, mojang *api.MojangClient, modrinth *api.ModrinthClient) *Model {
 	home := ui.NewHomeModel()
 	home.SetAccountManager(accounts)
 
@@ -114,8 +129,8 @@ func New() *Model {
 		cfg:       cfg,
 		instances: instances,
 		accounts:  accounts,
-		mojang:    api.NewMojangClient(cfg.DataDir),
-		modrinth:  api.NewModrinthClient(),
+		mojang:    mojang,
+		modrinth:  modrinth,
 		keys:      defaultKeyMap(),
 	}
 }
@@ -155,8 +170,62 @@ func (m *Model) contentSize() (w, h int) {
 	return max(0, m.width-2*ui.AppShellPadX), max(0, m.height-2*ui.AppShellPadY)
 }
 
+// validateMSAccessToken reads acc.AccessToken from a command goroutine. This does
+// not race with the session-refresh writes in Update: a silent refresh is only
+// dispatched for expired accounts (see checkActiveSessionCmd / gateOnlineLaunch,
+// both guarded by acc.IsExpired()), whereas this is only ever called for
+// non-expired accounts — the two states are mutually exclusive for a given account.
 func (m *Model) validateMSAccessToken(ctx context.Context, acc *core.Account) error {
 	return api.NewAuthClient(m.effectiveMSAClientID()).ValidateMinecraftToken(ctx, acc.AccessToken)
+}
+
+// sessionRefreshedMsg carries the result of a silent MSA refresh attempt back to
+// the single-threaded Update loop. The network refresh runs inside a background
+// command (see refreshActiveSession); the actual mutation of the *core.Account
+// and the AccountManager.Save() happen only when this message is applied in
+// Update, mirroring the accountCreatedMsg pattern. This keeps all account/disk
+// writes off the concurrent command goroutines and avoids data races.
+type sessionRefreshedMsg struct {
+	accountID    string
+	accessToken  string
+	refreshToken string
+	expiresAt    time.Time
+	err          error // non-nil if the refresh failed
+	authError    bool  // true when err is an MSA auth error => must re-login
+
+	// gate routes the post-apply continuation. When launch is non-nil, a
+	// successful refresh proceeds to launch; otherwise the home-screen session
+	// check result is recomputed.
+	launch *core.Instance
+}
+
+// refreshActiveSession performs the silent MSA token refresh in a background
+// command and reports the outcome via sessionRefreshedMsg. It never mutates the
+// account or touches disk — that happens when the message is applied in Update.
+func (m *Model) refreshActiveSession(acc *core.Account, inst *core.Instance) tea.Cmd {
+	id := acc.ID
+	refreshToken := acc.MSARefreshToken
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		client := api.NewAuthClient(m.effectiveMSAClientID())
+		mcToken, newRefresh, expiresIn, err := client.RefreshSession(ctx, refreshToken)
+		if err != nil {
+			return sessionRefreshedMsg{
+				accountID: id,
+				err:       err,
+				authError: errors.Is(err, api.ErrMSARefreshInvalid),
+				launch:    inst,
+			}
+		}
+		return sessionRefreshedMsg{
+			accountID:    id,
+			accessToken:  mcToken,
+			refreshToken: newRefresh,
+			expiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
+			launch:       inst,
+		}
+	}
 }
 
 func (m *Model) checkActiveSessionCmd() tea.Cmd {
@@ -166,6 +235,11 @@ func (m *Model) checkActiveSessionCmd() tea.Cmd {
 			return ui.ActiveSessionCheckResult{Status: ui.ActiveSessionNotApplicable}
 		}
 		if acc.IsExpired() {
+			// Try a silent refresh before forcing a re-login. The actual token
+			// swap + Save() is applied in Update when sessionRefreshedMsg lands.
+			if acc.MSARefreshToken != "" {
+				return refreshTriggerMsg{}
+			}
 			return ui.ActiveSessionCheckResult{Status: ui.ActiveSessionInvalid}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
@@ -197,6 +271,12 @@ func (m *Model) gateOnlineLaunch(inst *core.Instance) tea.Cmd {
 			return ui.NavigateToAuth{}
 		}
 		if acc.IsExpired() {
+			// Attempt a silent refresh so launch proceeds without a detour to the
+			// auth screen. Only fall back to re-login if the refresh itself fails
+			// with an auth error (handled when sessionRefreshedMsg is applied).
+			if acc.MSARefreshToken != "" {
+				return launchRefreshTriggerMsg{instance: inst}
+			}
 			return ui.SessionGateFailed{NeedAuth: true}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -211,6 +291,13 @@ func (m *Model) gateOnlineLaunch(inst *core.Instance) tea.Cmd {
 		return ui.ProceedWithLaunch{Instance: inst}
 	}
 }
+
+// refreshTriggerMsg and launchRefreshTriggerMsg are emitted by the session-check
+// commands (which run concurrently) to ask the single-threaded Update loop to
+// kick off a silent refresh. They carry no account snapshot: Update reads the
+// current active account so it always refreshes against the latest stored token.
+type refreshTriggerMsg struct{}
+type launchRefreshTriggerMsg struct{ instance *core.Instance }
 
 func (m *Model) sessionRecheckCmd() tea.Cmd {
 	return tea.Sequence(
@@ -357,6 +444,61 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ui.ActiveSessionCheckResult:
 		m.home.ApplyActiveSessionCheckResult(msg)
+		return m, nil
+
+	case refreshTriggerMsg:
+		// Background check asked us to silently refresh the home-screen session.
+		// Read the current active account on the event loop, then dispatch the
+		// network refresh as a command.
+		acc := m.accounts.GetActive()
+		if acc == nil || acc.Type != core.AccountTypeMSA || acc.MSARefreshToken == "" {
+			m.home.ApplyActiveSessionCheckResult(ui.ActiveSessionCheckResult{Status: ui.ActiveSessionInvalid})
+			return m, nil
+		}
+		return m, m.refreshActiveSession(acc, nil)
+
+	case launchRefreshTriggerMsg:
+		// Online launch gate asked us to silently refresh before launching.
+		acc := m.accounts.GetActive()
+		if acc == nil || acc.Type != core.AccountTypeMSA || acc.MSARefreshToken == "" {
+			return m, func() tea.Msg { return ui.SessionGateFailed{NeedAuth: true} }
+		}
+		return m, m.refreshActiveSession(acc, msg.instance)
+
+	case sessionRefreshedMsg:
+		// Apply the refresh result on the single-threaded event loop: mutate the
+		// account and persist via the AccountManager here so all disk writes stay
+		// off the concurrent command goroutines. If two refreshes race, Update
+		// applies them serially (last write wins; both yield valid tokens).
+		if msg.err != nil {
+			if msg.authError {
+				// Refresh token rejected — must re-login via device code.
+				if msg.launch != nil {
+					return m, func() tea.Msg { return ui.SessionGateFailed{NeedAuth: true} }
+				}
+				m.home.ApplyActiveSessionCheckResult(ui.ActiveSessionCheckResult{Status: ui.ActiveSessionInvalid})
+				return m, nil
+			}
+			// Network / transient failure — keep the session, do NOT force re-login.
+			if msg.launch != nil {
+				return m, func() tea.Msg { return ui.SessionGateFailed{Err: msg.err} }
+			}
+			m.home.ApplyActiveSessionCheckResult(ui.ActiveSessionCheckResult{Status: ui.ActiveSessionUncertain, Err: msg.err})
+			return m, nil
+		}
+		// Success: persist the new Minecraft token and rotated refresh token.
+		if acc := m.accounts.GetActive(); acc != nil && acc.ID == msg.accountID {
+			acc.AccessToken = msg.accessToken
+			acc.ExpiresAt = msg.expiresAt
+			acc.MSARefreshToken = msg.refreshToken
+			if err := m.accounts.Save(); err != nil {
+				m.home.SetTransientBanner(fmt.Sprintf("Refreshed session, but couldn't save: %v", err))
+			}
+		}
+		if msg.launch != nil {
+			return m, func() tea.Msg { return ui.ProceedWithLaunch{Instance: msg.launch} }
+		}
+		m.home.ApplyActiveSessionCheckResult(ui.ActiveSessionCheckResult{Status: ui.ActiveSessionOK})
 		return m, nil
 
 	case ui.NavigateToAuth:
@@ -528,10 +670,25 @@ func (m *Model) beginLaunch(inst *core.Instance, offline bool) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.launchCtxCancel = cancel
 	m.launchStatusChan = make(chan launch.Status, 10)
-	return m.startLaunch(ctx, m.launchStatusChan, inst, offline)
+
+	// Snapshot credentials ON the event loop so the command goroutine never reads
+	// the shared *core.Account fields, which Update may concurrently rewrite when a
+	// sessionRefreshedMsg lands. Offline launches use the default Player identity.
+	playerName := "Player"
+	uuid := "00000000-0000-0000-0000-000000000000"
+	accessToken := ""
+	if !offline {
+		if acc := m.accounts.GetActive(); acc != nil {
+			playerName = acc.Name
+			uuid = acc.ID
+			accessToken = acc.AccessToken
+		}
+	}
+
+	return m.startLaunch(ctx, m.launchStatusChan, inst, offline, playerName, uuid, accessToken)
 }
 
-func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, inst *core.Instance, offline bool) tea.Cmd {
+func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, inst *core.Instance, offline bool, playerName, uuid, accessToken string) tea.Cmd {
 	return func() tea.Msg {
 		// Find version info (vanilla or merged loader profile)
 		details, err := loader.ResolveVersionDetails(ctx, m.mojang, inst, offline)
@@ -547,18 +704,9 @@ func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, 
 			return ui.LaunchComplete{Error: fmt.Errorf("invalid version info: missing main class")}
 		}
 
-		// Determine player info
-		playerName := "Player"
-		uuid := "00000000-0000-0000-0000-000000000000"
-		accessToken := ""
-
-		if !offline {
-			if acc := m.accounts.GetActive(); acc != nil {
-				playerName = acc.Name
-				uuid = acc.ID
-				accessToken = acc.AccessToken
-			}
-		}
+		// Player info (playerName/uuid/accessToken) is snapshotted by beginLaunch on
+		// the event loop and passed in, so this goroutine never reads the shared
+		// *core.Account that a session refresh may rewrite concurrently.
 
 		// Start launcher in goroutine (starter Fabric mods first if requested, with progress on this screen)
 		go func() {

@@ -94,45 +94,31 @@ func (m *AuthModel) pollToken(dc *api.DeviceCodeResponse) tea.Cmd {
 	}
 }
 
-func (m *AuthModel) exchangeTokens(msaToken string) tea.Cmd {
+func (m *AuthModel) exchangeTokens(msaToken, refreshToken string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// 1. Xbox
-		xboxResp, err := m.client.AuthenticateXbox(ctx, msaToken)
+		// Xbox -> XSTS -> Minecraft (shared with the silent refresh flow).
+		mcAccessToken, expiresIn, err := m.client.MinecraftLoginFromMSAToken(ctx, msaToken)
 		if err != nil {
-			return errMsg{err: fmt.Errorf("xbox auth failed: %w", err)}
+			return errMsg{err: err}
 		}
 
-		// 2. XSTS
-		xstsResp, err := m.client.AuthenticateXSTS(ctx, xboxResp.Token)
-		if err != nil {
-			return errMsg{err: fmt.Errorf("xsts auth failed: %w", err)}
-		}
-
-		// 3. Minecraft
-		uhs := xstsResp.DisplayClaims.XUI[0].UHS
-		mcResp, err := m.client.LoginWithXbox(ctx, uhs, xstsResp.Token)
-		if err != nil {
-			return errMsg{err: fmt.Errorf("minecraft login failed: %w", err)}
-		}
-
-		// 4. Profile
-		profile, err := m.client.FetchProfile(ctx, mcResp.AccessToken)
+		// Profile
+		profile, err := m.client.FetchProfile(ctx, mcAccessToken)
 		if err != nil {
 			return errMsg{err: fmt.Errorf("fetch profile failed: %w", err)}
 		}
 
-		// Success!
+		// Success! Persist the rotating MSA refresh token so the session can be
+		// refreshed silently when the Minecraft token expires (~24h).
 		acc := &core.Account{
-			ID:          profile.ID,
-			Name:        profile.Name,
-			Type:        core.AccountTypeMSA,
-			AccessToken: mcResp.AccessToken,
-			ExpiresAt:   time.Now().Add(time.Duration(mcResp.ExpiresIn) * time.Second),
-			// Refresh token from MSA? The PollForToken returns it.
-			// But I need to thread it through.
-			// For now, MVP assumes success.
+			ID:              profile.ID,
+			Name:            profile.Name,
+			Type:            core.AccountTypeMSA,
+			AccessToken:     mcAccessToken,
+			ExpiresAt:       time.Now().Add(time.Duration(expiresIn) * time.Second),
+			MSARefreshToken: refreshToken,
 		}
 		return accountCreatedMsg{acc: acc}
 	}
@@ -182,9 +168,9 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msaTokenMsg:
 		m.state = AuthStateExchange
-		// Store refresh token temporarily or pass it?
-		// For MVP, just proceed.
-		return m, m.exchangeTokens(msg.resp.AccessToken)
+		// Thread the rotating MSA refresh token through so it lands on the
+		// created account for later silent refreshes.
+		return m, m.exchangeTokens(msg.resp.AccessToken, msg.resp.RefreshToken)
 
 	case accountCreatedMsg:
 		m.state = AuthStateSuccess

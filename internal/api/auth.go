@@ -17,6 +17,12 @@ import (
 // (expired, revoked, or otherwise invalid).
 var ErrMinecraftSessionInvalid = errors.New("minecraft session invalid or expired")
 
+// ErrMSARefreshInvalid means the MSA refresh token was rejected by Microsoft
+// (expired, revoked, or otherwise invalid) with a 4xx auth error. Callers should
+// treat this as "must re-login via device code". Distinct from a network failure,
+// which is returned as the raw error so callers can retry without forcing re-login.
+var ErrMSARefreshInvalid = errors.New("msa refresh token invalid or expired")
+
 var (
 	msaDeviceCodeURL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
 	msaTokenURL      = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
@@ -170,6 +176,96 @@ func (c *AuthClient) PollForToken(ctx context.Context, dc *DeviceCodeResponse) (
 		return nil, fmt.Errorf("auth error: %s", result.Error)
 	}
 	return nil, fmt.Errorf("timeout waiting for user authorization")
+}
+
+// RefreshMSAToken exchanges a (rotating) MSA refresh token for a fresh MSA
+// access token. Microsoft rotates refresh tokens, so the returned
+// MSATokenResponse.RefreshToken is a NEW value that MUST be persisted; the old
+// refresh token is invalidated by this call.
+//
+// On a 4xx auth error (e.g. invalid_grant) it returns ErrMSARefreshInvalid so
+// callers can distinguish "must re-login" from a transient network failure
+// (returned as the raw error).
+func (c *AuthClient) RefreshMSAToken(ctx context.Context, refreshToken string) (*MSATokenResponse, error) {
+	data := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {c.clientID},
+		"refresh_token": {refreshToken},
+		"scope":         {"XboxLive.signin offline_access"},
+	}
+	req, _ := http.NewRequestWithContext(ctx, "POST", msaTokenURL, bytes.NewBufferString(data.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err // network failure — let caller retry without forcing re-login
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%w: %s", ErrMSARefreshInvalid, string(body))
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("msa token refresh failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result MSATokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// MinecraftLoginFromMSAToken runs the Xbox -> XSTS -> Minecraft chain for a
+// given MSA access token and returns a Minecraft access token plus its lifetime
+// in seconds. Shared by the initial device-code login and the silent refresh
+// flow so both behave identically.
+func (c *AuthClient) MinecraftLoginFromMSAToken(ctx context.Context, msaAccessToken string) (mcAccessToken string, expiresIn int, err error) {
+	xboxResp, err := c.AuthenticateXbox(ctx, msaAccessToken)
+	if err != nil {
+		return "", 0, fmt.Errorf("xbox auth failed: %w", err)
+	}
+
+	xstsResp, err := c.AuthenticateXSTS(ctx, xboxResp.Token)
+	if err != nil {
+		return "", 0, fmt.Errorf("xsts auth failed: %w", err)
+	}
+
+	if len(xstsResp.DisplayClaims.XUI) == 0 {
+		return "", 0, fmt.Errorf("xsts auth returned no user hash")
+	}
+	uhs := xstsResp.DisplayClaims.XUI[0].UHS
+
+	mcResp, err := c.LoginWithXbox(ctx, uhs, xstsResp.Token)
+	if err != nil {
+		return "", 0, fmt.Errorf("minecraft login failed: %w", err)
+	}
+	return mcResp.AccessToken, mcResp.ExpiresIn, nil
+}
+
+// RefreshSession performs a full silent refresh: it exchanges the (rotating) MSA
+// refresh token for a new MSA access token, then runs the Xbox -> XSTS ->
+// Minecraft chain to produce a fresh Minecraft access token.
+//
+// It returns the new Minecraft access token, the NEW (rotated) MSA refresh token
+// that callers MUST persist, and the Minecraft token lifetime in seconds.
+//
+// If the refresh token is rejected with a 4xx auth error it returns
+// ErrMSARefreshInvalid (caller should re-login); on network failures it returns
+// the raw error (caller should retry, NOT force re-login).
+func (c *AuthClient) RefreshSession(ctx context.Context, refreshToken string) (newMCAccessToken string, newRefreshToken string, expiresIn int, err error) {
+	msaResp, err := c.RefreshMSAToken(ctx, refreshToken)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	mcAccessToken, exp, err := c.MinecraftLoginFromMSAToken(ctx, msaResp.AccessToken)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return mcAccessToken, msaResp.RefreshToken, exp, nil
 }
 
 // AuthenticateXbox exchanges MSA Access Token for Xbox Live Token
