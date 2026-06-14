@@ -25,11 +25,18 @@ type ModrinthClient struct {
 
 // NewModrinthClient creates a new Modrinth API client
 func NewModrinthClient() *ModrinthClient {
+	return NewModrinthClientWithBaseURL(modrinthBaseURL)
+}
+
+// NewModrinthClientWithBaseURL creates a Modrinth API client pointed at baseURL.
+// Exists as a dependency-injection seam so tests can target an httptest server;
+// NewModrinthClient delegates here with the production const.
+func NewModrinthClientWithBaseURL(baseURL string) *ModrinthClient {
 	return &ModrinthClient{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		baseURL: modrinthBaseURL,
+		baseURL: baseURL,
 	}
 }
 

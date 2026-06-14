@@ -13,28 +13,17 @@ func (m *ModsModel) libraryBannerBlock(nLocal int) string {
 	if m.installedErr != "" {
 		return lipgloss.NewStyle().Foreground(Active.Error).Render(m.installedErr)
 	}
-	if m.modsDialog == modsDialogConfirmRemoveJar {
-		box := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(Active.Border).
-			Padding(0, 1).
-			MarginBottom(0)
-		q := lipgloss.NewStyle().Foreground(Active.Text).
-			Render(fmt.Sprintf("Remove %q from this instance?", m.modsDialogJar))
-		actions := KeyHints(max(24, m.libraryListW), KeyHint{"y/↵", "confirm"}, KeyHint{"n/⌫", "cancel"})
-		return box.Render(lipgloss.JoinVertical(lipgloss.Left, q, actions))
-	}
 	if m.libraryToast != "" {
 		return lipgloss.NewStyle().Foreground(Active.SuccessSoft).Render(m.libraryToast)
 	}
 	if len(m.installed.Items()) == 0 {
-		return lipgloss.NewStyle().Foreground(Active.TextDim).Render("Empty — browse →")
+		return lipgloss.NewStyle().Foreground(Active.TextDim).Render("No mods — search →")
 	}
 	return lipgloss.NewStyle().Foreground(Active.Border).
 		Render(fmt.Sprintf("%d jar(s) · %s", nLocal, filepath.Base(mods.ModsDir(m.inst))))
 }
 
-func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta, discoverHint string) string {
+func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta string) string {
 	qLabel := lipgloss.NewStyle().Foreground(Active.Border).Render("Query")
 	if m.modsFocus == panelQuery {
 		qLabel = lipgloss.NewStyle().Bold(true).Foreground(Active.Success).Render("Query")
@@ -51,23 +40,10 @@ func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta,
 		statusBlock = lipgloss.JoinHorizontal(lipgloss.Top, bar, status)
 	}
 
-	aux := ""
-	if strings.TrimSpace(meta) != "" && strings.TrimSpace(discoverHint) != "" {
-		aux = lipgloss.JoinHorizontal(lipgloss.Left,
-			lipgloss.NewStyle().Foreground(Active.TextMuted).Render(meta),
-			lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("  ·  "),
-			discoverHint,
-		)
-	} else if strings.TrimSpace(meta) != "" {
-		aux = meta
-	} else {
-		aux = discoverHint
-	}
-
 	return lipgloss.JoinVertical(lipgloss.Left,
 		queryRow,
 		statusBlock,
-		aux,
+		meta,
 	)
 }
 
@@ -91,21 +67,30 @@ func (m *ModsModel) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 	}
 
+	if m.modsDialog == modsDialogConfirmRemoveJar {
+		return ConfirmDialog{
+			Title:    "Remove mod?",
+			Message:  fmt.Sprintf("Remove %q\nfrom this instance?", m.modsDialogJar),
+			Warning:  "Deletes the .jar from disk.",
+			Confirm:  "Remove",
+			Cancel:   "Cancel",
+			Kind:     ConfirmDanger,
+			FocusYes: m.modsDialogFocusYes,
+		}.Render(m.width, m.height)
+	}
+
 	nLocal := len(m.installed.Items())
 
 	contentInnerW := max(24, m.width-8)
-	brand := lipgloss.NewStyle().Bold(true).Foreground(Active.AccentSofter).Render("Mods")
-	ctxLine := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(
-		fmt.Sprintf("%s · Minecraft %s · Fabric · %d installed", m.inst.Name, m.inst.Version, nLocal))
-	shellRule := lipgloss.NewStyle().Foreground(Active.BorderFaint).Render(strings.Repeat("─", contentInnerW))
+	ctxLineText := fmt.Sprintf("%s · Minecraft %s · Fabric · %d installed", m.inst.Name, m.inst.Version, nLocal)
 	header := lipgloss.NewStyle().MarginBottom(1).Render(lipgloss.JoinVertical(
-		lipgloss.Left, brand, ctxLine, shellRule))
+		lipgloss.Left, ScreenHeader("Mods", ctxLineText), Rule(contentInnerW)))
 
 	modrinthStatus := ""
 	modrinthStatusVisible := false
 	switch {
 	case m.installing:
-		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Secondary).Render("Downloading selected mod…")
+		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Secondary).Render("Installing mod + dependencies…")
 		modrinthStatusVisible = true
 	case m.installErr != "":
 		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Error).Render(m.installErr)
@@ -134,12 +119,7 @@ func (m *ModsModel) View() string {
 			Render(fmt.Sprintf("Showing %d of ~%s projects", len(m.results.Items()), formatModHitCount(m.lastTotalHits)))
 	}
 
-	discoverHint := ""
-	if len(m.results.Items()) > 0 && !m.searching {
-		discoverHint = lipgloss.NewStyle().Foreground(Active.TextMuted).Italic(true).
-			Render("● = already installed   ◆ = installing")
-	}
-
+	// Rows carry their own swatch + installed/installing pills, so no legend.
 	libBanner := m.libraryBannerBlock(nLocal)
 
 	libW := m.libraryListW
@@ -154,7 +134,7 @@ func (m *ModsModel) View() string {
 		libBanner,
 		m.installed.View(),
 	)
-	rightTop := m.buildModrinthChrome(modrinthStatus, modrinthStatusVisible, meta, discoverHint)
+	rightTop := m.buildModrinthChrome(modrinthStatus, modrinthStatusVisible, meta)
 	rightInner := lipgloss.JoinVertical(lipgloss.Left,
 		rightTop,
 		SectionHeader(m.results.Title, resW),
@@ -169,17 +149,18 @@ func (m *ModsModel) View() string {
 		}
 	}
 
-	// Titled panels: each pane's title sits in its top border; accent reflects focus.
-	libAccent := Active.Border
+	// Titled panels: each pane's title sits in its top border; the focused pane
+	// gets a ▸ marker and an accent border so the active pane is unmistakable.
+	libTitle, libAccent := m.installed.Title, Active.Border
 	if m.modsFocus == panelInstalled {
-		libAccent = Active.Success
+		libTitle, libAccent = GlyphPointer+" "+libTitle, Active.Success
 	}
-	browseAccent := Active.BorderFaint
+	browseTitle, browseAccent := "Discover", Active.BorderFaint
 	if m.rightColumnFocused() {
-		browseAccent = Active.Success
+		browseTitle, browseAccent = GlyphPointer+" "+browseTitle, Active.Success
 	}
-	libraryView := Panel(m.installed.Title, libraryInner, libW+4, libAccent)
-	browseBox := Panel("Discover", rightInner, resW+4, browseAccent)
+	libraryView := Panel(libTitle, libraryInner, libW+4, libAccent)
+	browseBox := Panel(browseTitle, rightInner, resW+4, browseAccent)
 
 	layout := ""
 	if m.compactLayout {

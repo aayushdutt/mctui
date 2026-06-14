@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,6 +29,12 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		if m.installing {
+			return m, nil
+		}
+		// Ignore mouse events while the remove-confirm dialog is open, mirroring the
+		// KeyMsg dialog guard — otherwise a wheel event would clear the dialog and
+		// scroll the hidden list underneath.
+		if m.modsDialog == modsDialogConfirmRemoveJar {
 			return m, nil
 		}
 		switch msg.Type {
@@ -78,11 +83,24 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.modsDialog == modsDialogConfirmRemoveJar {
+			if ConfirmKeyToggles(msg.String()) {
+				m.modsDialogFocusYes = !m.modsDialogFocusYes
+				return m, nil
+			}
 			switch msg.String() {
-			case "y", "Y", "enter":
+			case "y", "Y":
 				jar := m.modsDialogJar
 				m.clearModsDialog()
 				m.removeConfirmedJar(jar)
+				return m, nil
+			case "enter":
+				if m.modsDialogFocusYes {
+					jar := m.modsDialogJar
+					m.clearModsDialog()
+					m.removeConfirmedJar(jar)
+					return m, nil
+				}
+				m.clearModsDialog()
 				return m, nil
 			case "n", "N", "esc", "backspace":
 				m.clearModsDialog()
@@ -248,7 +266,7 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.installingProjectID = it.hit.ProjectID
 				m.rebuildBrowseBadges()
-				return m, m.installModCmd(it.hit.ProjectID, it.hit.Title, it.hit.Slug)
+				return m, m.installModCmd(it.hit.ProjectID, it.hit.Title)
 			}
 			return m, nil
 		}
@@ -324,14 +342,11 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildBrowseBadges()
 			return m, nil
 		}
-		if err := mods.RecordModrinthInstall(m.inst, msg.ProjectID, msg.Slug, filepath.Base(msg.Path)); err != nil {
-			m.installErr = fmt.Sprintf("Saved jar but catalog: %v", err)
-		}
+		// Service already recorded each installed jar in the catalog; just reload + rebuild badges.
 		m.reloadCatalogAndJars()
 		m.refreshInstalled()
 		m.rebuildBrowseBadges()
-		short := filepath.Base(msg.Path)
-		m.installOK = fmt.Sprintf("Added %s (%s) ✓  — restart Minecraft to load", msg.Title, short)
+		m.applyInstallReport(msg)
 		return m, nil
 	}
 
@@ -346,4 +361,65 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.results, cmd = m.results.Update(msg)
 	}
 	return m, cmd
+}
+
+// applyInstallReport turns a completed install report into UI status lines:
+// a success line summarizing root + dependency count, plus warnings for failures
+// and incompatible skips.
+func (m *ModsModel) applyInstallReport(msg ModInstallDoneMsg) {
+	rep := msg.Report
+	if rep == nil {
+		m.installOK = fmt.Sprintf("Added %s ✓  — restart Minecraft to load", msg.Title)
+		return
+	}
+
+	rootTitle := msg.Title
+	depCount := 0
+	for _, mod := range rep.Installed {
+		if !mod.Root {
+			depCount++
+		} else if mod.Title != "" {
+			rootTitle = mod.Title
+		}
+	}
+
+	jars := len(rep.Installed)
+	if jars > 0 {
+		switch depCount {
+		case 0:
+			m.installOK = fmt.Sprintf("Added %s (%d jar) ✓  — restart Minecraft", rootTitle, jars)
+		case 1:
+			m.installOK = fmt.Sprintf("Added %s + 1 dependency (%d jars) ✓  — restart Minecraft", rootTitle, jars)
+		default:
+			m.installOK = fmt.Sprintf("Added %s + %d dependencies (%d jars) ✓  — restart Minecraft", rootTitle, depCount, jars)
+		}
+	}
+
+	if len(rep.Failed) > 0 {
+		names := make([]string, 0, len(rep.Failed))
+		for _, mod := range rep.Failed {
+			names = append(names, modReportName(mod))
+		}
+		m.installErr = fmt.Sprintf("Failed to download: %s", strings.Join(names, ", "))
+	}
+
+	incompatible := 0
+	for _, sk := range rep.Skipped {
+		if sk.Reason == "incompatible" {
+			incompatible++
+		}
+	}
+	if incompatible > 0 {
+		m.searchNotice = fmt.Sprintf("Note: %d incompatible mod(s) skipped.", incompatible)
+	}
+}
+
+func modReportName(mod mods.ResolvedMod) string {
+	if mod.Title != "" {
+		return mod.Title
+	}
+	if mod.FileName != "" {
+		return mod.FileName
+	}
+	return mod.ProjectID
 }

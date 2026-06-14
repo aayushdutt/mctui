@@ -4,6 +4,7 @@ package ui
 import (
 	"github.com/aayushdutt/mctui/internal/core"
 	"github.com/aayushdutt/mctui/internal/launch"
+	"github.com/aayushdutt/mctui/internal/mods"
 )
 
 // Navigation messages
@@ -104,12 +105,11 @@ type (
 		Err    error // set when Status is ActiveSessionUncertain
 	}
 
-	// ModInstallDoneMsg is sent when a Modrinth mod jar install finishes or fails.
+	// ModInstallDoneMsg is sent when a Modrinth mod install (root + dependencies) finishes or fails.
 	ModInstallDoneMsg struct {
-		ProjectID string
-		Slug      string
-		Title     string
-		Path      string
+		ProjectID string              // the user-selected root project
+		Title     string              // root project title (for status text)
+		Report    *mods.InstallReport // nil when Err is set before resolution
 		Err       error
 	}
 

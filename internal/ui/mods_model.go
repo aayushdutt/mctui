@@ -52,9 +52,10 @@ type ModsModel struct {
 	installErr string
 	installOK  string
 
-	modsDialog    modsDialogKind
-	modsDialogJar string
-	libraryToast  string // short success line under the installed-mods pane (right pane stays Modrinth-only).
+	modsDialog         modsDialogKind
+	modsDialogJar      string
+	modsDialogFocusYes bool   // which confirm option is highlighted (defaults to Remove on open)
+	libraryToast       string // short success line under the installed-mods pane (right pane stays Modrinth-only).
 
 	libraryListW int
 	resultsListW int
@@ -177,6 +178,7 @@ func (m *ModsModel) openRemoveConfirmDialog() bool {
 	m.libraryToast = ""
 	m.modsDialog = modsDialogConfirmRemoveJar
 	m.modsDialogJar = it.jar.Name
+	m.modsDialogFocusYes = true
 	return true
 }
 
@@ -359,7 +361,7 @@ func (m *ModsModel) runSearchQuery() tea.Cmd {
 	}
 }
 
-func (m *ModsModel) installModCmd(projectID, title, slug string) tea.Cmd {
+func (m *ModsModel) installModCmd(projectID, title string) tea.Cmd {
 	m.cancelInstallDownload()
 	m.searchNotice = ""
 	m.installing = true
@@ -372,12 +374,11 @@ func (m *ModsModel) installModCmd(projectID, title, slug string) tea.Cmd {
 	ch := make(chan ModInstallDoneMsg, 1)
 	go func() {
 		defer cancel()
-		path, err := svc.InstallFabricMod(ctx, inst, projectID)
+		report, err := svc.InstallFabricModWithDeps(ctx, inst, projectID)
 		ch <- ModInstallDoneMsg{
 			ProjectID: projectID,
-			Slug:      slug,
 			Title:     title,
-			Path:      path,
+			Report:    report,
 			Err:       err,
 		}
 	}()
