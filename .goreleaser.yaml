@@ -24,11 +24,11 @@ builds:
       - -s -w -X main.version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     # use zip for windows
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -39,8 +39,32 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
+# Homebrew: publish a cask to the aayushdutt/homebrew-tap repo.
+# Install with: brew install aayushdutt/tap/mctui
+homebrew_casks:
+  - name: mctui
+    repository:
+      owner: aayushdutt
+      name: homebrew-tap
+      # The default Actions GITHUB_TOKEN can't push to another repo; this is a
+      # PAT (contents:write on homebrew-tap) stored as a repo secret.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/aayushdutt/mctui"
+    description: "Fast terminal-based Minecraft launcher"
+    # Always build the cask, but only push it once the tap token is configured,
+    # so a release never fails just because the secret isn't set yet.
+    skip_upload: '{{ if eq .Env.HOMEBREW_TAP_GITHUB_TOKEN "" }}true{{ else }}false{{ end }}'
+    # mctui ships unsigned; strip the macOS quarantine xattr on install so it
+    # launches without a Gatekeeper prompt.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/mctui"]
+          end
+
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
 
 changelog:
   sort: asc
