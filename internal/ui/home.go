@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/aayushdutt/mctui/internal/core"
@@ -245,8 +244,95 @@ func (m *HomeModel) activeMSAAccount() *core.Account {
 	return acc
 }
 
+// buildFooter renders the block below the instance list: the auth/status line and
+// the two-tier key-hint help. It does NOT include the transient banner (that sits
+// between the list and this block and is accounted for separately). View and
+// applyListSize both render through this helper so the measured footer height
+// always matches what's drawn, preventing the list from overflowing the footer at
+// narrow widths where the help wraps to extra lines.
+func (m *HomeModel) buildFooter() string {
+	// Auth line: avoid "signed in" when Microsoft session is invalid or unverified.
+	authStatus := "Not signed in"
+	authWarn := false
+	if m.accounts != nil {
+		if acc := m.accounts.GetActive(); acc != nil {
+			switch acc.Type {
+			case core.AccountTypeMSA:
+				switch m.sessionRemote {
+				case sessionRemoteInvalid:
+					authStatus = fmt.Sprintf("%s — Microsoft sign-in required [a]", acc.Name)
+					authWarn = true
+				case sessionRemoteUncertain:
+					authStatus = fmt.Sprintf("%s — can't verify session (network?) [a]", acc.Name)
+					authWarn = true
+				case sessionRemoteChecking:
+					authStatus = fmt.Sprintf("Checking Microsoft session for %s…", acc.Name)
+				default:
+					authStatus = fmt.Sprintf("Signed in as %s", acc.Name)
+				}
+			case core.AccountTypeOffline:
+				authStatus = fmt.Sprintf("Offline: %s", acc.Name)
+			default:
+				authStatus = fmt.Sprintf("Account: %s", acc.Name)
+			}
+		}
+	}
+
+	msaNeedsSignin := false
+	if acc := m.activeMSAAccount(); acc != nil {
+		switch m.sessionRemote {
+		case sessionRemoteInvalid, sessionRemoteUncertain:
+			msaNeedsSignin = true
+		}
+	}
+
+	// Build help items based on auth status.
+	noOnlineSession := m.accounts == nil || m.accounts.GetActive() == nil || msaNeedsSignin
+	launchLabel := "launch"
+	if noOnlineSession {
+		launchLabel = "login & play"
+	}
+	modsLabel := "mods"
+	if inst := m.SelectedInstance(); inst != nil && !instanceSupportsModsBrowser(inst) {
+		modsLabel = "mods (unsupported)"
+	}
+	primaryItems := []KeyHint{
+		{"↵", launchLabel},
+		{"n", "new"},
+		{"m", modsLabel},
+	}
+	secondaryItems := []KeyHint{
+		{"f", "folder"},
+		{"d", "delete"},
+		{"s", "settings"},
+		{"a", "accounts"},
+		{"o", "play offline"},
+		{"q", "quit"},
+	}
+
+	help := lipgloss.JoinVertical(lipgloss.Left,
+		KeyHints(m.width, primaryItems...),
+		KeyHints(m.width, secondaryItems...),
+	)
+
+	statusColor := Active.Primary
+	statusGlyph := GlyphDot
+	if authWarn {
+		statusColor = Active.Warning
+		statusGlyph = GlyphWarn
+	}
+	status := lipgloss.NewStyle().
+		Foreground(statusColor).
+		Padding(1, 0).
+		Render(statusGlyph + " " + authStatus)
+
+	return lipgloss.JoinVertical(lipgloss.Left, status, help)
+}
+
 func (m *HomeModel) applyListSize() {
-	footerLines := 6
+	// Measure the real footer so narrow-width wrapping of the help can't push the
+	// footer past the bottom of the screen.
+	footerLines := lipgloss.Height(m.buildFooter())
 	if m.transientBanner != "" {
 		footerLines++
 	}
@@ -299,22 +385,11 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Handle delete confirmation mode
 		if m.confirmDelete {
-			switch msg.String() {
-			case "up", "left":
-				m.deleteFocusYes = true
-				return m, nil
-			case "down", "right":
-				m.deleteFocusYes = false
-				return m, nil
-			case "k":
-				m.deleteFocusYes = true
-				return m, nil
-			case "j":
-				m.deleteFocusYes = false
-				return m, nil
-			case "tab":
+			if ConfirmKeyToggles(msg.String()) {
 				m.deleteFocusYes = !m.deleteFocusYes
 				return m, nil
+			}
+			switch msg.String() {
 			case "y", "Y":
 				inst := m.deleteTarget
 				m.confirmDelete = false
@@ -396,7 +471,7 @@ func (m *HomeModel) View() string {
 	if m.loading {
 		return lipgloss.NewStyle().
 			Foreground(Active.TextSubtle).
-			Render("Loading instances...")
+			Render("Loading instances…")
 	}
 
 	if len(m.instances) == 0 {
@@ -457,75 +532,7 @@ func (m *HomeModel) View() string {
 		)
 	}
 
-	// Auth line: avoid "signed in" when Microsoft session is invalid or unverified.
-	authStatus := "Not signed in"
-	authWarn := false
-	if m.accounts != nil {
-		if acc := m.accounts.GetActive(); acc != nil {
-			switch acc.Type {
-			case core.AccountTypeMSA:
-				switch m.sessionRemote {
-				case sessionRemoteInvalid:
-					authStatus = fmt.Sprintf("%s — Microsoft sign-in required [a]", acc.Name)
-					authWarn = true
-				case sessionRemoteUncertain:
-					authStatus = fmt.Sprintf("%s — can't verify session (network?) [a]", acc.Name)
-					authWarn = true
-				case sessionRemoteChecking:
-					authStatus = fmt.Sprintf("Checking Microsoft session for %s…", acc.Name)
-				default:
-					authStatus = fmt.Sprintf("Signed in as %s", acc.Name)
-				}
-			case core.AccountTypeOffline:
-				authStatus = fmt.Sprintf("Offline: %s", acc.Name)
-			default:
-				authStatus = fmt.Sprintf("Account: %s", acc.Name)
-			}
-		}
-	}
-
-	msaNeedsSignin := false
-	if acc := m.activeMSAAccount(); acc != nil {
-		switch m.sessionRemote {
-		case sessionRemoteInvalid, sessionRemoteUncertain:
-			msaNeedsSignin = true
-		}
-	}
-
-	// Build help items based on auth status.
-	noOnlineSession := m.accounts == nil || m.accounts.GetActive() == nil || msaNeedsSignin
-	launchLabel := "launch"
-	if noOnlineSession {
-		launchLabel = "login & play"
-	}
-	modsLabel := "mods"
-	if inst := m.SelectedInstance(); inst != nil && !instanceSupportsModsBrowser(inst) {
-		modsLabel = "mods (unsupported)"
-	}
-	helpItems := []KeyHint{
-		{"↵", launchLabel},
-		{"n", "new"},
-		{"f", "folder"},
-		{"d", "delete"},
-		{"m", modsLabel},
-		{"s", "settings"},
-		{"a", "accounts"},
-		{"o", "play offline"},
-		{"q", "quit"},
-	}
-
-	help := KeyHints(m.width, helpItems...)
-
-	statusColor := Active.Primary
-	statusGlyph := GlyphDot
-	if authWarn {
-		statusColor = Active.Warning
-		statusGlyph = GlyphWarn
-	}
-	status := lipgloss.NewStyle().
-		Foreground(statusColor).
-		Padding(1, 0).
-		Render(statusGlyph + " " + authStatus)
+	footer := m.buildFooter()
 
 	aboveStatus := []string{m.list.View()}
 	if m.transientBanner != "" {
@@ -533,74 +540,21 @@ func (m *HomeModel) View() string {
 			Foreground(Active.Warning).
 			Render(GlyphWarn+" "+m.transientBanner))
 	}
-	aboveStatus = append(aboveStatus, status, help)
+	aboveStatus = append(aboveStatus, footer)
 
 	baseView := lipgloss.JoinVertical(lipgloss.Left, aboveStatus...)
 
 	// Show delete confirmation overlay if needed
 	if m.confirmDelete && m.deleteTarget != nil {
-		panelW := m.width - 8
-		if panelW > 56 {
-			panelW = 56
-		}
-		if panelW < 24 {
-			panelW = 24
-		}
-
-		warn := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(Active.Error).
-			Render(GlyphWarn + " This cannot be undone.")
-
-		msg := lipgloss.NewStyle().
-			Foreground(Active.TextSubtle).
-			Render(fmt.Sprintf("Delete \"%s\"?", m.deleteTarget.Name))
-
-		yesLbl := "Yes, delete"
-		noLbl := "No, cancel"
-		yesSt := lipgloss.NewStyle().Foreground(Active.TextFaint)
-		noSt := lipgloss.NewStyle().Foreground(Active.TextFaint)
-		if m.deleteFocusYes {
-			yesSt = lipgloss.NewStyle().Bold(true).Foreground(Active.Error)
-		} else {
-			noSt = lipgloss.NewStyle().Bold(true).Foreground(Active.Text)
-		}
-		options := lipgloss.NewStyle().
-			MarginTop(1).
-			Render(lipgloss.JoinHorizontal(lipgloss.Left,
-				yesSt.Render(yesLbl),
-				lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("  ·  "),
-				noSt.Render(noLbl),
-			))
-
-		body := lipgloss.JoinVertical(
-			lipgloss.Left,
-			msg,
-			"",
-			warn,
-			options,
-		)
-		panel := Panel("Delete instance?", body, panelW, Active.Error)
-
-		hint := lipgloss.NewStyle().
-			MarginTop(1).
-			Render(KeyHints(
-				panelW,
-				KeyHint{"↑↓/Tab", "choose"},
-				KeyHint{"↵", "confirm"},
-				KeyHint{"y/n", ""},
-				KeyHint{"esc", "cancel"},
-			))
-
-		promptBox := lipgloss.JoinVertical(lipgloss.Left, panel, hint)
-
-		return lipgloss.Place(
-			m.width,
-			m.height,
-			lipgloss.Center,
-			lipgloss.Center,
-			promptBox,
-		)
+		return ConfirmDialog{
+			Title:    "Delete instance?",
+			Message:  fmt.Sprintf("Delete %q?", m.deleteTarget.Name),
+			Warning:  "This cannot be undone.",
+			Confirm:  "Delete",
+			Cancel:   "Cancel",
+			Kind:     ConfirmDanger,
+			FocusYes: m.deleteFocusYes,
+		}.Render(m.width, m.height)
 	}
 
 	return baseView
@@ -622,44 +576,4 @@ func openInstanceFolder(path string) {
 		return
 	}
 	_ = cmd.Start()
-}
-
-// buildHelpText builds help text with item-wise wrapping.
-// Items are kept together; lines wrap at item boundaries. Production help (Home
-// and Mods) now uses the shared KeyHints kit; this remains only for its own unit
-// tests and can be retired with them.
-func buildHelpText(items []string, maxWidth int) string {
-	if maxWidth <= 0 {
-		maxWidth = 80
-	}
-
-	separator := " • "
-	var lines []string
-	var currentLine string
-
-	for i, item := range items {
-		testLine := currentLine
-		if testLine != "" {
-			testLine += separator
-		}
-		testLine += item
-
-		// Check if adding this item would exceed width
-		if len(testLine) > maxWidth && currentLine != "" {
-			lines = append(lines, currentLine)
-			currentLine = item
-		} else {
-			if currentLine != "" {
-				currentLine += separator
-			}
-			currentLine += item
-		}
-
-		// Last item
-		if i == len(items)-1 && currentLine != "" {
-			lines = append(lines, currentLine)
-		}
-	}
-
-	return strings.Join(lines, "\n")
 }
