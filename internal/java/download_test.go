@@ -80,12 +80,15 @@ func TestDownloadRuntime_endToEnd(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	// Handlers are registered after the server starts so the resolve response can
+	// point at this same server's archive URL (srv.URL). http.ServeMux is safe for
+	// registration concurrent with serving, and no request arrives until
+	// DownloadRuntime is called below.
 	mux.HandleFunc("/archive/jre.tar.gz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(archive)
 	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-	// The resolve endpoint hands back the archive URL on this same server.
 	mux.HandleFunc("/v3/assets/feature_releases/", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(fmt.Sprintf(`[{"binaries":[{"package":{"link":%q,"name":"jre.tar.gz"}}]}]`, srv.URL+"/archive/jre.tar.gz")))
 	})

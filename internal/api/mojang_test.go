@@ -15,8 +15,12 @@ import (
 // pointed at it exercises both the manifest fetch and the detail fetch.
 func mojangManifestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(nil)
 	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	// Handlers are registered after the server starts so the manifest can point
+	// its per-version detail URL back at this same server (srv.URL). http.ServeMux
+	// is safe for registration concurrent with serving, and no request arrives
+	// until the test calls a client method below.
 	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(core.VersionManifest{
@@ -30,7 +34,6 @@ func mojangManifestServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(core.VersionDetails{ID: "1.21", MainClass: "net.minecraft.client.main.Main"})
 	})
-	srv.Config.Handler = mux
 	return srv
 }
 
