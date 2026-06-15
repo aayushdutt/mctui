@@ -32,6 +32,40 @@ func ThemeListDelegate(accent, accentSoft lipgloss.Color) list.DefaultDelegate {
 	return d
 }
 
+// ThemedListConfig configures NewThemedList. Accent/AccentSoft color the
+// selected row; the booleans toggle the per-list options that actually vary
+// between screens. Everything else (no title, quit keys disabled, themed chrome)
+// is a shared default.
+type ThemedListConfig struct {
+	Accent, AccentSoft lipgloss.Color
+	// StatusBar shows the "N items" bar under the list.
+	StatusBar bool
+	// Filter enables the "/" filter.
+	Filter bool
+	// SingleLine renders compact one-line rows (no description, no row spacing) —
+	// used for the category tree.
+	SingleLine bool
+}
+
+// NewThemedList builds a bubbles list dressed from the active theme with the
+// shared screen defaults (no title, quit keys disabled, themed chrome). It
+// replaces the ~8-line construction boilerplate repeated per list across the
+// mods and resource-packs screens.
+func NewThemedList(cfg ThemedListConfig) list.Model {
+	del := ThemeListDelegate(cfg.Accent, cfg.AccentSoft)
+	if cfg.SingleLine {
+		del.ShowDescription = false
+		del.SetSpacing(0)
+	}
+	l := list.New([]list.Item{}, del, 0, 0)
+	l.SetShowTitle(false)
+	l.SetShowStatusBar(cfg.StatusBar)
+	l.SetFilteringEnabled(cfg.Filter)
+	l.DisableQuitKeybindings()
+	ThemeListChrome(&l)
+	return l
+}
+
 // ThemeListChrome styles a list's surrounding chrome — the filter input,
 // pagination dots, status bar, and empty state — from the active theme. Call
 // after list.New and any SetShow* toggles.

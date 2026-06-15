@@ -9,7 +9,20 @@ import (
 	"testing"
 )
 
+// newTestAuthClient builds an AuthClient starting from the production endpoints
+// and applies override to point selected URLs at httptest servers. Because the
+// endpoints live on the instance (not package vars), each test is isolated and
+// safe under t.Parallel.
+func newTestAuthClient(clientID string, override func(*authEndpoints)) *AuthClient {
+	c := NewAuthClient(clientID)
+	ep := c.endpoints
+	override(&ep)
+	c.endpoints = ep
+	return c
+}
+
 func TestAuthClient_RequestDeviceCode(t *testing.T) {
+	t.Parallel()
 	// Mock Server
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -30,13 +43,9 @@ func TestAuthClient_RequestDeviceCode(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	// Override URL
-	oldURL := msaDeviceCodeURL
-	msaDeviceCodeURL = ts.URL
-	defer func() { msaDeviceCodeURL = oldURL }()
-
-	// Test
-	client := NewAuthClient("test-client")
+	client := newTestAuthClient("test-client", func(ep *authEndpoints) {
+		ep.msaDeviceCode = ts.URL
+	})
 	resp, err := client.RequestDeviceCode(context.Background())
 	if err != nil {
 		t.Fatalf("Failed: %v", err)
@@ -51,6 +60,7 @@ func TestAuthClient_RequestDeviceCode(t *testing.T) {
 }
 
 func TestAuthClient_PollForToken(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
@@ -73,11 +83,9 @@ func TestAuthClient_PollForToken(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	oldURL := msaTokenURL
-	msaTokenURL = ts.URL
-	defer func() { msaTokenURL = oldURL }()
-
-	client := NewAuthClient("test-client")
+	client := newTestAuthClient("test-client", func(ep *authEndpoints) {
+		ep.msaToken = ts.URL
+	})
 	dc := &DeviceCodeResponse{
 		DeviceCode: "CODE123",
 		Interval:   0, // Instant retry for test speed
@@ -98,6 +106,7 @@ func TestAuthClient_PollForToken(t *testing.T) {
 }
 
 func TestAuthClient_FetchProfile_unauthorized(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer bad" {
 			t.Errorf("Authorization header: %q", r.Header.Get("Authorization"))
@@ -106,11 +115,9 @@ func TestAuthClient_FetchProfile_unauthorized(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	old := mcProfileURL
-	mcProfileURL = ts.URL
-	defer func() { mcProfileURL = old }()
-
-	client := NewAuthClient("dummy")
+	client := newTestAuthClient("dummy", func(ep *authEndpoints) {
+		ep.mcProfile = ts.URL
+	})
 	_, err := client.FetchProfile(context.Background(), "bad")
 	if !errors.Is(err, ErrMinecraftSessionInvalid) {
 		t.Fatalf("err = %v, want ErrMinecraftSessionInvalid", err)
@@ -118,6 +125,7 @@ func TestAuthClient_FetchProfile_unauthorized(t *testing.T) {
 }
 
 func TestAuthClient_RefreshMSAToken(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("Expected POST, got %s", r.Method)
@@ -141,11 +149,9 @@ func TestAuthClient_RefreshMSAToken(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	oldURL := msaTokenURL
-	msaTokenURL = ts.URL
-	defer func() { msaTokenURL = oldURL }()
-
-	client := NewAuthClient("test-client")
+	client := newTestAuthClient("test-client", func(ep *authEndpoints) {
+		ep.msaToken = ts.URL
+	})
 	resp, err := client.RefreshMSAToken(context.Background(), "old_refresh")
 	if err != nil {
 		t.Fatalf("Failed: %v", err)
@@ -159,6 +165,7 @@ func TestAuthClient_RefreshMSAToken(t *testing.T) {
 }
 
 func TestAuthClient_RefreshMSAToken_errors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		status      int
@@ -170,17 +177,16 @@ func TestAuthClient_RefreshMSAToken_errors(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 			}))
 			defer ts.Close()
 
-			oldURL := msaTokenURL
-			msaTokenURL = ts.URL
-			defer func() { msaTokenURL = oldURL }()
-
-			client := NewAuthClient("test-client")
+			client := newTestAuthClient("test-client", func(ep *authEndpoints) {
+				ep.msaToken = ts.URL
+			})
 			_, err := client.RefreshMSAToken(context.Background(), "old_refresh")
 			if err == nil {
 				t.Fatal("expected error, got nil")
@@ -193,6 +199,7 @@ func TestAuthClient_RefreshMSAToken_errors(t *testing.T) {
 }
 
 func TestAuthClient_RefreshSession(t *testing.T) {
+	t.Parallel()
 	// MSA token endpoint: returns rotated refresh token + MSA access token.
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -225,16 +232,12 @@ func TestAuthClient_RefreshSession(t *testing.T) {
 	}))
 	defer mcSrv.Close()
 
-	oldToken, oldXbox, oldXSTS, oldMC := msaTokenURL, xboxUserAuthURL, xstsAuthURL, mcAuthURL
-	msaTokenURL = tokenSrv.URL
-	xboxUserAuthURL = xboxSrv.URL
-	xstsAuthURL = xboxSrv.URL
-	mcAuthURL = mcSrv.URL
-	defer func() {
-		msaTokenURL, xboxUserAuthURL, xstsAuthURL, mcAuthURL = oldToken, oldXbox, oldXSTS, oldMC
-	}()
-
-	client := NewAuthClient("test-client")
+	client := newTestAuthClient("test-client", func(ep *authEndpoints) {
+		ep.msaToken = tokenSrv.URL
+		ep.xboxUserAuth = xboxSrv.URL
+		ep.xstsAuth = xboxSrv.URL
+		ep.mcAuth = mcSrv.URL
+	})
 	mcToken, newRefresh, expiresIn, err := client.RefreshSession(context.Background(), "old_refresh")
 	if err != nil {
 		t.Fatalf("Failed: %v", err)
@@ -251,17 +254,16 @@ func TestAuthClient_RefreshSession(t *testing.T) {
 }
 
 func TestAuthClient_ValidateMinecraftToken_ok(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(MinecraftProfile{ID: "u", Name: "n"})
 	}))
 	defer ts.Close()
 
-	old := mcProfileURL
-	mcProfileURL = ts.URL
-	defer func() { mcProfileURL = old }()
-
-	client := NewAuthClient("dummy")
+	client := newTestAuthClient("dummy", func(ep *authEndpoints) {
+		ep.mcProfile = ts.URL
+	})
 	if err := client.ValidateMinecraftToken(context.Background(), "token"); err != nil {
 		t.Fatal(err)
 	}

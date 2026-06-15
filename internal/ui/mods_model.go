@@ -65,14 +65,10 @@ type ModsModel struct {
 func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
 	blocked := inst == nil || loader.ParseKind(inst.Loader) != loader.KindFabric
 
-	instDel := ThemeListDelegate(Active.Warning, Active.WarningSoft)
-	installedList := list.New([]list.Item{}, instDel, 0, 0)
+	installedList := NewThemedList(ThemedListConfig{
+		Accent: Active.Warning, AccentSoft: Active.WarningSoft, StatusBar: true,
+	})
 	installedList.Title = "Installed (0)"
-	installedList.SetShowTitle(false)
-	installedList.SetShowStatusBar(true)
-	installedList.SetFilteringEnabled(false)
-	installedList.DisableQuitKeybindings()
-	ThemeListChrome(&installedList)
 
 	ti := textinput.New()
 	ti.Placeholder = "Search Fabric mods, or leave empty for popular picks…"
@@ -80,14 +76,10 @@ func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
 	ti.Width = 50
 	ThemeTextInput(&ti)
 
-	browseDel := ThemeListDelegate(Active.Success, Active.SuccessSoft)
-	browseList := list.New([]list.Item{}, browseDel, 0, 0)
+	browseList := NewThemedList(ThemedListConfig{
+		Accent: Active.Success, AccentSoft: Active.SuccessSoft, StatusBar: true,
+	})
 	browseList.Title = "Modrinth"
-	browseList.SetShowTitle(false)
-	browseList.SetShowStatusBar(true)
-	browseList.SetFilteringEnabled(false)
-	browseList.DisableQuitKeybindings()
-	ThemeListChrome(&browseList)
 
 	m := &ModsModel{
 		inst:      inst,

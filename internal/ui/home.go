@@ -55,6 +55,7 @@ type homeKeyMap struct {
 	PlayOffline key.Binding
 	NewInst     key.Binding
 	Mods        key.Binding
+	ResPacks    key.Binding
 	Settings    key.Binding
 	Delete      key.Binding
 	Auth        key.Binding
@@ -78,6 +79,10 @@ func defaultHomeKeyMap() homeKeyMap {
 		Mods: key.NewBinding(
 			key.WithKeys("m"),
 			key.WithHelp("m", "mods"),
+		),
+		ResPacks: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "resource packs"),
 		),
 		Settings: key.NewBinding(
 			key.WithKeys("s"),
@@ -302,6 +307,7 @@ func (m *HomeModel) buildFooter() string {
 		{"m", modsLabel},
 	}
 	secondaryItems := []KeyHint{
+		{"p", "resource packs"},
 		{"f", "folder"},
 		{"d", "delete"},
 		{"s", "settings"},
@@ -441,6 +447,11 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				return m, func() tea.Msg { return NavigateToMods{Instance: inst} }
+			}
+		case key.Matches(msg, m.keys.ResPacks):
+			// Resource packs work on ANY instance (vanilla or modded) — no gate.
+			if inst := m.SelectedInstance(); inst != nil {
+				return m, func() tea.Msg { return NavigateToResourcePacks{Instance: inst} }
 			}
 		case key.Matches(msg, m.keys.Settings):
 			return m, func() tea.Msg { return NavigateToSettings{} }

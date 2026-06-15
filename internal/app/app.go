@@ -27,6 +27,7 @@ const (
 	StateNewInstance
 	StateLaunch
 	StateMods
+	StateResourcePacks
 	StateSettings
 	StateAuth
 )
@@ -38,19 +39,21 @@ type Model struct {
 	height int
 
 	// Child models for each view
-	home     *ui.HomeModel
-	wizard   *ui.WizardModel
-	launch   *ui.LaunchModel
-	mods     *ui.ModsModel
-	auth     *ui.AuthModel
-	settings *ui.SettingsModel
+	home          *ui.HomeModel
+	wizard        *ui.WizardModel
+	launch        *ui.LaunchModel
+	mods          *ui.ModsModel
+	resourcePacks *ui.ResourcePacksModel
+	auth          *ui.AuthModel
+	settings      *ui.SettingsModel
 
 	// Core services
-	cfg       *config.Config
-	instances *core.InstanceManager
-	accounts  *core.AccountManager
-	mojang    *api.MojangClient
-	modrinth  *api.ModrinthClient
+	cfg           *config.Config
+	instances     *core.InstanceManager
+	accounts      *core.AccountManager
+	mojang        *api.MojangClient
+	modrinth      *api.ModrinthClient
+	vanillaTweaks *api.VanillaTweaksClient
 
 	// Launch state
 	launchStatusChan chan launch.Status
@@ -124,14 +127,15 @@ func newWithDeps(cfg *config.Config, instances *core.InstanceManager, accounts *
 	home.SetAccountManager(accounts)
 
 	return &Model{
-		state:     StateHome,
-		home:      home,
-		cfg:       cfg,
-		instances: instances,
-		accounts:  accounts,
-		mojang:    mojang,
-		modrinth:  modrinth,
-		keys:      defaultKeyMap(),
+		state:         StateHome,
+		home:          home,
+		cfg:           cfg,
+		instances:     instances,
+		accounts:      accounts,
+		mojang:        mojang,
+		modrinth:      modrinth,
+		vanillaTweaks: api.NewVanillaTweaksClient(),
+		keys:          defaultKeyMap(),
 	}
 }
 
@@ -360,6 +364,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mods != nil {
 			m.mods.SetSize(cw, ch)
 		}
+		if m.resourcePacks != nil {
+			m.resourcePacks.SetSize(cw, ch)
+		}
 		if m.auth != nil {
 			m.auth.SetSize(cw, ch)
 		}
@@ -372,8 +379,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mods != nil {
 			m.mods.CancelPending()
 		}
+		if m.resourcePacks != nil {
+			m.resourcePacks.CancelPending()
+		}
 		m.state = StateHome
 		m.mods = nil
+		m.resourcePacks = nil
 		m.settings = nil
 		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 
@@ -403,6 +414,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cw, ch := m.contentSize()
 		m.mods.SetSize(cw, ch)
 		return m, m.mods.Init()
+
+	case ui.NavigateToResourcePacks:
+		if msg.Instance == nil {
+			return m, nil
+		}
+		m.state = StateResourcePacks
+		m.resourcePacks = ui.NewResourcePacksModel(msg.Instance, m.vanillaTweaks)
+		cw, ch := m.contentSize()
+		m.resourcePacks.SetSize(cw, ch)
+		return m, m.resourcePacks.Init()
 
 	case ui.NavigateToLaunch:
 		if msg.Offline {
@@ -657,6 +678,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mods = newMods.(*ui.ModsModel)
 			cmds = append(cmds, cmd)
 		}
+	case StateResourcePacks:
+		if m.resourcePacks != nil {
+			newRP, cmd := m.resourcePacks.Update(msg)
+			m.resourcePacks = newRP.(*ui.ResourcePacksModel)
+			cmds = append(cmds, cmd)
+		}
 	case StateSettings:
 		if m.settings != nil {
 			newSettings, cmd := m.settings.Update(msg)
@@ -832,6 +859,10 @@ func (m *Model) shellContent() string {
 	case StateMods:
 		if m.mods != nil {
 			return m.mods.View()
+		}
+	case StateResourcePacks:
+		if m.resourcePacks != nil {
+			return m.resourcePacks.View()
 		}
 	case StateSettings:
 		if m.settings != nil {

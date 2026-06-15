@@ -21,6 +21,7 @@ const (
 // MojangClient handles Mojang API interactions
 type MojangClient struct {
 	httpClient       *http.Client
+	manifestURL      string
 	manifest         *core.VersionManifest
 	manifestFetched  time.Time
 	manifestTTL      time.Duration
@@ -29,10 +30,20 @@ type MojangClient struct {
 
 // NewMojangClient creates a new Mojang API client
 func NewMojangClient(dataDir string) *MojangClient {
+	return NewMojangClientWithManifestURL(dataDir, mojangVersionManifestURL)
+}
+
+// NewMojangClientWithManifestURL creates a Mojang API client whose version
+// manifest is fetched from manifestURL. Exists as a dependency-injection seam so
+// tests can target an httptest server; NewMojangClient delegates here with the
+// production const. (Per-version detail URLs come from the manifest itself, so
+// pointing the manifest at a test server is enough to redirect all traffic.)
+func NewMojangClientWithManifestURL(dataDir, manifestURL string) *MojangClient {
 	return &MojangClient{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		manifestURL:      manifestURL,
 		manifestTTL:      5 * time.Minute,
 		versionCacheRoot: filepath.Join(dataDir, "cache", "versions"),
 	}
@@ -45,7 +56,7 @@ func (c *MojangClient) GetVersionManifest(ctx context.Context) (*core.VersionMan
 		return c.manifest, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mojangVersionManifestURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.manifestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}

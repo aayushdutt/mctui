@@ -23,25 +23,44 @@ var ErrMinecraftSessionInvalid = errors.New("minecraft session invalid or expire
 // which is returned as the raw error so callers can retry without forcing re-login.
 var ErrMSARefreshInvalid = errors.New("msa refresh token invalid or expired")
 
-var (
-	msaDeviceCodeURL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
-	msaTokenURL      = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
-	xboxUserAuthURL  = "https://user.auth.xboxlive.com/user/authenticate"
-	xstsAuthURL      = "https://xsts.auth.xboxlive.com/xsts/authorize"
-	mcAuthURL        = "https://api.minecraftservices.com/authentication/login_with_xbox"
-	mcProfileURL     = "https://api.minecraftservices.com/minecraft/profile"
-)
+// authEndpoints holds the six external auth URLs the AuthClient talks to. Unlike
+// the single-host clients (modrinth, mojang, ...) auth spans four different hosts,
+// so the DI seam is a struct of fields rather than one baseURL. They live on the
+// client instance (not package vars) so tests can point each at an httptest
+// server without global mutation — i.e. safe under t.Parallel.
+type authEndpoints struct {
+	msaDeviceCode string
+	msaToken      string
+	xboxUserAuth  string
+	xstsAuth      string
+	mcAuth        string
+	mcProfile     string
+}
+
+// defaultAuthEndpoints returns the production Microsoft/Xbox/Minecraft URLs.
+func defaultAuthEndpoints() authEndpoints {
+	return authEndpoints{
+		msaDeviceCode: "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode",
+		msaToken:      "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+		xboxUserAuth:  "https://user.auth.xboxlive.com/user/authenticate",
+		xstsAuth:      "https://xsts.auth.xboxlive.com/xsts/authorize",
+		mcAuth:        "https://api.minecraftservices.com/authentication/login_with_xbox",
+		mcProfile:     "https://api.minecraftservices.com/minecraft/profile",
+	}
+}
 
 // AuthClient handles Microsoft/Xbox/Minecraft authentication
 type AuthClient struct {
 	httpClient *http.Client
 	clientID   string
+	endpoints  authEndpoints
 }
 
 func NewAuthClient(clientID string) *AuthClient {
 	return &AuthClient{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		clientID:   clientID,
+		endpoints:  defaultAuthEndpoints(),
 	}
 }
 
@@ -109,7 +128,7 @@ func (c *AuthClient) RequestDeviceCode(ctx context.Context) (*DeviceCodeResponse
 		"client_id": {c.clientID},
 		"scope":     {"XboxLive.signin offline_access"},
 	}
-	req, _ := http.NewRequestWithContext(ctx, "POST", msaDeviceCodeURL, bytes.NewBufferString(data.Encode()))
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.endpoints.msaDeviceCode, bytes.NewBufferString(data.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -149,7 +168,7 @@ func (c *AuthClient) PollForToken(ctx context.Context, dc *DeviceCodeResponse) (
 		case <-time.After(interval):
 		}
 
-		req, _ := http.NewRequestWithContext(ctx, "POST", msaTokenURL, bytes.NewBufferString(data.Encode()))
+		req, _ := http.NewRequestWithContext(ctx, "POST", c.endpoints.msaToken, bytes.NewBufferString(data.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -193,7 +212,7 @@ func (c *AuthClient) RefreshMSAToken(ctx context.Context, refreshToken string) (
 		"refresh_token": {refreshToken},
 		"scope":         {"XboxLive.signin offline_access"},
 	}
-	req, _ := http.NewRequestWithContext(ctx, "POST", msaTokenURL, bytes.NewBufferString(data.Encode()))
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.endpoints.msaToken, bytes.NewBufferString(data.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := c.httpClient.Do(req)
@@ -279,7 +298,7 @@ func (c *AuthClient) AuthenticateXbox(ctx context.Context, msaAccessToken string
 		RelyingParty: "http://auth.xboxlive.com",
 		TokenType:    "JWT",
 	}
-	return c.doXboxRequest(ctx, xboxUserAuthURL, reqBody)
+	return c.doXboxRequest(ctx, c.endpoints.xboxUserAuth, reqBody)
 }
 
 // AuthenticateXSTS exchanges Xbox Live Token for XSTS Token
@@ -292,7 +311,7 @@ func (c *AuthClient) AuthenticateXSTS(ctx context.Context, xboxToken string) (*X
 		RelyingParty: "rp://api.minecraftservices.com/",
 		TokenType:    "JWT",
 	}
-	return c.doXboxRequest(ctx, xstsAuthURL, reqBody)
+	return c.doXboxRequest(ctx, c.endpoints.xstsAuth, reqBody)
 }
 
 func (c *AuthClient) doXboxRequest(ctx context.Context, url string, body XboxAuthRequest) (*XboxAuthResponse, error) {
@@ -328,7 +347,7 @@ func (c *AuthClient) LoginWithXbox(ctx context.Context, uhs, xstsToken string) (
 	}
 	jsonBody, _ := json.Marshal(reqBody)
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", mcAuthURL, bytes.NewBuffer(jsonBody))
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.endpoints.mcAuth, bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -351,7 +370,7 @@ func (c *AuthClient) LoginWithXbox(ctx context.Context, uhs, xstsToken string) (
 
 // FetchProfile gets the Minecraft profile (uuid, name, skins)
 func (c *AuthClient) FetchProfile(ctx context.Context, accessToken string) (*MinecraftProfile, error) {
-	req, _ := http.NewRequestWithContext(ctx, "GET", mcProfileURL, nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", c.endpoints.mcProfile, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	resp, err := c.httpClient.Do(req)

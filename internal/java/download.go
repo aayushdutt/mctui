@@ -16,17 +16,31 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
+// adoptiumBaseURL is the production Adoptium API host.
+const adoptiumBaseURL = "https://api.adoptium.net"
+
 // Downloader handles downloading Java runtimes from Adoptium
 type Downloader struct {
-	client *retryablehttp.Client
+	client  *retryablehttp.Client
+	baseURL string
 }
 
 // NewDownloader creates a new Java downloader
 func NewDownloader() *Downloader {
+	return NewDownloaderWithBaseURL(adoptiumBaseURL)
+}
+
+// NewDownloaderWithBaseURL creates a Java downloader whose Adoptium API calls
+// target baseURL. Exists as a dependency-injection seam so tests can target an
+// httptest server; NewDownloader delegates here with the production const. (The
+// archive download URL comes from the Adoptium response body, so a test server
+// that returns its own link controls the whole flow.)
+func NewDownloaderWithBaseURL(baseURL string) *Downloader {
 	client := retryablehttp.NewClient()
 	client.Logger = nil // specific logger can be added if needed
 	return &Downloader{
-		client: client,
+		client:  client,
+		baseURL: baseURL,
 	}
 }
 
@@ -78,7 +92,7 @@ func (d *Downloader) resolveAdoptiumURL(ctx context.Context, version int) (strin
 		arch = "aarch64"
 	}
 
-	url := fmt.Sprintf("https://api.adoptium.net/v3/assets/feature_releases/%d/ga?architecture=%s&heap_size=normal&image_type=jre&jvm_impl=hotspot&os=%s&page=0&page_size=1&project=jdk&sort_method=DEFAULT&sort_order=DESC&vendor=eclipse", version, arch, osName)
+	url := fmt.Sprintf("%s/v3/assets/feature_releases/%d/ga?architecture=%s&heap_size=normal&image_type=jre&jvm_impl=hotspot&os=%s&page=0&page_size=1&project=jdk&sort_method=DEFAULT&sort_order=DESC&vendor=eclipse", d.baseURL, version, arch, osName)
 
 	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

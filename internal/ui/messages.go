@@ -20,6 +20,11 @@ type (
 		Instance *core.Instance
 	}
 
+	// NavigateToResourcePacks opens the Vanilla Tweaks resource-packs curation screen
+	NavigateToResourcePacks struct {
+		Instance *core.Instance
+	}
+
 	// NavigateToSettings opens settings
 	NavigateToSettings struct{}
 

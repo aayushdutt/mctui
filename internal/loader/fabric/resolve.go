@@ -16,9 +16,14 @@ import (
 	"github.com/aayushdutt/mctui/internal/core"
 )
 
-const metaBase = "https://meta.fabricmc.net"
-
-var metaHTTP = &http.Client{Timeout: 60 * time.Second}
+// metaBase is the Fabric meta host. It is a package var (not a const) and
+// metaHTTP is likewise overridable so tests can point this function-based
+// resolver at an httptest server. Override-and-restore in tests; not safe for
+// t.Parallel since both are process-global.
+var (
+	metaBase = "https://meta.fabricmc.net"
+	metaHTTP = &http.Client{Timeout: 60 * time.Second}
+)
 
 type loaderMetaEntry struct {
 	Loader struct {
