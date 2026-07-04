@@ -22,8 +22,15 @@ import (
 func ThemeListDelegate(accent, accentSoft lipgloss.Color) list.DefaultDelegate {
 	d := list.NewDefaultDelegate()
 	s := &d.Styles
-	s.SelectedTitle = s.SelectedTitle.Foreground(accent).BorderLeftForeground(accent)
-	s.SelectedDesc = s.SelectedDesc.Foreground(accentSoft).BorderLeftForeground(accent)
+	// Selected row: accent text + a thick left accent bar (┃). The thick border
+	// matches the shared selection idiom (kit.go SelectBar / rowMarker) so these
+	// bubbles lists highlight identically to the hand-rendered detail rows and
+	// overlay menus.
+	bar := lipgloss.ThickBorder()
+	s.SelectedTitle = s.SelectedTitle.Border(bar, false, false, false, true).
+		Foreground(accent).BorderLeftForeground(accent)
+	s.SelectedDesc = s.SelectedDesc.Border(bar, false, false, false, true).
+		Foreground(accentSoft).BorderLeftForeground(accent)
 	s.NormalTitle = s.NormalTitle.Foreground(Active.Text)
 	s.NormalDesc = s.NormalDesc.Foreground(Active.TextMuted)
 	s.DimmedTitle = s.DimmedTitle.Foreground(Active.TextMuted)
@@ -57,7 +64,7 @@ func NewThemedList(cfg ThemedListConfig) list.Model {
 		del.ShowDescription = false
 		del.SetSpacing(0)
 	}
-	l := list.New([]list.Item{}, del, 0, 0)
+	l := list.New([]list.Item{}, &styledTitleDelegate{DefaultDelegate: del}, 0, 0)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(cfg.StatusBar)
 	l.SetFilteringEnabled(cfg.Filter)

@@ -20,11 +20,50 @@ const (
 	GlyphFail    = "✗" // error / failure
 	GlyphRunning = "◐" // in progress
 	GlyphPending = "○" // not started
-	GlyphPointer = "▸" // selection / section marker
+	GlyphPointer = "▸" // section marker / menu cursor
 	GlyphDot     = "●" // status dot
 	GlyphWarn    = "▲" // warning
 	BrandGlyph   = "🎮"
+
+	// SelectBar is the accent bar that marks the selected/hovered row — the one
+	// selection idiom shared across the whole UI. The bubbles list delegate
+	// paints it as a thick left border (see ThemeListDelegate); hand-rendered
+	// rows draw it via [rowMarker]. Keeping a single glyph here is what makes the
+	// Instances list, the detail rows, and the overlay menus all highlight the
+	// same way.
+	SelectBar = "┃"
 )
+
+// rowMarker returns the 2-cell leading gutter for a hand-rendered selectable
+// row: an accent [SelectBar] when selected, two blanks otherwise. The width is
+// constant so selected and unselected rows stay column-aligned, and it mirrors
+// the bubbles delegate's selected left bar so every selectable row in the app
+// shares one selection cue. Pair it with a bold/accent label on the selected
+// row.
+func rowMarker(selected bool) string {
+	if !selected {
+		return "  "
+	}
+	return lipgloss.NewStyle().Foreground(Active.Primary).Bold(true).Render(SelectBar) + " "
+}
+
+// ActionButton renders an inline action affordance (e.g. "Add mods…") as a
+// button that is visually distinct from selectable list rows: a leading "+"
+// badge inside a pill. Unfocused it is an outlined "ghost" button — accent text
+// on a faint fill (the same chip language as the list's "new" badge); focused it
+// fills with the accent color like the primary Play button, signalling it is the
+// active target. Single line, so it is safe inside a tight row list. This is the
+// one place inline actions get their identity — route every "+ Add…" style row
+// through it so they read the same everywhere.
+func ActionButton(label string, focused bool) string {
+	st := lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	if focused {
+		st = st.Foreground(OnColor(Active.Primary)).Background(Active.Primary)
+	} else {
+		st = st.Foreground(Active.Primary).Background(Active.BorderFaint)
+	}
+	return st.Render("+ " + label)
+}
 
 // Rule returns a themed horizontal rule (divider) of the given visible width.
 func Rule(width int) string {

@@ -54,6 +54,10 @@ type AuthClient struct {
 	httpClient *http.Client
 	clientID   string
 	endpoints  authEndpoints
+	// wait blocks for d, honoring ctx cancellation. It is the device-code poll
+	// delay, overridable in tests so PollForToken runs without real sleeps.
+	// Defaults to defaultWait (a time.After-based wait).
+	wait func(ctx context.Context, d time.Duration) error
 }
 
 func NewAuthClient(clientID string) *AuthClient {
@@ -61,6 +65,17 @@ func NewAuthClient(clientID string) *AuthClient {
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		clientID:   clientID,
 		endpoints:  defaultAuthEndpoints(),
+		wait:       defaultWait,
+	}
+}
+
+// defaultWait blocks for d or until ctx is cancelled, whichever comes first.
+func defaultWait(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
 	}
 }
 
@@ -162,10 +177,8 @@ func (c *AuthClient) PollForToken(ctx context.Context, dc *DeviceCodeResponse) (
 	deadline := time.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
 
 	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(interval):
+		if err := c.wait(ctx, interval); err != nil {
+			return nil, err
 		}
 
 		req, _ := http.NewRequestWithContext(ctx, "POST", c.endpoints.msaToken, bytes.NewBufferString(data.Encode()))

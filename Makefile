@@ -1,4 +1,4 @@
-.PHONY: build run dev test fmt-check verify lint fmt tidy clean build-all reset-auth damage-auth reset-all
+.PHONY: build run dev test test-live fmt-check verify lint fmt tidy clean build-all reset-auth damage-auth reset-all
 
 # Build the binary
 build:
@@ -40,6 +40,11 @@ test:
 		$(if $(RUN),-run $(RUN),) \
 		$(TEST_PKGS)
 	@if [ "$(COVER)" = "1" ]; then go tool cover -html=coverage.out -o coverage.html; fi
+
+# Run tag-gated live tests that hit REAL external endpoints (network required).
+# These compile only with -tags live, so `make test` / `make verify` stay offline.
+test-live:
+	go test -tags live ./internal/...
 
 # Lint (tries golangci-lint, falls back to go vet)
 lint:

@@ -3,6 +3,7 @@ package launch
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +58,7 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 			VersionInfo: version,
 			Config:      cfg,
 		}, nil)
+		l.retryMax = 0 // fail fast if a download is wrongly attempted
 
 		// Should skip download and return nil (success)
 		// even though the library file is missing and URL is bad.
@@ -101,7 +103,7 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 		} else {
 			// Check error message.
 			errStr := err.Error()
-			if contains(errStr, "downloading libraries") || contains(errStr, "downloading assets") || contains(errStr, "dial tcp") {
+			if strings.Contains(errStr, "downloading libraries") || strings.Contains(errStr, "downloading assets") || strings.Contains(errStr, "dial tcp") {
 				t.Errorf("Launcher tried to download despite IsFullyDownloaded=true: %v", err)
 			}
 		}
@@ -115,6 +117,7 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 			Config:      cfg,
 			JavaPath:    "dummy-java",
 		}, nil)
+		l.retryMax = 0 // fail fast instead of retryablehttp backoff against the bad URL
 
 		// Should try to download and fail because of bad URL
 		err := l.Launch(context.Background())
@@ -126,14 +129,9 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 			// Since we have bad URL, it might be dial error or similar
 			// check for "Download libraries" in error context if wrapped
 			// Launch wraps errors: fmt.Errorf("%s: %w", step.name, err)
-			if !contains(err.Error(), "Downloading libraries") {
+			if !strings.Contains(err.Error(), "Downloading libraries") {
 				t.Errorf("Expected 'Downloading libraries' error, got: %v", err)
 			}
 		}
 	})
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) &&
-		(s[0:len(substr)] == substr || contains(s[1:], substr))
 }

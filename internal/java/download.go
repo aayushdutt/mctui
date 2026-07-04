@@ -109,7 +109,18 @@ func (d *Downloader) resolveAdoptiumURL(ctx context.Context, version int) (strin
 		return "", "", fmt.Errorf("api returned status %d", resp.StatusCode)
 	}
 
-	var releases []interface{}
+	// Decode into a typed shape rather than walking []interface{} with unchecked
+	// type assertions: an upstream schema change then returns a clean error instead
+	// of panicking.
+	// Structure: [ { binaries: [ { package: { link: "...", name: "..." } } ] } ]
+	var releases []struct {
+		Binaries []struct {
+			Package struct {
+				Link string `json:"link"`
+				Name string `json:"name"`
+			} `json:"package"`
+		} `json:"binaries"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return "", "", err
 	}
@@ -117,21 +128,16 @@ func (d *Downloader) resolveAdoptiumURL(ctx context.Context, version int) (strin
 	if len(releases) == 0 {
 		return "", "", fmt.Errorf("no releases found for java %d on %s/%s", version, osName, arch)
 	}
-
-	// Extract URL and Filename
-	// Structure: [ { binaries: [ { package: { link: "...", name: "..." } } ] } ]
-	rel := releases[0].(map[string]interface{})
-	binaries := rel["binaries"].([]interface{})
-	if len(binaries) == 0 {
-		return "", "", fmt.Errorf("no binaries in release")
+	if len(releases[0].Binaries) == 0 {
+		return "", "", fmt.Errorf("no binaries in release for java %d", version)
 	}
-	binary := binaries[0].(map[string]interface{})
-	pkg := binary["package"].(map[string]interface{})
 
-	link, _ := pkg["link"].(string)
-	name, _ := pkg["name"].(string)
+	pkg := releases[0].Binaries[0].Package
+	if pkg.Link == "" || pkg.Name == "" {
+		return "", "", fmt.Errorf("adoptium release missing package link/name for java %d", version)
+	}
 
-	return link, name, nil
+	return pkg.Link, pkg.Name, nil
 }
 
 func (d *Downloader) downloadFile(ctx context.Context, url, dest string) error {

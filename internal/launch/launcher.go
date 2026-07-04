@@ -43,6 +43,7 @@ type Options struct {
 
 	// Callbacks
 	UpdateLastPlayed func(id string) error
+	AddPlayTime      func(id string, seconds int64) error
 	UpdateInstance   func(inst *core.Instance) error
 }
 
@@ -57,6 +58,10 @@ type Launcher struct {
 	opts       *Options
 	statusChan chan<- Status
 	cfg        *config.Config
+	// retryMax is the download retry budget passed to download managers. Defaults
+	// to download.DefaultRetryMax; tests set it to 0 so failed-download paths fail
+	// fast instead of incurring retryablehttp's multi-second backoff.
+	retryMax int
 }
 
 // NewLauncher creates a new launcher
@@ -65,6 +70,7 @@ func NewLauncher(opts *Options, statusChan chan<- Status) *Launcher {
 		opts:       opts,
 		statusChan: statusChan,
 		cfg:        opts.Config,
+		retryMax:   download.DefaultRetryMax,
 	}
 }
 
@@ -294,7 +300,7 @@ func (l *Launcher) downloadAssets(ctx context.Context) error {
 
 	// Download asset index if needed
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-		mgr := download.NewManager(1)
+		mgr := download.NewManagerWithRetryMax(1, l.retryMax)
 		_, err := mgr.Download(ctx, []download.Item{{
 			URL:  assetIndex.URL,
 			Path: indexPath,
@@ -386,6 +392,8 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 	if l.opts.UpdateLastPlayed != nil {
 		l.opts.UpdateLastPlayed(inst.ID)
 	}
+	// Mark the session start so we can credit playtime once the game exits.
+	startedAt := time.Now()
 
 	// Stream logs
 	go l.streamLog(stdout, "stdout")
@@ -393,6 +401,14 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 
 	// Wait for game to finish
 	err := cmd.Wait()
+
+	// Credit the session's wall-clock duration to the instance's total playtime,
+	// regardless of how the game exited (clean quit, crash, or ctx cancel).
+	if l.opts.AddPlayTime != nil {
+		if secs := int64(time.Since(startedAt).Seconds()); secs > 0 {
+			l.opts.AddPlayTime(inst.ID, secs)
+		}
+	}
 
 	// Send final message
 	if err != nil {
@@ -609,7 +625,7 @@ func (l *Launcher) performDownload(ctx context.Context, stepName string, items [
 		return nil
 	}
 
-	mgr := download.NewManager(workerCount)
+	mgr := download.NewManagerWithRetryMax(workerCount, l.retryMax)
 	progressChan := make(chan download.Progress, 10)
 
 	// Forward progress

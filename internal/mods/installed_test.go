@@ -35,3 +35,38 @@ func TestListInstalledJars(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestRemoveInstalledJar(t *testing.T) {
+	inst := &core.Instance{Path: t.TempDir()}
+	if err := EnsureModsDir(inst); err != nil {
+		t.Fatal(err)
+	}
+	jar := filepath.Join(ModsDir(inst), "mod.jar")
+	if err := os.WriteFile(jar, []byte("jar"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("removes an existing jar", func(t *testing.T) {
+		if err := RemoveInstalledJar(inst, "mod.jar"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, err := os.Stat(jar); !os.IsNotExist(err) {
+			t.Fatalf("jar should be gone, err=%v", err)
+		}
+	})
+
+	t.Run("non-jar name errors", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(ModsDir(inst), "notes.txt"), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := RemoveInstalledJar(inst, "notes.txt"); err == nil {
+			t.Fatal("expected error for non-.jar file")
+		}
+	})
+
+	t.Run("missing file errors", func(t *testing.T) {
+		if err := RemoveInstalledJar(inst, "absent.jar"); err == nil {
+			t.Fatal("expected error for missing jar")
+		}
+	})
+}

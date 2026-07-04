@@ -25,6 +25,11 @@ type (
 		Instance *core.Instance
 	}
 
+	// NavigateToEditInstance opens the per-instance Edit screen (home emits this).
+	NavigateToEditInstance struct {
+		Instance *core.Instance
+	}
+
 	// NavigateToSettings opens settings
 	NavigateToSettings struct{}
 
@@ -125,6 +130,12 @@ type (
 	// PersistShowSnapshots persists the wizard's snapshot-visibility toggle to config.
 	PersistShowSnapshots struct {
 		Value bool
+	}
+
+	// InstanceEdited carries an edited instance back to the app to persist
+	// (via InstanceManager.Update) and reload on the home screen.
+	InstanceEdited struct {
+		Instance *core.Instance
 	}
 
 	// SettingsSaved carries the edited settings back to the app to apply and persist.

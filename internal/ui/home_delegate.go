@@ -41,6 +41,30 @@ type homeInstanceDelegate struct {
 }
 
 func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	if _, ok := item.(addInstanceItem); ok {
+		// Trailing "+ New instance" action row: the shared ActionButton (fills when
+		// it's the cursor row), inset by two cells to align with the detail tabs'
+		// +Add buttons. Buttons fill on focus instead of taking the list's ┃ bar,
+		// matching the project's selection idiom.
+		selected := index == m.Index()
+		tw := m.Width()
+		if tw < 1 {
+			return
+		}
+		// Shrink the label, then drop the inset, and finally ANSI-truncate, so the
+		// pill never exceeds the list width — otherwise the enclosing Panel wraps it
+		// and the column overflows the terminal. Pill overhead ("+ " + one pad cell
+		// each side) is 4 cells.
+		inset, label := "  ", "New instance"
+		if lipgloss.Width(inset)+lipgloss.Width(label)+4 > tw {
+			label = "New"
+		}
+		if lipgloss.Width(inset)+lipgloss.Width(label)+4 > tw {
+			inset = ""
+		}
+		_, _ = fmt.Fprint(w, ansi.Truncate(inset+ActionButton(label, selected), tw, ""))
+		return
+	}
 	ii, ok := item.(instanceItem)
 	if !ok {
 		d.DefaultDelegate.Render(w, m, index, item)

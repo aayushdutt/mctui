@@ -12,9 +12,12 @@ import (
 )
 
 // Category disclosure triangles and the incompatibility-swap affordance glyph.
+// The disclosure pair uses the filled (not the thin ▸/▾) triangles — the modern
+// TUI standard (lazygit, k9s, VS Code) — for higher contrast while staying a
+// single cell wide so the row layout is unchanged.
 const (
-	rpGlyphCollapsed = "▸"
-	rpGlyphExpanded  = "▾"
+	rpGlyphCollapsed = "▶"
+	rpGlyphExpanded  = "▼"
 	rpGlyphSwap      = "⇄"
 )
 
@@ -157,28 +160,34 @@ type rpPackItem struct {
 }
 
 func (i rpPackItem) Title() string {
+	prefix, name, st := i.titleParts()
+	return prefix + st.Render(name)
+}
+
+// titleParts splits the row into a styled state box and the plain pack name so
+// the shared delegate can highlight filter matches without tearing the box's
+// ANSI (see styledTitleItem).
+func (i rpPackItem) titleParts() (string, string, lipgloss.Style) {
 	name := displayOf(i.pack.Pack)
+	box := func(c lipgloss.Color, glyph string) string {
+		return lipgloss.NewStyle().Foreground(c).Render(glyph) + " "
+	}
 	switch {
 	case i.inCart && i.applied:
 		// In the built pack and still selected — unchanged.
-		box := lipgloss.NewStyle().Foreground(Active.SuccessAccent).Render("[x]")
-		return box + " " + lipgloss.NewStyle().Foreground(Active.TextStrong).Render(name)
+		return box(Active.SuccessAccent, "[x]"), name, lipgloss.NewStyle().Foreground(Active.TextStrong)
 	case i.inCart:
 		// Newly added, not yet built — pending addition.
-		box := lipgloss.NewStyle().Foreground(Active.Warning).Render("[+]")
-		return box + " " + lipgloss.NewStyle().Foreground(Active.TextStrong).Render(name)
+		return box(Active.Warning, "[+]"), name, lipgloss.NewStyle().Foreground(Active.TextStrong)
 	case i.applied:
 		// Was built but removed from the cart — pending removal on next build.
-		box := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("[-]")
-		return box + " " + lipgloss.NewStyle().Foreground(Active.TextMuted).Strikethrough(true).Render(name)
+		return box(Active.TextMuted, "[-]"), name, lipgloss.NewStyle().Foreground(Active.TextMuted).Strikethrough(true)
 	case i.blocker != "":
 		// Selectable but conflicting — toggling swaps out the conflict. Muted (not
 		// faint/disabled) so it doesn't read as inert.
-		box := lipgloss.NewStyle().Foreground(Active.WarningSoft).Render("[ ]")
-		return box + " " + lipgloss.NewStyle().Foreground(Active.TextMuted).Render(name)
+		return box(Active.WarningSoft, "[ ]"), name, lipgloss.NewStyle().Foreground(Active.TextMuted)
 	default:
-		box := lipgloss.NewStyle().Foreground(Active.Border).Render("[ ]")
-		return box + " " + lipgloss.NewStyle().Foreground(Active.Text).Render(name)
+		return box(Active.Border, "[ ]"), name, lipgloss.NewStyle().Foreground(Active.Text)
 	}
 }
 
@@ -224,11 +233,16 @@ type rpCartItem struct {
 }
 
 func (i rpCartItem) Title() string {
+	prefix, name, st := i.titleParts()
+	return prefix + st.Render(name)
+}
+
+func (i rpCartItem) titleParts() (string, string, lipgloss.Style) {
 	mark := lipgloss.NewStyle().Foreground(Active.Warning).Render("+")
 	if i.applied {
 		mark = lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone)
 	}
-	return mark + " " + lipgloss.NewStyle().Foreground(Active.Text).Render(displayOf(i.pack.Pack))
+	return mark + " ", displayOf(i.pack.Pack), lipgloss.NewStyle().Foreground(Active.Text)
 }
 func (i rpCartItem) Description() string {
 	return lipgloss.NewStyle().Foreground(Active.TextMuted).Render(i.pack.Category)

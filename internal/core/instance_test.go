@@ -272,6 +272,48 @@ func TestInstanceManager_UpdateLastPlayed(t *testing.T) {
 	}
 }
 
+func TestInstanceManager_AddPlayTime(t *testing.T) {
+	tmpDir := t.TempDir()
+	mgr := NewInstanceManager(tmpDir)
+
+	inst := &Instance{ID: "pt", Name: "PT", Version: "1.21.4", Loader: "vanilla"}
+	if err := mgr.Create(inst); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Accumulates across sessions.
+	if err := mgr.AddPlayTime("pt", 120); err != nil {
+		t.Fatalf("AddPlayTime failed: %v", err)
+	}
+	if err := mgr.AddPlayTime("pt", 60); err != nil {
+		t.Fatalf("AddPlayTime failed: %v", err)
+	}
+	if got, _ := mgr.Get("pt"); got.PlayTime != 180 {
+		t.Fatalf("PlayTime = %d, want 180", got.PlayTime)
+	}
+
+	// Non-positive deltas and unknown ids are no-ops.
+	if err := mgr.AddPlayTime("pt", 0); err != nil {
+		t.Fatalf("AddPlayTime(0) failed: %v", err)
+	}
+	if err := mgr.AddPlayTime("pt", -5); err != nil {
+		t.Fatalf("AddPlayTime(-5) failed: %v", err)
+	}
+	if err := mgr.AddPlayTime("missing", 10); err != nil {
+		t.Fatalf("AddPlayTime(missing) failed: %v", err)
+	}
+	if got, _ := mgr.Get("pt"); got.PlayTime != 180 {
+		t.Fatalf("PlayTime = %d after no-ops, want 180", got.PlayTime)
+	}
+
+	// Persists across reload.
+	mgr2 := NewInstanceManager(tmpDir)
+	mgr2.Load()
+	if reloaded, _ := mgr2.Get("pt"); reloaded.PlayTime != 180 {
+		t.Fatalf("PlayTime = %d after reload, want 180", reloaded.PlayTime)
+	}
+}
+
 func TestInstanceManager_EmptyDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	mgr := NewInstanceManager(tmpDir)

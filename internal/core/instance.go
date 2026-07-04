@@ -254,3 +254,19 @@ func (im *InstanceManager) UpdateLastPlayed(id string) error {
 	inst.LastPlayed = time.Now()
 	return im.save(inst)
 }
+
+// AddPlayTime credits seconds to an instance's total playtime and persists it.
+// Called when a launched game exits with the session's wall-clock duration. A
+// non-positive delta (or unknown id) is a no-op so a crash-on-launch never
+// corrupts the total.
+func (im *InstanceManager) AddPlayTime(id string, seconds int64) error {
+	if seconds <= 0 {
+		return nil
+	}
+	inst, ok := im.instances[id]
+	if !ok {
+		return nil
+	}
+	inst.PlayTime += seconds
+	return im.save(inst)
+}

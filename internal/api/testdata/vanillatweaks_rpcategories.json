@@ -1,0 +1,32 @@
+{
+  "categories": [
+    {
+      "category": "Aesthetic",
+      "packs": [
+        {
+          "name": "AlternateBlockDestruction",
+          "display": "Alternate Block Destruction",
+          "description": "Changes the breaking texture of blocks to a messy ring around the outside.",
+          "previewExtension": "gif",
+          "incompatible": [
+            "MineProgressBar"
+          ]
+        },
+        {
+          "name": "BlackNetherBricks",
+          "display": "Black Nether Bricks",
+          "description": "Changes the texture of Nether Bricks to make them black.",
+          "incompatible": [
+            "BrighterNether"
+          ]
+        },
+        {
+          "name": "CherryPicking",
+          "display": "Cherry Picking",
+          "description": "Changes the texture of cake to remove the large cherry in the center.",
+          "incompatible": []
+        }
+      ]
+    }
+  ]
+}

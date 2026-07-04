@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // newTestAuthClient builds an AuthClient starting from the production endpoints
@@ -86,9 +87,12 @@ func TestAuthClient_PollForToken(t *testing.T) {
 	client := newTestAuthClient("test-client", func(ep *authEndpoints) {
 		ep.msaToken = ts.URL
 	})
+	// No-op the poll delay so the two-iteration loop runs in microseconds instead
+	// of two ~5s waits. The retry/success logic and attempt count are unaffected.
+	client.wait = func(context.Context, time.Duration) error { return nil }
 	dc := &DeviceCodeResponse{
 		DeviceCode: "CODE123",
-		Interval:   0, // Instant retry for test speed
+		Interval:   0,
 		ExpiresIn:  10,
 	}
 

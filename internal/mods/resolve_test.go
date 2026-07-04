@@ -19,9 +19,18 @@ type fakeModrinth struct {
 	versionByID map[string]api.ProjectVersion
 	// projects maps projectID -> project metadata for GetProject.
 	projects map[string]api.Project
+	// lastSearch records the most recent SearchOptions passed to Search (for assertions).
+	lastSearch *api.SearchOptions
+	// searchResult is returned from Search when non-nil (defaults to empty).
+	searchResult *api.SearchResult
 }
 
-func (f *fakeModrinth) Search(context.Context, api.SearchOptions) (*api.SearchResult, error) {
+func (f *fakeModrinth) Search(_ context.Context, opts api.SearchOptions) (*api.SearchResult, error) {
+	got := opts
+	f.lastSearch = &got
+	if f.searchResult != nil {
+		return f.searchResult, nil
+	}
 	return &api.SearchResult{}, nil
 }
 

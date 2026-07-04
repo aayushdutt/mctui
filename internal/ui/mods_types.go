@@ -46,6 +46,14 @@ type modListItem struct {
 }
 
 func (i modListItem) Title() string {
+	prefix, name, st := i.titleParts()
+	return prefix + st.Render(name)
+}
+
+// titleParts splits the row into a styled status/identity swatch and the plain
+// mod title so the shared delegate can highlight filter matches without tearing
+// the swatch's ANSI (see styledTitleItem).
+func (i modListItem) titleParts() (string, string, lipgloss.Style) {
 	// Leading swatch: project color for identity, or status color when the row
 	// is installed/installing (preserves the at-a-glance status cue on line 1).
 	var sc lipgloss.Color
@@ -58,7 +66,7 @@ func (i modListItem) Title() string {
 		sc = modSwatchColor(i.hit.Color)
 	}
 	swatch := lipgloss.NewStyle().Foreground(sc).Render(GlyphDot + " ")
-	return swatch + lipgloss.NewStyle().Foreground(Active.TextStrong).Render(i.hit.Title)
+	return swatch, i.hit.Title, lipgloss.NewStyle().Foreground(Active.TextStrong)
 }
 
 func (i modListItem) Description() string {

@@ -10,6 +10,7 @@ import (
 // indices, empty, short hex) fall back to light text rather than panicking or
 // returning an empty foreground.
 func TestOnColorFallsBackOnNonHex(t *testing.T) {
+	// Not parallel: restoreDark mutates the global ui.Active palette.
 	restoreDark(t)
 	for _, c := range []lipgloss.Color{
 		lipgloss.Color("205"),  // ANSI 256 index
@@ -25,6 +26,7 @@ func TestOnColorFallsBackOnNonHex(t *testing.T) {
 // TestContrastRatio checks the ratio for known pairs and that unparseable colors
 // report ok=false instead of a bogus number.
 func TestContrastRatio(t *testing.T) {
+	// Not parallel: restoreDark mutates the global ui.Active palette.
 	restoreDark(t)
 
 	r, ok := ContrastRatio(lipgloss.Color("#FFFFFF"), lipgloss.Color("#000000"))

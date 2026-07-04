@@ -29,6 +29,7 @@ const (
 	StateMods
 	StateResourcePacks
 	StateSettings
+	StateEditInstance
 	StateAuth
 )
 
@@ -46,6 +47,7 @@ type Model struct {
 	resourcePacks *ui.ResourcePacksModel
 	auth          *ui.AuthModel
 	settings      *ui.SettingsModel
+	editInstance  *ui.EditInstanceModel
 
 	// Core services
 	cfg           *config.Config
@@ -373,6 +375,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settings != nil {
 			m.settings.SetSize(cw, ch)
 		}
+		if m.editInstance != nil {
+			m.editInstance.SetSize(cw, ch)
+		}
 
 	// Navigation messages
 	case ui.NavigateToHome:
@@ -386,7 +391,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mods = nil
 		m.resourcePacks = nil
 		m.settings = nil
+		m.editInstance = nil
 		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+
+	case ui.NavigateToEditInstance:
+		if msg.Instance == nil {
+			return m, nil
+		}
+		m.state = StateEditInstance
+		m.editInstance = ui.NewEditInstanceModel(msg.Instance)
+		cw, ch := m.contentSize()
+		m.editInstance.SetSize(cw, ch)
+		return m, m.editInstance.Init()
 
 	case ui.NavigateToSettings:
 		m.state = StateSettings
@@ -560,6 +576,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// MSA client ID may have changed; re-validate the active session.
 		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 
+	case ui.InstanceEdited:
+		m.state = StateHome
+		m.editInstance = nil
+		if msg.Instance != nil {
+			if err := m.instances.Update(msg.Instance); err != nil {
+				m.home.SetTransientBanner(fmt.Sprintf("Couldn't save instance: %v", err))
+			} else {
+				m.home.SetTransientBanner("Instance saved.")
+			}
+			id := msg.Instance.ID
+			return m, tea.Batch(m.loadInstancesSelecting(id), m.sessionRecheckCmd())
+		}
+		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+
 	case ui.ModInstallDoneMsg:
 		if m.mods != nil {
 			newMods, cmd := m.mods.Update(msg)
@@ -640,7 +670,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.ForceQuit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Quit):
-			if m.state == StateHome {
+			// Don't quit on `q` while a home overlay (palette/actions/delete) owns
+			// input — let the overlay handle the key (e.g. typing `q` in the palette,
+			// or `q` cancelling a dialog).
+			if m.state == StateHome && !m.home.HasOverlay() {
 				return m, tea.Quit
 			}
 		}
@@ -688,6 +721,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settings != nil {
 			newSettings, cmd := m.settings.Update(msg)
 			m.settings = newSettings.(*ui.SettingsModel)
+			cmds = append(cmds, cmd)
+		}
+	case StateEditInstance:
+		if m.editInstance != nil {
+			newEdit, cmd := m.editInstance.Update(msg)
+			m.editInstance = newEdit.(*ui.EditInstanceModel)
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -782,6 +821,7 @@ func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, 
 				AccessToken:      accessToken,
 				Config:           m.cfg,
 				UpdateLastPlayed: m.instances.UpdateLastPlayed,
+				AddPlayTime:      m.instances.AddPlayTime,
 				UpdateInstance:   m.instances.Update,
 			}, statusChan)
 
@@ -867,6 +907,10 @@ func (m *Model) shellContent() string {
 	case StateSettings:
 		if m.settings != nil {
 			return m.settings.View()
+		}
+	case StateEditInstance:
+		if m.editInstance != nil {
+			return m.editInstance.View()
 		}
 	}
 	return "Unknown state"

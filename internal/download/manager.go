@@ -48,15 +48,27 @@ type Manager struct {
 	downloadedBytes int64
 }
 
-// NewManager creates a new download manager
+// DefaultRetryMax is the production retry budget for failed downloads.
+const DefaultRetryMax = 3
+
+// NewManager creates a new download manager with the production retry budget.
 func NewManager(workerCount int) *Manager {
+	return NewManagerWithRetryMax(workerCount, DefaultRetryMax)
+}
+
+// NewManagerWithRetryMax creates a download manager with an explicit retry budget.
+// Exists as a dependency-injection seam so tests can pass retryMax=0 and exercise
+// error paths (non-200, dial failures) without incurring retryablehttp's
+// exponential backoff (seconds per attempt). NewManager delegates here with the
+// production default.
+func NewManagerWithRetryMax(workerCount, retryMax int) *Manager {
 	if workerCount <= 0 {
 		workerCount = 4
 	}
 
 	// Create retryable client with sensible defaults
 	retryClient := retryablehttp.NewClient()
-	retryClient.RetryMax = 3
+	retryClient.RetryMax = retryMax
 	retryClient.RetryWaitMin = 1 * time.Second
 	retryClient.RetryWaitMax = 10 * time.Second
 	retryClient.Logger = nil // Silence default logging
