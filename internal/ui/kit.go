@@ -65,6 +65,74 @@ func ActionButton(label string, focused bool) string {
 	return st.Render("+ " + label)
 }
 
+// Zone renders a titled content region WITHOUT a box: a bold title line — an
+// accent ┃ focus bar + accent label when focused, a muted label (two-space
+// gutter, no bar) when not — over a dim [Rule], over the body. It is the
+// in-layout replacement for [Panel]: structure comes from the title, the rule,
+// and whitespace instead of a rounded border, so it reclaims the border's two
+// columns and bottom row and keeps the focus cue consistent with the ┃ selection
+// idiom. Panel stays for FLOATING overlays (dialogs, palette, help), where the
+// box's containment is real information.
+//
+// width is the rule width; body is rendered flush-left beneath it (size the body
+// to width before passing it in). An empty title renders just the rule + body.
+func Zone(title, body string, width int, focused bool) string {
+	// Truncate the title to the pane so a long one (e.g. an accumulating
+	// resource-packs breadcrumb) can't widen the Zone past its column and shove
+	// the neighbouring pane off the frame — Panel used to clamp this; Zone must too.
+	// The 2-cell gutter is the ┃ + space (focused) or two spaces (not).
+	if title != "" {
+		title = ansi.Truncate(title, max(1, width-2), "…")
+	}
+
+	var head string
+	switch {
+	case title == "":
+		head = ""
+	case focused:
+		bar := lipgloss.NewStyle().Foreground(Active.Primary).Bold(true).Render(SelectBar)
+		label := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render(title)
+		head = bar + " " + label
+	default:
+		label := lipgloss.NewStyle().Bold(true).Foreground(Active.TextMuted).Render(title)
+		head = "  " + label
+	}
+
+	parts := make([]string, 0, 3)
+	if head != "" {
+		parts = append(parts, head, Rule(width))
+	}
+	if body != "" {
+		parts = append(parts, body)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// Pill renders a label as a ghost→filled pill: accent text on a faint fill,
+// filling with the accent color (WCAG-safe text via OnColor) when focused. Same
+// affordance as [ActionButton] but without the leading "+", for standalone
+// actions like Save.
+func Pill(label string, focused bool) string {
+	st := lipgloss.NewStyle().Bold(true).Padding(0, 2)
+	if focused {
+		st = st.Foreground(OnColor(Active.Primary)).Background(Active.Primary)
+	} else {
+		st = st.Foreground(Active.Primary).Background(Active.BorderFaint)
+	}
+	return st.Render(label)
+}
+
+// ClampWidth truncates every line of s to at most width cells — a defensive
+// backstop so no leaf view can push a line past the app frame (e.g. an unwrapped
+// hint on a very narrow terminal). Leaf views should still size their content to
+// the width; this only guarantees the frame stays intact.
+func ClampWidth(s string, width int) string {
+	if width < 1 {
+		return s
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+}
+
 // Rule returns a themed horizontal rule (divider) of the given visible width.
 func Rule(width int) string {
 	if width < 1 {
@@ -115,6 +183,19 @@ func KeyHints(width int, hints ...KeyHint) string {
 		items = append(items, item)
 	}
 	return joinWrapped(items, sep, width)
+}
+
+// footerHelpHeight is the rendered height of a one-line (or wrapped) KeyHints
+// footer plus its leading rule and top margin. The mods and resource-packs
+// vertical budgets share this so the "single shell owns the insets" layout keeps
+// one source of truth for footer height instead of two hand-copied formulas.
+func footerHelpHeight(items []KeyHint, bodyWidth int) int {
+	body := KeyHints(bodyWidth, items...)
+	lines := 1
+	if body != "" {
+		lines = strings.Count(body, "\n") + 1
+	}
+	return 1 + lines + 1 // rule + hint text + top margin
 }
 
 // StatusBar lays out left content and right content on one line, filling the gap

@@ -82,13 +82,12 @@ func TestHomeViewFitsTerminal(t *testing.T) {
 	for _, w := range []int{20, 32, 40, 60, 72, 84, 100, 140, 200} {
 		for _, h := range []int{homeLayoutTestMinH, 30, 50} {
 			// Every facet tab must stay within bounds, not just the default one —
-			// and in BOTH pane-focus states (the detail focus draws cursors + an
-			// accent border that could affect widths).
+			// and in BOTH pane-focus states (the detail focus accents the pane
+			// title, which could affect widths).
 			for tab := homeTab(0); tab < homeTabCount; tab++ {
 				for _, focus := range []paneFocus{focusList, focusDetail} {
 					m.activeTab = tab
 					m.paneFocus = focus
-					m.detailCursor = 1 // exercise a non-zero cursor row
 					m.SetSize(w, h)
 					v := m.View()
 					if got := lipgloss.Width(v); got > w {
@@ -132,8 +131,8 @@ func TestHomeOverlaysFitTerminal(t *testing.T) {
 			mp := build()
 			mp.SetSize(w, h)
 			mp.openPalette()
-			mp.paletteInput.SetValue("a")
-			mp.rebuildPaletteEntries()
+			mp.palette.input.SetValue("a")
+			mp.palette.refilter()
 			vp := mp.View()
 			if got := lipgloss.Width(vp); got > w {
 				t.Errorf("palette View(%dx%d) width %d > %d", w, h, got, w)

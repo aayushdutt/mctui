@@ -70,27 +70,6 @@ func TestNewWizardModel_SeedsShowSnapshots(t *testing.T) {
 	}
 }
 
-func TestWizard_TabTogglesAndPersistsSnapshots(t *testing.T) {
-	m := NewWizardModel(false)
-	m.step = StepSelectVersion
-
-	next, cmd := m.Update(tea.KeyMsg(tea.Key{Type: tea.KeyTab}))
-	w := next.(*WizardModel)
-	if !w.showSnaps {
-		t.Fatal("Tab on the version step should toggle showSnaps on")
-	}
-	if cmd == nil {
-		t.Fatal("expected a PersistShowSnapshots command")
-	}
-	p, ok := cmd().(PersistShowSnapshots)
-	if !ok {
-		t.Fatalf("expected PersistShowSnapshots, got %T", cmd())
-	}
-	if !p.Value {
-		t.Fatalf("PersistShowSnapshots.Value = %v, want true", p.Value)
-	}
-}
-
 func TestWizard_RetryKeyResetsErrorAndEmitsRetry(t *testing.T) {
 	m := NewWizardModel(false)
 	m.err = errors.New("boom")

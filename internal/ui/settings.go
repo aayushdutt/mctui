@@ -51,6 +51,33 @@ type SettingsModel struct {
 	origTheme  string   // theme active when the form opened (restore on cancel)
 
 	saveErr string
+
+	palette CommandPalette
+
+	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
+	// ? / esc / q.
+	help bool
+}
+
+// helpGroups returns the settings screen's bindings grouped for the `?` overlay,
+// hand-built to match exactly what Update handles (field cycling, theme picker,
+// snapshots toggle, save) and the footer hints.
+func (m *SettingsModel) helpGroups() []HelpGroup {
+	return []HelpGroup{
+		{Title: "Navigate", Entries: []HelpEntry{
+			{"tab / ↑↓", "move between fields"},
+			{"← → / h l", "change theme"},
+			{"space", "toggle snapshots"},
+		}},
+		{Title: "Act", Entries: []HelpEntry{
+			{"enter", "save"},
+		}},
+		{Title: "General", Entries: []HelpEntry{
+			{":", "command palette"},
+			{"?", "help"},
+			{"esc", "cancel · back home"},
+		}},
+	}
 }
 
 // NewSettingsModel seeds the form from cfg (read-only; nothing is mutated here).
@@ -85,7 +112,23 @@ func NewSettingsModel(cfg *config.Config) *SettingsModel {
 		origTheme:   ActiveName(),
 	}
 	m.applyFocus(focusSettingsJavaPath)
+	m.palette = NewCommandPalette("Settings · commands", "Run a command…", m.settingsPaletteItems)
 	return m
+}
+
+// settingsPaletteItems supplies the settings screen's `:` command-palette verbs.
+func (m *SettingsModel) settingsPaletteItems() []PaletteItem {
+	return []PaletteItem{
+		{Label: "Save", Run: func() tea.Cmd {
+			_, cmd := m.submit()
+			return cmd
+		}},
+		{Label: "Back to home", Run: func() tea.Cmd {
+			// Mirror esc: drop any previewed-but-unsaved theme before leaving.
+			Apply(m.origTheme)
+			return func() tea.Msg { return NavigateToHome{} }
+		}},
+	}
 }
 
 // SetSize updates dimensions.
@@ -152,6 +195,18 @@ func (m *SettingsModel) cycleTheme(delta int) {
 func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.palette.Active {
+			return m, m.palette.Update(msg)
+		}
+		// Help overlay is read-only: it swallows every key, and only ? / esc / q
+		// dismiss it.
+		if m.help {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.help = false
+			}
+			return m, nil
+		}
 		// Space toggles the snapshots checkbox when focused.
 		if m.focus == focusSettingsSnapshots &&
 			(msg.Type == tea.KeySpace || msg.String() == " " || msg.String() == "space") {
@@ -171,6 +226,20 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch msg.String() {
+		case ":":
+			// Open the command palette only when no text input is focused (otherwise
+			// ":" must type a literal colon into the field).
+			if m.focusedInput() == nil {
+				m.palette.Open()
+				return m, textinput.Blink
+			}
+		case "?":
+			// Open the read-only key reference — gated exactly like ":" so "?" stays
+			// typeable in a focused field.
+			if m.focusedInput() == nil {
+				m.help = true
+				return m, nil
+			}
 		case "esc":
 			// Restore a previewed-but-unsaved theme so it doesn't persist visually.
 			Apply(m.origTheme)
@@ -221,26 +290,18 @@ func (m *SettingsModel) submit() (*SettingsModel, tea.Cmd) {
 
 // View implements tea.Model.
 func (m *SettingsModel) View() string {
-	header := ScreenHeader("Settings", "Changes apply on save and persist to config.json")
-
-	field := func(label, hint string, in textinput.Model, focused bool) string {
-		border := Active.BorderSubtle
-		if focused {
-			border = Active.Success
-		}
-		lbl := lipgloss.NewStyle().Foreground(Active.TextDim).Render(label)
-		box := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(border).
-			Padding(0, 1).
-			Render(in.View())
-		hintLine := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(hint)
-		return lipgloss.JoinVertical(lipgloss.Left, lbl, box, hintLine)
+	if m.help {
+		return boundToScreen(HelpOverlay("Settings", m.helpGroups(), m.width, m.height), m.width, m.height)
+	}
+	if m.palette.Active {
+		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
 	}
 
-	javaBlock := field("Java path", "Leave empty to auto-detect or download.", m.javaPath, m.focus == focusSettingsJavaPath)
-	jvmBlock := field("JVM arguments", "Space-separated. Empty falls back to the default.", m.jvmArgs, m.focus == focusSettingsJVMArgs)
-	msaBlock := field("Microsoft client ID", "Advanced. Empty uses the built-in default. Changing this may require signing in again.", m.msaClientID, m.focus == focusSettingsMSAClientID)
+	header := ScreenHeader("Settings", "Changes apply on save and persist to config.json")
+
+	javaBlock := underlineField("Java path", "Leave empty to auto-detect or download.", m.javaPath, m.focus == focusSettingsJavaPath)
+	jvmBlock := underlineField("JVM arguments", "Space-separated. Empty falls back to the default.", m.jvmArgs, m.focus == focusSettingsJVMArgs)
+	msaBlock := underlineField("Microsoft client ID", "Advanced. Empty uses the built-in default. Changing this may require signing in again.", m.msaClientID, m.focus == focusSettingsMSAClientID)
 
 	// Snapshots checkbox row, styled to match the wizard's starter-mods row.
 	cbFocused := m.focus == focusSettingsSnapshots
@@ -253,7 +314,7 @@ func (m *SettingsModel) View() string {
 	if cbFocused {
 		rowStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(Active.Success).
+			BorderForeground(Active.Primary).
 			Background(Active.BorderFaint).
 			PaddingLeft(1).
 			PaddingRight(1)
@@ -272,7 +333,7 @@ func (m *SettingsModel) View() string {
 	}
 	arrowFg := Active.TextDim
 	if themeFocused {
-		arrowFg = Active.Success
+		arrowFg = Active.Primary
 	}
 	arrowStyle := lipgloss.NewStyle().Foreground(arrowFg)
 	valueStyle := lipgloss.NewStyle().Bold(true).Foreground(Active.Title)
@@ -290,14 +351,14 @@ func (m *SettingsModel) View() string {
 	if themeFocused {
 		themeRowStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(Active.Success).
+			BorderForeground(Active.Primary).
 			Background(Active.BorderFaint).
 			PaddingLeft(1).
 			PaddingRight(1)
 	}
 	themeBlock := themeRowStyle.Render(themeRow)
 
-	saveBtn := lipgloss.NewStyle().MarginTop(1).Render(wizardFormButton("Save", m.focus == focusSettingsSave, true))
+	saveBtn := lipgloss.NewStyle().MarginTop(1).Render(Pill("Save", m.focus == focusSettingsSave))
 
 	errBlock := ""
 	if m.saveErr != "" {
@@ -310,6 +371,7 @@ func (m *SettingsModel) View() string {
 		KeyHint{"←→", "theme"},
 		KeyHint{"enter", "save"},
 		KeyHint{"esc", "cancel"},
+		KeyHint{"?", "help"},
 	))
 
 	return lipgloss.JoinVertical(

@@ -48,15 +48,18 @@ func TestUIPreview(t *testing.T) {
 	// Home — with instances (two-column master/detail at width >= 84)
 	sampleInstances := []*core.Instance{
 		{
+			ID:   "survival-world",
 			Name: "Survival World", Version: "1.21.4", Loader: "fabric", LoaderVer: "0.16.10",
 			Path: "/Users/dev/.mctui/instances/survival-world", LastPlayed: time.Now().Add(-2 * time.Hour),
 			CreatedAt: time.Now().Add(-30 * 24 * time.Hour), IsFullyDownloaded: true,
 		},
 		{
+			ID:   "fresh-modpack",
 			Name: "Fresh Modpack", Version: "1.20.1", Loader: "fabric",
 			Path: "/Users/dev/.mctui/instances/fresh-modpack", CreatedAt: time.Now(),
 		}, // never played → "new" badge
 		{
+			ID:   "vanilla-1-21",
 			Name: "Vanilla 1.21", Version: "1.21", Loader: "vanilla",
 			Path: "/Users/dev/.mctui/instances/vanilla-1-21", LastPlayed: time.Now().Add(-3 * 24 * time.Hour),
 			CreatedAt: time.Now().Add(-10 * 24 * time.Hour), IsFullyDownloaded: true,
@@ -114,8 +117,7 @@ func TestUIPreview(t *testing.T) {
 		hf.SetSize(w, h)
 		hf.activeTab = tabResourcePacks
 		hf.focusDetailPane()
-		hf.detailCursor = 0 // on the "+ Add" row
-		banner("HOME · detail FOCUSED (Resource packs, + Add)")
+		banner("HOME · detail FOCUSED (Resource packs preview)")
 		fmt.Println(hf.View())
 	}
 
@@ -139,15 +141,28 @@ func TestUIPreview(t *testing.T) {
 	homePal.SetInstances(sampleInstances, "")
 	homePal.SetSize(w, h)
 	homePal.openPalette()
-	homePal.paletteInput.SetValue("va")
-	homePal.rebuildPaletteEntries()
+	homePal.palette.input.SetValue("va")
+	homePal.palette.refilter()
 	banner("HOME · command palette (:)")
 	fmt.Println(homePal.View())
 
-	// New-instance wizard (breadcrumb + panel)
+	// Home — help overlay (?)
+	homeHelp := NewHomeModel()
+	homeHelp.SetInstances(sampleInstances, "")
+	homeHelp.SetSize(w, h)
+	homeHelp.help = true
+	banner("HOME · help overlay (?)")
+	fmt.Println(homeHelp.View())
+
+	// New-instance wizard (breadcrumb + version list + snapshot checkbox)
 	wiz := NewWizardModel(false)
 	wiz.SetSize(w, h)
-	banner("WIZARD · step 1")
+	wiz.SetVersions([]core.Version{
+		{ID: "1.21.4", Type: core.VersionTypeRelease},
+		{ID: "1.21.3", Type: core.VersionTypeRelease},
+		{ID: "1.21.2", Type: core.VersionTypeRelease},
+	}, "1.21.4")
+	banner("WIZARD · step 1 (version + snapshot checkbox)")
 	fmt.Println(wiz.View())
 
 	// Launch

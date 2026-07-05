@@ -1,7 +1,5 @@
 package ui
 
-import "strings"
-
 // Resource-packs screen vertical layout. ResourcePacksModel.SetSize derives
 // bubble list heights from the terminal so split/stacked panes and the footer
 // fit. Mirrors mods_layout.go; a size-invariant test guards the budget
@@ -10,9 +8,9 @@ import "strings"
 // Vertical budget for the resource-packs screen. Tuned against View(): header
 // block, panel borders, chrome above lists, gaps, and help.
 const (
-	// rpOuterPadY accounts for top + bottom screen padding (the leaf view itself
-	// does not pad — the app shell does — but reserve a row of breathing space).
-	rpOuterPadY = 2
+	// rpOuterPadY is 0: the leaf view no longer self-pads (single-shell inset —
+	// AppShellStyle owns the top/bottom padding), so nothing is reserved here.
+	rpOuterPadY = 0
 
 	// rpHeaderLines: title + catalog-version line + rule + margin.
 	rpHeaderLines = 4
@@ -93,35 +91,35 @@ func rpCompactListHeights(h, w, extraReserve int) (catH, packH, cartH int) {
 	return catH, packH, cartH
 }
 
-// rpScreenHelpItems is the full footer when there is enough terminal space.
+// rpScreenHelpItems is the full footer: one line, six hints, ending in `? help`.
+// The long tail (→ open, o preview, : palette) lives in the `?` overlay.
 func rpScreenHelpItems() []KeyHint {
 	return []KeyHint{
-		{"→", "open"},
 		{"space", "toggle"},
 		{"/", "search"},
-		{"o", "preview"},
-		{"b", "build & apply"},
+		{"b", "apply"},
 		{"c", "clear"},
 		{"esc", "home"},
+		{"?", "help"},
 	}
 }
 
 func rpScreenHelpItemsCompact() []KeyHint {
 	return []KeyHint{
-		{"→←", "nav"},
 		{"space", "toggle"},
 		{"/", "search"},
 		{"b", "apply"},
 		{"esc", "home"},
+		{"?", "help"},
 	}
 }
 
 func rpScreenHelpItemsMicro() []KeyHint {
 	return []KeyHint{
-		{"tab", "pane"},
 		{"space", "toggle"},
 		{"b", "apply"},
 		{"esc", "home"},
+		{"?", "help"},
 	}
 }
 
@@ -150,11 +148,5 @@ func rpRenderHelp(items []KeyHint, width int) string {
 
 // rpFooterHelpLines is the rendered footer height (rule + wrapped hints + margin).
 func rpFooterHelpLines(termH, termW int) int {
-	body := rpRenderHelp(rpHelpItemsPick(termH, termW), rpHelpBodyMaxWidth(termW))
-	textLines := 1
-	if body != "" {
-		textLines = strings.Count(body, "\n") + 1
-	}
-	// rule (1) + text + margin (1)
-	return 1 + textLines + 1
+	return footerHelpHeight(rpHelpItemsPick(termH, termW), rpHelpBodyMaxWidth(termW))
 }

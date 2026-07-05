@@ -87,22 +87,29 @@ mctui/
 ## Keybindings (home)
 
 
-| Key                | Action                            |
-| ------------------ | --------------------------------- |
-| `↑` `↓` or `j` `k` | Move selection                    |
-| `Enter` or `l`     | Launch (online if signed in)      |
-| `o`                | Play offline                      |
-| `n`                | New instance                      |
-| `m`                | Mods browser (Fabric instances)   |
-| `s`                | Settings (Java, JVM args, theme…) |
-| `a`                | Accounts                          |
-| `f`                | Open instance folder              |
-| `d`                | Delete instance                   |
-| `/`                | Filter instances                  |
-| `q`                | Quit                              |
+| Key                | Action                                    |
+| ------------------ | ----------------------------------------- |
+| `↑` `↓` or `j` `k` | Move selection                            |
+| `Enter`            | Launch (online if signed in)              |
+| `→` `l` / `←` `h`  | Focus detail panel / step tabs / back     |
+| `Tab`              | Toggle focus between list and detail pane |
+| `o`                | Play offline                              |
+| `n`                | New instance                              |
+| `m`                | Mods browser (Fabric instances)           |
+| `p`                | Resource packs                            |
+| `s`                | Settings (Java, JVM args, theme…)         |
+| `a`                | Accounts                                  |
+| `x`                | Actions popup (per-instance)              |
+| `:`                | Command palette                           |
+| `f`                | Open instance folder                      |
+| `d`                | Delete instance                           |
+| `/`                | Filter instances                          |
+| `?`                | Help overlay (all keys, any screen)       |
+| `Esc`              | Clear filter / back                       |
+| `q`                | Quit                                      |
 
 
-On the **launch** screen, `**v`** cycles log verbosity. On the **mods** screen, use `**Tab`** to move between installed list, search, and results; `**Esc**` returns home.
+Grammar across screens: **Enter** = confirm/launch/add, **Esc** = one step back, **Tab/Shift+Tab** = cycle panes or fields, **`d`** = delete/remove in any list, and **`h` `j` `k` `l`** mirror the arrows. **`?`** opens a full key reference on any screen, and **`:`** opens the command palette everywhere. On the **launch** screen, `v` cycles log verbosity. On the **mods** screen, `Tab` (or `h`/`l`) moves between the installed list, search, and results; `d`/`Backspace` removes an installed jar; `Esc` returns home. In the **new-instance** wizard, `space` toggles snapshot versions.
 
 ## Data and configuration
 

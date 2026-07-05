@@ -475,8 +475,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.launch = nil
 		m.launchStatusChan = nil
-		m.home.SetTransientBanner("Could not verify Microsoft session. Check your connection or press [o] for offline.")
-		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+		bannerCmd := m.home.SetTransientBanner("Could not verify Microsoft session. Check your connection or press [o] for offline.")
+		return m, tea.Batch(bannerCmd, m.loadInstances(), m.sessionRecheckCmd())
 
 	case ui.ActiveSessionCheckStarted:
 		m.home.SetSessionCheckStarted()
@@ -529,19 +529,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Success: persist the new Minecraft token and rotated refresh token.
+		var bannerCmd tea.Cmd
 		if acc := m.accounts.GetActive(); acc != nil && acc.ID == msg.accountID {
 			acc.AccessToken = msg.accessToken
 			acc.ExpiresAt = msg.expiresAt
 			acc.MSARefreshToken = msg.refreshToken
 			if err := m.accounts.Save(); err != nil {
-				m.home.SetTransientBanner(fmt.Sprintf("Refreshed session, but couldn't save: %v", err))
+				bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Refreshed session, but couldn't save: %v", err))
 			}
 		}
 		if msg.launch != nil {
-			return m, func() tea.Msg { return ui.ProceedWithLaunch{Instance: msg.launch} }
+			return m, tea.Batch(bannerCmd, func() tea.Msg { return ui.ProceedWithLaunch{Instance: msg.launch} })
 		}
 		m.home.ApplyActiveSessionCheckResult(ui.ActiveSessionCheckResult{Status: ui.ActiveSessionOK})
-		return m, nil
+		return m, bannerCmd
 
 	case ui.NavigateToAuth:
 		return m, m.prepareAuthScreen(nil)
@@ -552,7 +553,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.PersistShowSnapshots:
 		m.cfg.ShowSnapshots = msg.Value
 		if err := m.cfg.Save(); err != nil {
-			m.home.SetTransientBanner(fmt.Sprintf("Couldn't save snapshot preference: %v", err))
+			return m, m.home.SetTransientBanner(fmt.Sprintf("Couldn't save snapshot preference: %v", err))
 		}
 		return m, nil
 
@@ -568,25 +569,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.home.ApplyTheme()
 		m.state = StateHome
 		m.settings = nil
+		var bannerCmd tea.Cmd
 		if err := m.cfg.Save(); err != nil {
-			m.home.SetTransientBanner(fmt.Sprintf("Applied for this session, but couldn't write config: %v", err))
+			bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Applied for this session, but couldn't write config: %v", err))
 		} else {
-			m.home.SetTransientBanner("Settings saved.")
+			bannerCmd = m.home.SetTransientBanner("Settings saved.")
 		}
 		// MSA client ID may have changed; re-validate the active session.
-		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+		return m, tea.Batch(bannerCmd, m.loadInstances(), m.sessionRecheckCmd())
 
 	case ui.InstanceEdited:
 		m.state = StateHome
 		m.editInstance = nil
 		if msg.Instance != nil {
+			var bannerCmd tea.Cmd
 			if err := m.instances.Update(msg.Instance); err != nil {
-				m.home.SetTransientBanner(fmt.Sprintf("Couldn't save instance: %v", err))
+				bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Couldn't save instance: %v", err))
 			} else {
-				m.home.SetTransientBanner("Instance saved.")
+				bannerCmd = m.home.SetTransientBanner("Instance saved.")
 			}
 			id := msg.Instance.ID
-			return m, tea.Batch(m.loadInstancesSelecting(id), m.sessionRecheckCmd())
+			return m, tea.Batch(bannerCmd, m.loadInstancesSelecting(id), m.sessionRecheckCmd())
 		}
 		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
 
@@ -600,17 +603,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ui.DeleteInstance:
 		if msg.Instance != nil {
+			var bannerCmd tea.Cmd
 			if err := m.instances.Delete(msg.Instance.ID); err != nil {
-				m.home.SetTransientBanner(fmt.Sprintf("Couldn't delete instance: %v", err))
+				bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Couldn't delete instance: %v", err))
 			}
-			return m, m.loadInstances()
+			return m, tea.Batch(bannerCmd, m.loadInstances())
 		}
 	// Instance management
 	case ui.InstanceCreated:
 		if err := m.instances.Create(msg.Instance); err != nil {
 			m.state = StateHome
-			m.home.SetTransientBanner(fmt.Sprintf("Couldn't create instance: %v", err))
-			return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+			bannerCmd := m.home.SetTransientBanner(fmt.Sprintf("Couldn't create instance: %v", err))
+			return m, tea.Batch(bannerCmd, m.loadInstances(), m.sessionRecheckCmd())
 		}
 		m.state = StateHome
 		id := msg.Instance.ID
@@ -871,8 +875,14 @@ func (m *Model) waitForLaunchStatus(ch chan launch.Status) tea.Cmd {
 }
 
 // View implements tea.Model. All screens go through [ui.AppShellStyle] here only — do not pad in leaf views.
+// The content is clamped to the drawable width as a defensive backstop so no leaf
+// view can push a line past the frame (e.g. an unwrapped hint on a narrow terminal).
 func (m *Model) View() string {
-	return ui.AppShellStyle.Background(ui.Active.Background).Render(m.shellContent())
+	content := m.shellContent()
+	if cw, _ := m.contentSize(); cw > 0 {
+		content = ui.ClampWidth(content, cw)
+	}
+	return ui.AppShellStyle.Background(ui.Active.Background).Render(content)
 }
 
 // shellContent renders the full-frame body before the app shell. Add a branch for every [State] value

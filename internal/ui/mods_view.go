@@ -7,6 +7,7 @@ import (
 
 	"github.com/aayushdutt/mctui/internal/mods"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func (m *ModsModel) libraryBannerBlock(nLocal int) string {
@@ -26,7 +27,8 @@ func (m *ModsModel) libraryBannerBlock(nLocal int) string {
 func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta string) string {
 	qLabel := lipgloss.NewStyle().Foreground(Active.Border).Render("Query")
 	if m.modsFocus == panelQuery {
-		qLabel = lipgloss.NewStyle().Bold(true).Foreground(Active.Success).Render("Query")
+		// Focus is the accent (Primary) everywhere — never green.
+		qLabel = lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render("Query")
 	}
 	searchBox := m.query.View()
 	if m.modsFocus != panelQuery {
@@ -49,22 +51,11 @@ func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta 
 
 // View implements tea.Model.
 func (m *ModsModel) View() string {
-	if m.blocked {
-		brand := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render("Mods")
-		divider := lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render(strings.Repeat("─", min(42, max(24, m.width-8))))
-		body := lipgloss.JoinVertical(
-			lipgloss.Center,
-			brand,
-			lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Fabric instances only"),
-			"",
-			divider,
-			"",
-			lipgloss.NewStyle().Foreground(Active.Text).
-				Render("Select a Fabric instance on home, then press [m]."),
-			"",
-			KeyHints(40, KeyHint{"esc", "back"}),
-		)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+	if m.help {
+		return boundToScreen(HelpOverlay("Mods", m.helpGroups(), m.width, m.height), m.width, m.height)
+	}
+	if m.palette.Active {
+		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
 	}
 
 	if m.modsDialog == modsDialogConfirmRemoveJar {
@@ -112,6 +103,15 @@ func (m *ModsModel) View() string {
 		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Warning).Render(m.searchNotice)
 		modrinthStatusVisible = true
 	}
+	// Bound the status line to the browse pane so a long error/notice can't widen
+	// the Zone past its column (Zones don't clamp the body the way Panel did).
+	if modrinthStatus != "" {
+		rw := m.resultsListW
+		if rw < 4 {
+			rw = 28
+		}
+		modrinthStatus = ansi.Truncate(modrinthStatus, rw, "…")
+	}
 
 	meta := ""
 	if !m.searching && m.searchErr == "" && m.lastTotalHits > 0 && len(m.results.Items()) > 0 {
@@ -149,18 +149,11 @@ func (m *ModsModel) View() string {
 		}
 	}
 
-	// Titled panels: each pane's title sits in its top border; the focused pane
-	// gets a ▸ marker and an accent border so the active pane is unmistakable.
-	libTitle, libAccent := m.installed.Title, Active.Border
-	if m.modsFocus == panelInstalled {
-		libTitle, libAccent = GlyphPointer+" "+libTitle, Active.Success
-	}
-	browseTitle, browseAccent := "Discover", Active.BorderFaint
-	if m.rightColumnFocused() {
-		browseTitle, browseAccent = GlyphPointer+" "+browseTitle, Active.Success
-	}
-	libraryView := Panel(libTitle, libraryInner, libW+4, libAccent)
-	browseBox := Panel(browseTitle, rightInner, resW+4, browseAccent)
+	// De-boxed Zones: the focused pane shows a ┃ accent title, the other a muted
+	// one, over a dim rule — the ┃ is the single "you are here" stroke (replacing
+	// the old ▸ marker + per-pane accent border).
+	libraryView := Zone(m.installed.Title, libraryInner, libW, m.modsFocus == panelInstalled)
+	browseBox := Zone("Discover", rightInner, resW, m.rightColumnFocused())
 
 	layout := ""
 	if m.compactLayout {
@@ -181,6 +174,12 @@ func (m *ModsModel) View() string {
 		Rule(min(contentInnerW, 56)),
 		lipgloss.NewStyle().MarginTop(1).Render(modsRenderHelp(helpItems, m.width-6)))
 
-	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top,
-		lipgloss.NewStyle().Padding(1, 2).Render(lipgloss.JoinVertical(lipgloss.Left, layout, "", help)))
+	// No self-padding: the root app applies the single AppShellStyle inset once
+	// (app.View), and SetSize already receives the pre-padded contentSize — a
+	// second Padding(1,2) here is the double-inset the M2.1 refactor removed. Bound
+	// to the content width so a stray sub-cell from a bubble list can't push a line
+	// past the frame (mirrors home's final MaxWidth guard).
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(
+		lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top,
+			lipgloss.JoinVertical(lipgloss.Left, layout, "", help)))
 }

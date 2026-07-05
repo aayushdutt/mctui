@@ -287,44 +287,34 @@ func statChip(label string, n int) string {
 	return lbl + val
 }
 
-// detailRowKind classifies a navigable detail row for activation.
-type detailRowKind int
-
-const (
-	rowAddMods  detailRowKind = iota // "+ Add mods…" → NavigateToMods (Fabric-gated)
-	rowAddPacks                      // "+ Add resource packs…" → NavigateToResourcePacks
-	rowEntry                         // a mod / pack / world entry → open folder
-)
-
-// detailRow is one selectable row in a list tab. label is the rendered text
-// (left side); right is an optional right-aligned annotation (size / mtime).
+// detailRow is one row in a read-only detail preview: a label and an optional
+// right-aligned annotation (size / category). The Mods and Resource packs tabs
+// are previews of their full manager screens, not managers — Enter (in detail
+// focus) opens the manager; the preview itself is not row-navigable.
 type detailRow struct {
-	kind  detailRowKind
-	label string // styling applied at render time based on cursor/kind
+	label string
 	right string
-	add   bool // true for the leading action rows (rowAddMods / rowAddPacks)
 }
 
-// detailRows returns the navigable rows for the active list tab in display
-// order: the leading "+ Add…" action (Mods / Resource packs only) followed by
-// the installed entries. Overview and compact mode have no rows. Pure (reads the
-// cached facets); safe to call from both View and Update.
-func (m *HomeModel) detailRows(inst *core.Instance) []detailRow {
-	if inst == nil || !homeTabIsList(m.activeTab) {
+// tabPreviewEntries returns the installed entries for the active list tab (Mods
+// or Resource packs) in display order. Pure (reads cached facets); safe from View.
+func (m *HomeModel) tabPreviewEntries(inst *core.Instance) []detailRow {
+	if inst == nil {
 		return nil
 	}
 	switch m.activeTab {
 	case tabMods:
-		rows := []detailRow{{kind: rowAddMods, label: "Add mods…", add: true}}
 		jars, _ := mods.ListInstalledJars(inst)
+		rows := make([]detailRow, 0, len(jars))
 		for _, j := range jars {
-			rows = append(rows, detailRow{kind: rowEntry, label: cleanModName(j.Name), right: humanSize(j.Size)})
+			rows = append(rows, detailRow{label: cleanModName(j.Name), right: humanSize(j.Size)})
 		}
 		return rows
 	case tabResourcePacks:
-		rows := []detailRow{{kind: rowAddPacks, label: "Add resource packs…", add: true}}
-		for _, p := range m.instanceResourcePacks(inst) {
-			r := detailRow{kind: rowEntry, label: p.Name}
+		packs := m.instanceResourcePacks(inst)
+		rows := make([]detailRow, 0, len(packs))
+		for _, p := range packs {
+			r := detailRow{label: p.Name}
 			switch {
 			case p.FromCart:
 				r.right = p.Category // group context; size lives in the merged zip
@@ -338,180 +328,105 @@ func (m *HomeModel) detailRows(inst *core.Instance) []detailRow {
 	return nil
 }
 
-// setActiveTab switches the detail facet and resets the detail cursor to the
-// top. Focus is preserved (you can tab through facets while focused on detail).
+// setActiveTab switches the detail facet. Focus is preserved (you can tab through
+// facets while focused on the detail pane).
 func (m *HomeModel) setActiveTab(t homeTab) {
 	m.activeTab = t
-	m.detailCursor = 0
 }
 
-// focusDetailPane moves input focus to the detail pane on the current tab. It is
-// the rightward step in the dashboard's column sequence (List → Overview → Mods
-// → …): entering from the list lands on Overview (the list's companion tab),
-// from where → walks through the remaining tabs. Overview has no rows, so the
-// cursor simply clamps to 0 there. No-op in compact mode (no detail pane).
+// focusDetailPane moves input focus to the detail pane on the current tab — the
+// rightward step in the column sequence (List → Overview → Mods → …). No-op in
+// compact mode or on the "+ New instance" row (no detail pane to focus).
 func (m *HomeModel) focusDetailPane() {
 	if m.compactLayout {
-		return // no detail pane to focus in compact mode
+		return
 	}
 	if m.SelectedInstance() == nil {
-		return // the "+ New instance" row has no detail pane to focus
+		return
 	}
 	m.paneFocus = focusDetail
-	if n := m.detailRowCount(); m.detailCursor >= n {
-		m.detailCursor = max(0, n-1)
-	}
 }
 
-// focusListPane returns input focus to the instance list and restores Overview
-// as the list's companion view, so the right pane is always the at-a-glance
-// summary while you browse instances. The detail cursor is cleared. This is the
-// single "back to the list column" entry point (← from Overview, Esc, Tab).
+// focusListPane returns input focus to the instance list and restores Overview as
+// the list's companion view. Single "back to the list column" entry point (← from
+// Overview, Esc, Tab).
 func (m *HomeModel) focusListPane() {
 	m.paneFocus = focusList
 	m.activeTab = tabOverview
-	m.detailCursor = 0
 }
 
-// detailRowCount is the number of navigable rows in the active list tab for the
-// current selection (0 for Overview / no selection).
-func (m *HomeModel) detailRowCount() int {
-	return len(m.detailRows(m.SelectedInstance()))
-}
-
-// activateDetailRow runs Enter on the row under the detail cursor: the "+ Add…"
-// rows navigate (Mods is Fabric-gated, falling back to the transient banner);
-// entry rows open the instance folder. Returns the tea.Cmd to run (or nil).
-func (m *HomeModel) activateDetailRow() tea.Cmd {
+// activateDetailTab runs Enter while the detail pane is focused. Overview
+// launches the instance (its Play control is the tab's action); the Mods /
+// Resource packs previews open their full manager screen (Mods is Fabric-gated,
+// falling back to the transient banner). Returns the tea.Cmd to run (or nil).
+func (m *HomeModel) activateDetailTab() tea.Cmd {
 	inst := m.SelectedInstance()
 	if inst == nil {
 		return nil
 	}
-	rows := m.detailRows(inst)
-	if m.detailCursor < 0 || m.detailCursor >= len(rows) {
-		return nil
-	}
-	switch rows[m.detailCursor].kind {
-	case rowAddMods:
-		if !instanceSupportsModsBrowser(inst) {
-			m.SetTransientBanner("Mods browser isn't available for this instance.")
-			return nil
+	switch m.activeTab {
+	case tabMods:
+		if ok, reason := CanBrowseMods(inst); !ok {
+			return m.SetTransientBanner(reason)
 		}
 		return func() tea.Msg { return NavigateToMods{Instance: inst} }
-	case rowAddPacks:
+	case tabResourcePacks:
 		return func() tea.Msg { return NavigateToResourcePacks{Instance: inst} }
 	default:
-		openInstanceFolder(inst.Path)
-		return nil
+		return m.launchSelected(false)
 	}
 }
 
-// tabModsBody renders the Mods list (leading "+ Add mods…" row + installed
-// jars). Non-Fabric instances get a dimmed hint under the action row.
+// tabModsBody renders the read-only Mods preview: the top installed jars, a
+// "…N more" tail, or an empty-state hint. Enter (in detail focus) opens the full
+// mods manager — see activateDetailTab.
 func (m *HomeModel) tabModsBody(inst *core.Instance, innerW, maxRows int) string {
-	rows := m.detailRows(inst)
-	if len(rows) <= 1 { // only the "+ Add" row → empty state
-		hint := "No mods installed yet."
-		if !instanceSupportsModsBrowser(inst) {
-			hint = "This loader has no in-app mod browser."
-		}
-		return m.renderRowList(rows, innerW, maxRows, hint)
+	empty := "No mods installed yet."
+	if !instanceSupportsModsBrowser(inst) {
+		empty = "This loader has no in-app mod browser."
 	}
-	return m.renderRowList(rows, innerW, maxRows, "")
+	return renderPreview(m.tabPreviewEntries(inst), innerW, maxRows, empty)
 }
 
-// tabResourcePacksBody renders the Resource packs list (leading "+ Add resource
-// packs…" row + installed packs with sizes for zips).
+// tabResourcePacksBody renders the read-only Resource packs preview.
 func (m *HomeModel) tabResourcePacksBody(inst *core.Instance, innerW, maxRows int) string {
-	rows := m.detailRows(inst)
-	if len(rows) <= 1 {
-		return m.renderRowList(rows, innerW, maxRows, "No resource packs yet.")
-	}
-	return m.renderRowList(rows, innerW, maxRows, "")
+	return renderPreview(m.tabPreviewEntries(inst), innerW, maxRows, "No resource packs yet.")
 }
 
-// renderRowList renders detailRows with the cursor highlight when the detail
-// pane is focused, scrolling a window so the cursor stays visible, capping to
-// maxRows with a "…N more" tail. emptyHint (when set) is appended dimmed when
-// the list has only its action row (no real entries).
-func (m *HomeModel) renderRowList(rows []detailRow, innerW, maxRows int, emptyHint string) string {
-	if len(rows) == 0 {
-		return ""
-	}
+// renderPreview lays out a read-only entry preview: up to maxRows entries with a
+// "…N more" tail when they overflow, or a dim empty-state hint. There is no
+// cursor — the tabs are previews, not managers (Enter opens the real manager).
+func renderPreview(entries []detailRow, innerW, maxRows int, emptyHint string) string {
 	dim := lipgloss.NewStyle().Foreground(Active.TextFaint)
-	focused := m.paneFocus == focusDetail
-
 	if maxRows < 1 {
 		maxRows = 1
 	}
-	// A "+ Add…" header gets a blank line beneath it to separate the action from
-	// the entries; reserve a row for that blank so the body still fits.
-	hasAdd := rows[0].add
-	rowCap := maxRows
-	if hasAdd && rowCap > 2 {
-		rowCap--
+	if len(entries) == 0 {
+		return dim.Render(emptyHint)
 	}
-	// Window the rows so the cursor stays visible; reserve a line for the tail.
-	start, capacity := 0, rowCap
+	shown := entries
 	rest := 0
-	if len(rows) > capacity {
-		capacity = max(1, rowCap-1)
-		if focused && m.detailCursor >= capacity {
-			start = m.detailCursor - capacity + 1
-		}
-		if start+capacity > len(rows) {
-			start = len(rows) - capacity
-		}
-		rest = len(rows) - capacity
+	if len(entries) > maxRows {
+		shown = entries[:max(1, maxRows-1)] // reserve a row for the "…N more" tail
+		rest = len(entries) - len(shown)
 	}
-	end := min(len(rows), start+capacity)
-
-	lines := make([]string, 0, capacity+2)
-	for i := start; i < end; i++ {
-		lines = append(lines, m.renderDetailRow(rows[i], i, innerW, focused))
-		if hasAdd && i == 0 {
-			lines = append(lines, "") // breathing room under the +Add header
-		}
+	lines := make([]string, 0, len(shown)+1)
+	for _, e := range shown {
+		lines = append(lines, renderPreviewRow(e, innerW))
 	}
 	if rest > 0 {
 		lines = append(lines, dim.Render(fmt.Sprintf("…and %d more", rest)))
 	}
-	if emptyHint != "" {
-		lines = append(lines, dim.Render(emptyHint))
-	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-// renderDetailRow renders a single detail row. Action ("+ Add…") rows render as
-// a distinct ActionButton (a pill that fills when it is the cursor row), so they
-// read as buttons rather than list entries. Selectable entry rows get the shared
-// accent-bar cue + accent label when they are the focused cursor row; otherwise
-// normal text with a muted right annotation.
-func (m *HomeModel) renderDetailRow(r detailRow, idx, innerW int, focused bool) string {
-	selected := focused && idx == m.detailCursor
-
-	// Action rows are buttons, not list items: the filled pill is their own focus
-	// cue, so they skip the selection bar and sit in the same 2-cell-inset gutter
-	// as the entry rows below them.
-	if r.add {
-		return "  " + ActionButton(r.label, selected)
-	}
-
-	// A 2-cell marker gutter (shared rowMarker: accent bar when selected) +
-	// content + a 1-cell right margin, so rows are inset from the panel border
-	// and align with the bubbles list's selected left bar.
+// renderPreviewRow renders one preview entry: a 2-cell inset, the name, and a
+// muted right annotation (size / category). Read-only — no selection cue.
+func renderPreviewRow(r detailRow, innerW int) string {
 	contentW := max(1, innerW-3)
-
-	var left, right string
-	if selected {
-		left = lipgloss.NewStyle().Foreground(Active.Primary).Bold(true).Render(r.label)
-		right = lipgloss.NewStyle().Foreground(Active.Text).Render(r.right)
-	} else {
-		left = lipgloss.NewStyle().Foreground(Active.Text).Render(r.label)
-		right = lipgloss.NewStyle().Foreground(Active.TextMuted).Render(r.right)
-	}
-
-	return rowMarker(selected) + twoEndsRow(left, right, contentW)
+	left := lipgloss.NewStyle().Foreground(Active.Text).Render(r.label)
+	right := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(r.right)
+	return "  " + twoEndsRow(left, right, contentW)
 }
 
 // tabFooter is the pinned context line at the foot of the detail panel — counts
@@ -521,10 +436,10 @@ func (m *HomeModel) tabFooter(inst *core.Instance, innerW int) string {
 	switch m.activeTab {
 	case tabMods:
 		n := m.modCount(inst)
-		return dim.Render(ansi.Truncate(fmt.Sprintf("%d mod%s · ↵ on +Add to browse", n, plural(n)), innerW, "…"))
+		return dim.Render(ansi.Truncate(fmt.Sprintf("%d mod%s · ↵ open manager", n, plural(n)), innerW, "…"))
 	case tabResourcePacks:
 		n := len(m.instanceResourcePacks(inst))
-		return dim.Render(ansi.Truncate(fmt.Sprintf("%d pack%s · ↵ on +Add to browse", n, plural(n)), innerW, "…"))
+		return dim.Render(ansi.Truncate(fmt.Sprintf("%d pack%s · ↵ open manager", n, plural(n)), innerW, "…"))
 	default:
 		return dim.Render(ansi.Truncate("m mods · p packs · f folder · e edit · x more", innerW, "…"))
 	}
@@ -561,7 +476,7 @@ func (m *HomeModel) renderColumns() string {
 
 	if m.compactLayout {
 		listW := max(1, m.width) // full terminal width; never wider than the pane
-		listPanel := Panel("Instances", m.list.View(), listW, Active.Primary)
+		listPanel := Zone("Instances", m.list.View(), listW, true)
 		summary := ""
 		if inst != nil {
 			summary = m.detailSummaryLine(inst, listW-2)
@@ -578,7 +493,7 @@ func (m *HomeModel) renderColumns() string {
 	var detailInner string
 	switch {
 	case inst != nil:
-		detailInner = m.detailBody(inst, m.detailPaneW-4, colH)
+		detailInner = m.detailBody(inst, m.detailPaneW, colH)
 	case m.addRowSelected():
 		detailInner = lipgloss.NewStyle().Foreground(Active.TextMuted).
 			Render("Create a new instance.\n\n↵ opens the new-instance wizard.")
@@ -592,25 +507,19 @@ func (m *HomeModel) renderColumns() string {
 		listInner = lipgloss.PlaceVertical(colH, lipgloss.Top, listInner)
 	}
 
-	// The focused pane gets the accent border; the other goes faint, so the
-	// border reflects where arrow/Enter input lands.
-	listBorder, detailBorder := Active.Primary, Active.BorderFaint
-	if m.paneFocus == focusDetail {
-		listBorder, detailBorder = Active.BorderFaint, Active.Primary
-	}
+	// The focused pane's Zone title gets the accent ┃ bar; the other stays muted,
+	// so the heavy stroke marks where arrow/Enter input lands.
+	listPanel := Zone("Instances", listInner, m.listPaneW, m.paneFocus == focusList)
 
-	listPanel := Panel("Instances", listInner, m.listPaneW, listBorder)
-
-	// Border title is JUST the instance name (truncated to the pane so it never
-	// overflows the rounded border). The status badge moved into the body, on the
-	// Play-header row — see detailBody.
+	// The Zone title is JUST the instance name (truncated to the pane so it never
+	// overruns the rule). The status badge lives in the body, on the Play-header
+	// row — see detailBody.
 	detailTitle := "Details"
 	if inst != nil {
-		// Leave breathing room: Panel reserves border + pad; cap the name so the
-		// closing dash always renders.
-		detailTitle = ansi.Truncate(inst.Name, max(4, m.detailPaneW-8), "…")
+		// The Zone title has a 2-cell focus gutter; cap the name so it fits the pane.
+		detailTitle = ansi.Truncate(inst.Name, max(4, m.detailPaneW-2), "…")
 	}
-	detailPanel := Panel(detailTitle, detailInner, m.detailPaneW, detailBorder)
+	detailPanel := Zone(detailTitle, detailInner, m.detailPaneW, m.paneFocus == focusDetail)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, listPanel, "  ", detailPanel)
 }

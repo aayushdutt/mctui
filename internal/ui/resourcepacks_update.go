@@ -10,6 +10,7 @@ import (
 	"github.com/aayushdutt/mctui/internal/resourcepacks"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -64,7 +65,7 @@ func (m *ResourcePacksModel) handleCatalogLoaded(msg rpCatalogLoadedMsg) (tea.Mo
 		if errors.Is(msg.err, context.Canceled) {
 			return m, nil
 		}
-		m.loadErr = msg.err.Error()
+		m.loadErr = "Couldn't load resource packs: " + msg.err.Error()
 		return m, nil
 	}
 	m.loadErr = ""
@@ -97,7 +98,7 @@ func (m *ResourcePacksModel) handleApplyDone(msg rpApplyDoneMsg) (tea.Model, tea
 		if errors.Is(msg.err, context.Canceled) {
 			return m, nil
 		}
-		m.applyErr = msg.err.Error()
+		m.applyErr = "Couldn't build & apply: " + msg.err.Error()
 		return m, nil
 	}
 	m.applyErr = ""
@@ -136,6 +137,21 @@ func (m *ResourcePacksModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m *ResourcePacksModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Command palette owns all keys while active.
+	if m.palette.Active {
+		return m, m.palette.Update(msg)
+	}
+
+	// Help overlay is read-only: it swallows every key, and only ? / esc / q
+	// dismiss it.
+	if m.help {
+		switch msg.String() {
+		case "?", "esc", "q":
+			m.help = false
+		}
+		return m, nil
+	}
+
 	// Confirm-clear dialog owns all keys while open.
 	if m.rpDialog == rpDialogConfirmClear {
 		return m.handleClearDialogKey(msg)
@@ -226,6 +242,23 @@ func (m *ResourcePacksModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.rpDialog = rpDialogConfirmClear
 		}
 		return m, nil
+
+	case ":":
+		// Open the command palette. The pack filter and global search consume keys
+		// above (returning before this switch), so guard only the residual search
+		// mode where ":" could otherwise leak past.
+		if !m.searchMode {
+			m.palette.Open()
+			return m, textinput.Blink
+		}
+
+	case "?":
+		// Open the read-only key reference — gated exactly like ":" so "?" stays
+		// typeable while searching.
+		if !m.searchMode {
+			m.help = true
+			return m, nil
+		}
 
 	case "up", "k", "down", "j", "pgup", "pgdown", "home", "end":
 		var cmd tea.Cmd

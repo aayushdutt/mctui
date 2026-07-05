@@ -15,17 +15,6 @@ import (
 
 // Update implements tea.Model.
 func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.blocked {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			if msg.String() == "esc" || msg.String() == "q" {
-				m.CancelPending()
-				return m, func() tea.Msg { return NavigateToHome{} }
-			}
-		}
-		return m, nil
-	}
-
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		if m.installing {
@@ -78,6 +67,18 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.palette.Active {
+			return m, m.palette.Update(msg)
+		}
+		// Help overlay is read-only: it swallows every key, and only ? / esc / q
+		// dismiss it.
+		if m.help {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.help = false
+			}
+			return m, nil
+		}
 		if m.installing && msg.String() != "esc" {
 			return m, nil
 		}
@@ -148,6 +149,20 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.query.Focus()
 				return m, textinput.Blink
 			}
+		case ":":
+			// Open the command palette unless the search field is focused (where ":"
+			// must type a literal colon). Install/dialog states already returned above.
+			if m.modsFocus != panelQuery {
+				m.palette.Open()
+				return m, textinput.Blink
+			}
+		case "?":
+			// Open the read-only key reference — gated exactly like ":" so "?" stays
+			// typeable in the search field.
+			if m.modsFocus != panelQuery {
+				m.help = true
+				return m, nil
+			}
 		}
 
 		switch msg.String() {
@@ -163,6 +178,22 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.libraryToast = ""
 			}
 		case "right":
+			if m.modsFocus == panelInstalled {
+				m.clearModsDialog()
+				m.libraryToast = ""
+				m.modsFocus = panelBrowse
+				return m, nil
+			}
+		case "h":
+			// vim-left: browse → installed. The query field is a text input, so h
+			// there types a character (handled below) rather than switching panes.
+			if m.modsFocus == panelBrowse {
+				m.libraryToast = ""
+				m.modsFocus = panelInstalled
+				return m, nil
+			}
+		case "l":
+			// vim-right: installed → browse (mirrors the → arrow above).
 			if m.modsFocus == panelInstalled {
 				m.clearModsDialog()
 				m.libraryToast = ""
@@ -226,14 +257,14 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 
-		if m.modsFocus == panelInstalled && msg.String() == "up" && m.installed.Index() == 0 {
+		if m.modsFocus == panelInstalled && (msg.String() == "up" || msg.String() == "k") && m.installed.Index() == 0 {
 			m.clearModsDialog()
 			m.libraryToast = ""
 			m.modsFocus = panelQuery
 			m.query.Focus()
 			return m, textinput.Blink
 		}
-		if m.modsFocus == panelInstalled && msg.String() == "down" {
+		if m.modsFocus == panelInstalled && (msg.String() == "down" || msg.String() == "j") {
 			n := len(m.installed.Items())
 			if n > 0 && m.installed.Index() >= n-1 {
 				m.clearModsDialog()
@@ -243,10 +274,10 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if m.modsFocus == panelInstalled && key.Matches(msg, key.NewBinding(key.WithKeys("enter"))) {
-			if m.openRemoveConfirmDialog() {
-				return m, nil
-			}
+		if m.modsFocus == panelInstalled && msg.String() == "enter" {
+			// Enter is affirmative-only across the app; removing an installed jar is
+			// `d` / backspace (both bound above). Enter here is a deliberate no-op.
+			return m, nil
 		}
 
 		if m.modsFocus == panelBrowse && key.Matches(msg, key.NewBinding(key.WithKeys("enter"))) {
@@ -300,7 +331,7 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if errors.Is(msg.err, context.Canceled) {
 				return m, nil
 			}
-			m.searchErr = msg.err.Error()
+			m.searchErr = "Search failed: " + msg.err.Error()
 			m.searchNotice = ""
 			m.lastTotalHits = 0
 			m.results.SetItems(nil)
@@ -338,7 +369,7 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rebuildBrowseBadges()
 				return m, nil
 			}
-			m.installErr = msg.Err.Error()
+			m.installErr = "Install failed: " + msg.Err.Error()
 			m.rebuildBrowseBadges()
 			return m, nil
 		}

@@ -85,8 +85,10 @@ func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item
 	if showBadge {
 		badgeReserve = lipgloss.Width(newBadgeNormal().Render("new")) + 1
 	}
+	// Reserve the 2-cell block swatch + one separating space (prepended below).
+	const swatchReserve = 3
 
-	title := ansi.Truncate(name, textwidth-badgeReserve, titleEllipsis)
+	title := ansi.Truncate(name, textwidth-badgeReserve-swatchReserve, titleEllipsis)
 	if d.ShowDescription {
 		var lines []string
 		for i, line := range strings.Split(desc, "\n") {
@@ -145,6 +147,10 @@ func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item
 		titleOut = joinTitle(t, newBadgeNormal())
 		descOut = s.NormalDesc.Render(desc)
 	}
+
+	// Prepend the per-instance block swatch (foreground-only, no contrast risk).
+	// It gets its own color independent of the row's selection styling.
+	titleOut = InstanceSwatch(ii.instance.ID) + " " + titleOut
 
 	if d.ShowDescription {
 		_, _ = fmt.Fprintf(w, "%s\n%s", titleOut, descOut)

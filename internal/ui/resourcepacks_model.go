@@ -77,6 +77,38 @@ type ResourcePacksModel struct {
 	categoriesListW int
 	packsListW      int
 	cartListW       int
+
+	palette CommandPalette
+
+	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
+	// ? / esc / q.
+	help bool
+}
+
+// helpGroups returns the resource-packs screen's bindings grouped for the `?`
+// overlay, hand-built to match exactly what handleKey handles (pane cycling,
+// left/right nav, toggle/dive, build/clear/search/preview/video) and the footer.
+func (m *ResourcePacksModel) helpGroups() []HelpGroup {
+	return []HelpGroup{
+		{Title: "Navigate", Entries: []HelpEntry{
+			{"↑↓ / j k", "move"},
+			{"tab / ⇧tab", "switch pane"},
+			{"← → / h l", "categories · packs · cart"},
+		}},
+		{Title: "Act", Entries: []HelpEntry{
+			{"space / enter", "toggle · dive in"},
+			{"b", "build & apply"},
+			{"c", "clear pack"},
+			{"/", "search all packs"},
+			{"o", "preview"},
+			{"w", "watch video"},
+		}},
+		{Title: "General", Entries: []HelpEntry{
+			{":", "command palette"},
+			{"?", "help"},
+			{"esc", "back home"},
+		}},
+	}
 }
 
 // NewResourcePacksModel builds the resource-packs curation screen for inst.
@@ -91,10 +123,10 @@ func NewResourcePacksModel(inst *core.Instance, client *api.VanillaTweaksClient)
 		Accent: Active.Primary, AccentSoft: Active.Secondary, SingleLine: true,
 	})
 	packsList := NewThemedList(ThemedListConfig{
-		Accent: Active.Success, AccentSoft: Active.SuccessSoft, StatusBar: true, Filter: true,
+		Accent: Active.Primary, AccentSoft: Active.Secondary, StatusBar: true, Filter: true,
 	})
 	cartList := NewThemedList(ThemedListConfig{
-		Accent: Active.Warning, AccentSoft: Active.WarningSoft, StatusBar: true,
+		Accent: Active.Primary, AccentSoft: Active.Secondary, StatusBar: true,
 	})
 
 	sp := spinner.New()
@@ -123,7 +155,26 @@ func NewResourcePacksModel(inst *core.Instance, client *api.VanillaTweaksClient)
 	if m.sel.Version == "" {
 		m.sel.Version = version
 	}
+	m.palette = NewCommandPalette("Resource packs · commands", "Run a command…", m.rpPaletteItems)
 	return m
+}
+
+// rpPaletteItems supplies the resource-packs screen's `:` command-palette verbs.
+func (m *ResourcePacksModel) rpPaletteItems() []PaletteItem {
+	return []PaletteItem{
+		{Label: "Back to home", Run: func() tea.Cmd {
+			return func() tea.Msg { return NavigateToHome{} }
+		}},
+		{Label: "Build & apply", Run: func() tea.Cmd {
+			return m.startApply()
+		}},
+		{Label: "Clear pack", Run: func() tea.Cmd {
+			if m.sel.Count() > 0 {
+				m.rpDialog = rpDialogConfirmClear
+			}
+			return nil
+		}},
+	}
 }
 
 // SetSize updates layout dimensions and re-derives pane sizes.
@@ -150,16 +201,17 @@ func (m *ResourcePacksModel) SetSize(w, h int) {
 		return
 	}
 
-	// Three panes: categories (narrow) | packs (wide) | cart (medium).
+	// Three panes: categories (narrow) | packs (wide) | cart (medium). Zones have
+	// no borders, so only the 2 inter-pane gaps (2 cells each) are reserved; the
+	// packs pane absorbs the columns the old borders took.
 	catW := max(16, min(26, w*22/100))
 	cartW := max(18, min(30, w*26/100))
-	// 3 panes × 4 border/padding cells + 2 inter-pane gaps (2 each).
-	packW := w - catW - cartW - 12 - 4
+	packW := w - catW - cartW - 4
 	if packW < 24 {
 		// Reclaim from the side panes when the middle is starved.
 		catW = max(14, w*20/100)
 		cartW = max(16, w*22/100)
-		packW = w - catW - cartW - 12 - 4
+		packW = w - catW - cartW - 4
 	}
 	if packW < 16 {
 		packW = 16

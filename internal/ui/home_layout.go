@@ -22,7 +22,9 @@ const (
 	// homeTitleGapLines is the blank line between the title row and the columns.
 	homeTitleGapLines = 1
 
-	// homePanelBorderV is the rounded panel border (top + bottom) wrapping the list.
+	// homePanelBorderV is the column header height above the list viewport: the
+	// Zone title line + its dim rule (2 rows) — the same height the rounded Panel
+	// border used, so the vertical budget is unchanged by the de-box.
 	homePanelBorderV = 2
 
 	// homeColumnGap is the gap (in cells) between the list and detail columns.

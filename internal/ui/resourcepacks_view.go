@@ -8,10 +8,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// View implements tea.Model. Full-screen view: renders WITHOUT outer padding by
-// itself — it adds a Padding(1,2) block at the end exactly like mods_view.go (the
-// root app then wraps the whole thing with AppShellStyle).
+// View implements tea.Model. Full-screen view: renders WITHOUT any outer padding
+// of its own — the root app applies the single AppShellStyle inset once
+// (app.View), and SetSize already receives the pre-padded contentSize.
 func (m *ResourcePacksModel) View() string {
+	if m.help {
+		return boundToScreen(HelpOverlay("Resource packs", m.helpGroups(), m.width, m.height), m.width, m.height)
+	}
+	if m.palette.Active {
+		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
+	}
+
 	// Unsupported instance version: no published catalog. Centered notice.
 	if !m.catalogSupported {
 		return m.unsupportedView()
@@ -60,8 +67,11 @@ func (m *ResourcePacksModel) View() string {
 		Rule(min(contentInnerW, 64)),
 		lipgloss.NewStyle().MarginTop(1).Render(rpRenderHelp(helpItems, m.width-6)))
 
-	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top,
-		lipgloss.NewStyle().Padding(1, 2).Render(lipgloss.JoinVertical(lipgloss.Left, layout, "", help)))
+	// Bound to the content width so a stray sub-cell from a bubble list can't push
+	// a line past the frame (mirrors home's final MaxWidth guard).
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(
+		lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top,
+			lipgloss.JoinVertical(lipgloss.Left, layout, "", help)))
 }
 
 func (m *ResourcePacksModel) unsupportedView() string {
@@ -189,15 +199,11 @@ func (m *ResourcePacksModel) highlightedDetailLine() string {
 
 // categoriesPane renders the left category list pane.
 func (m *ResourcePacksModel) categoriesPane() string {
-	title, accent := "Categories", Active.Border
-	if m.rpFocus == rpPanelCategories {
-		title, accent = GlyphPointer+" Categories", Active.Primary
-	}
 	w := m.categoriesListW
 	if w < 4 {
 		w = 16
 	}
-	return Panel(title, m.categories.View(), w+4, accent)
+	return Zone("Categories", m.categories.View(), w, m.rpFocus == rpPanelCategories)
 }
 
 // packsPane renders the middle pack list pane (checkbox rows). The title shows
@@ -210,10 +216,6 @@ func (m *ResourcePacksModel) packsPane() string {
 	}
 	if m.searchMode {
 		catName = "Search all packs"
-	}
-	title, accent := catName, Active.BorderFaint
-	if m.rpFocus == rpPanelPacks {
-		title, accent = GlyphPointer+" "+catName, Active.Success
 	}
 	w := m.packsListW
 	if w < 4 {
@@ -238,7 +240,7 @@ func (m *ResourcePacksModel) packsPane() string {
 			inner = lipgloss.JoinVertical(lipgloss.Left, line, inner)
 		}
 	}
-	return Panel(title, inner, w+4, accent)
+	return Zone(catName, inner, w, m.rpFocus == rpPanelPacks)
 }
 
 // containerHint renders the pack-pane body for a pure container (only
@@ -265,10 +267,6 @@ func (m *ResourcePacksModel) containerHint(cat rpCategoryItem, w int) string {
 func (m *ResourcePacksModel) cartPane() string {
 	n := m.sel.Count()
 	title := fmt.Sprintf("Your pack (%d)", n)
-	accent := Active.Border
-	if m.rpFocus == rpPanelCart {
-		title, accent = GlyphPointer+" "+title, Active.Warning
-	}
 	w := m.cartListW
 	if w < 4 {
 		w = 18
@@ -284,5 +282,5 @@ func (m *ResourcePacksModel) cartPane() string {
 		cta := lipgloss.NewStyle().Foreground(Active.SuccessAccent).Render("[b] Build & Apply")
 		inner = lipgloss.JoinVertical(lipgloss.Left, m.cart.View(), "", cta)
 	}
-	return Panel(title, inner, w+4, accent)
+	return Zone(title, inner, w, m.rpFocus == rpPanelCart)
 }

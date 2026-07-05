@@ -50,13 +50,8 @@ type HomeModel struct {
 	// →/l move focus to the detail pane; Tab again or ←/h/Esc returns to the list.
 	paneFocus paneFocus
 
-	// detailCursor indexes the focused detail tab's rows (including the leading
-	// "+ Add…" row on Mods / Resource packs). Reset to 0 when the active tab or
-	// the selected instance changes.
-	detailCursor int
-
 	// lastSelID tracks the selected instance ID across Updates so the detail
-	// cursor + focus can be reset when the list cursor moves to a new instance.
+	// focus can be reset when the list cursor moves to a new instance.
 	lastSelID string
 
 	// facetCache memoizes the disk-backed facet readers (worlds, resource packs) per
@@ -67,8 +62,11 @@ type HomeModel struct {
 	// Microsoft session hint from background check (MSA accounts only)
 	sessionRemote sessionRemoteLine
 
-	// transientBanner is a one-line notice (e.g. session gate network error)
+	// transientBanner is a one-line notice (e.g. session gate network error).
+	// It auto-expires after homeBannerTTL via a tea.Tick keyed on bannerGen, so
+	// it survives unrelated keypresses instead of vanishing on the next key.
 	transientBanner string
+	bannerGen       int
 
 	// Delete confirmation state
 	confirmDelete  bool
@@ -81,12 +79,13 @@ type HomeModel struct {
 	actionsTarget *core.Instance
 	actionsCursor int
 
-	// Command-palette state (home_palette.go). Mutually exclusive with the other
-	// overlays. The textinput owns keystrokes while palette is true.
-	palette        bool
-	paletteInput   textinput.Model
-	paletteEntries []paletteEntry
-	paletteCursor  int
+	// Command-palette state (home_palette.go + kit_palette.go). Mutually exclusive
+	// with the other overlays; the textinput owns keystrokes while it is Active.
+	palette CommandPalette
+
+	// help is the `?` full-screen key reference overlay (kit_help.go). Read-only,
+	// dismissed by ? / esc / q.
+	help bool
 }
 
 // paneFocus is which of the two home columns owns arrow/Enter input.
@@ -115,18 +114,6 @@ var homeTabTitles = [homeTabCount]string{
 	tabResourcePacks: "Resource packs",
 }
 
-// homeTabIsList reports whether a tab renders a cursor-navigable list of rows
-// (Mods / Resource packs). Overview has no rows, so detail-focus arrows are
-// no-ops there.
-func homeTabIsList(t homeTab) bool {
-	switch t {
-	case tabMods, tabResourcePacks:
-		return true
-	default:
-		return false
-	}
-}
-
 // facetData caches the disk-backed facet readers for one instance. Fields are
 // populated lazily and independently the first time a given facet is viewed; a
 // loaded bool guards the empty-vs-not-yet-read distinction.
@@ -146,20 +133,49 @@ const (
 	sessionRemoteUncertain
 )
 
+// homeKeyMap is the single source of truth for the home screen's bindings. Every
+// key the screen acts on lives here (no raw-string switches in Update), so the
+// `?` help overlay — which renders straight from these bindings — can never
+// advertise a key the screen doesn't handle, or omit one it does.
 type homeKeyMap struct {
+	Move        key.Binding // ↑↓/jk within the focused pane (handled by the list bubble)
+	FocusPane   key.Binding // tab: toggle list ↔ detail focus
+	StepRight   key.Binding // →/l/]: focus detail, then walk tabs right
+	StepLeft    key.Binding // ←/h/[: walk tabs left, then back to the list
 	Launch      key.Binding
 	PlayOffline key.Binding
 	NewInst     key.Binding
 	Mods        key.Binding
 	ResPacks    key.Binding
 	Settings    key.Binding
+	Edit        key.Binding
 	Delete      key.Binding
-	Auth        key.Binding
 	OpenFolder  key.Binding
+	Actions     key.Binding
+	Palette     key.Binding
+	Auth        key.Binding
+	Back        key.Binding
+	Help        key.Binding
 }
 
 func defaultHomeKeyMap() homeKeyMap {
 	return homeKeyMap{
+		Move: key.NewBinding(
+			key.WithKeys("up", "down", "j", "k"),
+			key.WithHelp("↑↓ / j k", "move"),
+		),
+		FocusPane: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "focus list ↔ panel"),
+		),
+		StepRight: key.NewBinding(
+			key.WithKeys("right", "l", "]"),
+			key.WithHelp("→ / l / ]", "details · next tab"),
+		),
+		StepLeft: key.NewBinding(
+			key.WithKeys("left", "h", "["),
+			key.WithHelp("← / h / [", "back · prev tab"),
+		),
 		Launch: key.NewBinding(
 			// `l` is now "focus the detail pane" (vim-right), handled before this
 			// binding — so Launch is Enter only.
@@ -172,7 +188,7 @@ func defaultHomeKeyMap() homeKeyMap {
 		),
 		NewInst: key.NewBinding(
 			key.WithKeys("n"),
-			key.WithHelp("n", "new"),
+			key.WithHelp("n", "new instance"),
 		),
 		Mods: key.NewBinding(
 			key.WithKeys("m"),
@@ -186,17 +202,51 @@ func defaultHomeKeyMap() homeKeyMap {
 			key.WithKeys("s"),
 			key.WithHelp("s", "settings"),
 		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit instance"),
+		),
 		Delete: key.NewBinding(
 			key.WithKeys("d"),
-			key.WithHelp("d", "delete"),
+			key.WithHelp("d", "delete instance"),
+		),
+		OpenFolder: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "open folder"),
+		),
+		Actions: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "actions"),
+		),
+		Palette: key.NewBinding(
+			key.WithKeys(":"),
+			key.WithHelp(":", "command palette"),
 		),
 		Auth: key.NewBinding(
 			key.WithKeys("a"),
 			key.WithHelp("a", "accounts"),
 		),
-		OpenFolder: key.NewBinding(
-			key.WithKeys("f"),
-			key.WithHelp("f", "open folder"),
+		Back: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "clear filter · back"),
+		),
+		Help: key.NewBinding(
+			key.WithKeys("?"),
+			key.WithHelp("?", "help"),
+		),
+	}
+}
+
+// helpGroups returns the home bindings grouped for the `?` overlay, built
+// straight from homeKeyMap so the overlay always matches what Update handles.
+func (m *HomeModel) helpGroups() []HelpGroup {
+	return []HelpGroup{
+		helpGroup("Navigate", m.keys.Move, m.keys.FocusPane, m.keys.StepRight, m.keys.StepLeft),
+		helpGroup("Act", m.keys.Launch, m.keys.PlayOffline, m.keys.NewInst, m.keys.Edit, m.keys.Delete, m.keys.OpenFolder),
+		helpGroup("Screens", m.keys.Mods, m.keys.ResPacks, m.keys.Settings, m.keys.Auth),
+		helpGroup("General", m.keys.Actions, m.keys.Palette, m.keys.Back, m.keys.Help,
+			key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		),
 	}
 }
@@ -263,13 +313,15 @@ func NewHomeModel() *HomeModel {
 	l.SetShowHelp(false)
 	ThemeListChrome(&l)
 
-	return &HomeModel{
+	m := &HomeModel{
 		list:          l,
 		keys:          defaultHomeKeyMap(),
 		loading:       true,
 		modCountCache: map[string]int{},
 		facetCache:    map[string]*facetData{},
 	}
+	m.palette = NewCommandPalette("Command palette", "Jump to instance or run a command…", m.homePaletteItems)
+	return m
 }
 
 // ApplyTheme re-dresses the (long-lived) home list from the active theme. The
@@ -355,10 +407,28 @@ func (m *HomeModel) ApplyActiveSessionCheckResult(res ActiveSessionCheckResult) 
 	}
 }
 
-// SetTransientBanner shows a short notice above the footer; cleared on the next key press.
-func (m *HomeModel) SetTransientBanner(s string) {
+// homeBannerTTL is how long a transient banner stays before auto-expiring.
+const homeBannerTTL = 4 * time.Second
+
+// homeBannerExpireMsg clears the banner iff it is still the one that scheduled
+// this tick (gen match) — a newer banner supersedes an older pending expiry.
+type homeBannerExpireMsg struct{ gen int }
+
+// SetTransientBanner shows a short notice above the footer and returns a command
+// that clears it after homeBannerTTL. The banner no longer vanishes on the next
+// keypress; callers should run the returned cmd (batch it with theirs). An empty
+// string clears immediately and returns nil.
+func (m *HomeModel) SetTransientBanner(s string) tea.Cmd {
 	m.transientBanner = s
+	m.bannerGen++
 	m.applyListSize()
+	if s == "" {
+		return nil
+	}
+	gen := m.bannerGen
+	return tea.Tick(homeBannerTTL, func(time.Time) tea.Msg {
+		return homeBannerExpireMsg{gen: gen}
+	})
 }
 
 func (m *HomeModel) activeMSAAccount() *core.Account {
@@ -446,56 +516,36 @@ func (m *HomeModel) buildFooter() string {
 		}
 	}
 
-	// Build help items based on auth status and pane focus. In detail focus the
-	// arrows drive the panel rows, so advertise that vocabulary instead.
-	var primaryItems, secondaryItems []KeyHint
+	// One footer line: the top six context-relevant hints, always ending in
+	// `? help`. Everything else lives in the `?` overlay and the `:` palette, so
+	// the bar stays a single line instead of an eleven-binding wall. In detail
+	// focus the arrows drive the panel rows, so advertise that vocabulary instead.
+	var items []KeyHint
 	if m.paneFocus == focusDetail {
-		primaryItems = []KeyHint{
+		items = []KeyHint{
 			{"↑↓", "select"},
-			{"↵", "open/add"},
+			{"↵", "open"},
 			{"←→", "tabs"},
-			{"tab", "back to list"},
-		}
-		secondaryItems = []KeyHint{
-			{"esc", "list"},
-			{"x", "actions"},
-			{":", "jump"},
-			{"q", "quit"},
+			{"tab", "list"},
+			{":", "palette"},
+			{"?", "help"},
 		}
 	} else {
-		launchLabel := "launch"
+		launchLabel := "play"
 		if m.noOnlineSession() {
 			launchLabel = "login & play"
 		}
-		modsLabel := "mods"
-		if inst := m.SelectedInstance(); inst != nil && !instanceSupportsModsBrowser(inst) {
-			modsLabel = "mods (unsupported)"
-		}
-		primaryItems = []KeyHint{
+		items = []KeyHint{
 			{"↵", launchLabel},
 			{"n", "new"},
-			{"m", modsLabel},
-			{"→", "details"},
-			{"tab", "focus panel"},
-		}
-		// `o play offline` is intentionally absent here: it's always visible in the
-		// Overview pane's play controls (the list's companion view), so the bar
-		// spends that slot on `s settings`, which otherwise has no visible
-		// affordance. Keeping the item count steady preserves the narrow-width fit.
-		secondaryItems = []KeyHint{
-			{"p", "resource packs"},
 			{"x", "actions"},
-			{":", "jump"},
-			{"a", "accounts"},
-			{"s", "settings"},
-			{"q", "quit"},
+			{":", "palette"},
+			{"/", "filter"},
+			{"?", "help"},
 		}
 	}
 
-	help := lipgloss.JoinVertical(lipgloss.Left,
-		KeyHints(m.width, primaryItems...),
-		KeyHints(m.width, secondaryItems...),
-	)
+	help := KeyHints(m.width, items...)
 
 	statusColor := Active.Primary
 	statusGlyph := GlyphDot
@@ -503,9 +553,11 @@ func (m *HomeModel) buildFooter() string {
 		statusColor = Active.Warning
 		statusGlyph = GlyphWarn
 	}
+	// One blank line separates the list/columns from the status; the hints sit
+	// directly under it. Keeps the whole footer to three rows (gap · status · hints).
 	status := lipgloss.NewStyle().
 		Foreground(statusColor).
-		Padding(1, 0).
+		MarginTop(1).
 		Render(statusGlyph + " " + authStatus)
 
 	return lipgloss.JoinVertical(lipgloss.Left, status, help)
@@ -527,16 +579,15 @@ func (m *HomeModel) applyListSize() {
 	listH := homeListViewportHeight(m.height, m.width, footerH)
 
 	if m.compactLayout {
-		// Single full-width list panel; reserve one extra row for the condensed
-		// summary line rendered between the panel and the footer. Use the full
-		// terminal width (never wider — flooring up past m.width overflows narrow
-		// panes). Inner width inside the panel border (+4 = border + one pad each side).
-		m.list.SetSize(max(1, m.width-4), max(1, listH-1))
+		// Single full-width list Zone; reserve one extra row for the condensed
+		// summary line rendered between the pane and the footer. The Zone has no
+		// border, so the list fills the full content width.
+		m.list.SetSize(max(1, m.width), max(1, listH-1))
 		return
 	}
 
-	// Two columns: the list bubble lives inside the list panel border.
-	m.list.SetSize(m.listPaneW-4, listH)
+	// Two columns: the list bubble fills its Zone (no border to inset for).
+	m.list.SetSize(m.listPaneW, listH)
 }
 
 // HasOverlay reports whether a transient modal (command palette, actions popup,
@@ -544,7 +595,7 @@ func (m *HomeModel) applyListSize() {
 // global quit key (q) doesn't fire — and discard palette text — while a modal is
 // open; the modal's own esc/q handler should win instead.
 func (m *HomeModel) HasOverlay() bool {
-	return m.palette || m.actionsPopup || m.confirmDelete
+	return m.palette.Active || m.actionsPopup || m.confirmDelete || m.help
 }
 
 // SelectedInstance returns the currently selected instance
@@ -627,13 +678,27 @@ func (m *HomeModel) instanceResourcePacks(inst *core.Instance) []resourcePackEnt
 	return fd.packs
 }
 
-// instanceSupportsModsBrowser is true when the in-app Mods (Modrinth) screen applies.
-// Expand this when additional loaders are wired up the same way.
-func instanceSupportsModsBrowser(inst *core.Instance) bool {
+// CanBrowseMods is the single mods-browser gate: it reports whether the in-app
+// Modrinth screen applies to inst and, when it doesn't, a one-line reason for the
+// banner. Every entry point into the mods screen (home `m` key, the detail
+// preview's Enter, the command palette) routes through this one helper, so the
+// rule lives in exactly one place. Expand it when more loaders are wired up.
+func CanBrowseMods(inst *core.Instance) (bool, string) {
 	if inst == nil {
-		return false
+		return false, "No instance selected."
 	}
-	return loader.ParseKind(inst.Loader) == loader.KindFabric
+	if loader.ParseKind(inst.Loader) != loader.KindFabric {
+		return false, "Mods browser isn't available for this instance."
+	}
+	return true, ""
+}
+
+// instanceSupportsModsBrowser is the bool-only view of [CanBrowseMods], for
+// display choices (e.g. the detail preview's empty-state hint) that don't need
+// the reason string.
+func instanceSupportsModsBrowser(inst *core.Instance) bool {
+	ok, _ := CanBrowseMods(inst)
+	return ok
 }
 
 // SetSize updates the dimensions of the home view and re-derives the two-column
@@ -659,16 +724,24 @@ func (m *HomeModel) Init() tea.Cmd {
 func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case InstancesLoaded:
-		if msg.Error == nil {
-			m.SetInstances(msg.Instances, msg.SelectID)
+		if msg.Error != nil {
+			// Don't fail silently: the list would otherwise just stay on its last
+			// state (or "Loading…") with no explanation.
+			m.loading = false
+			return m, m.SetTransientBanner("Couldn't load instances: " + msg.Error.Error())
+		}
+		m.SetInstances(msg.Instances, msg.SelectID)
+		return m, nil
+
+	case homeBannerExpireMsg:
+		// Clear only if no newer banner has superseded this tick.
+		if msg.gen == m.bannerGen {
+			m.transientBanner = ""
+			m.applyListSize()
 		}
 		return m, nil
 
 	case tea.KeyMsg:
-		if m.transientBanner != "" {
-			m.transientBanner = ""
-			m.applyListSize()
-		}
 
 		// Overlay key handling — runs BEFORE the filter guard, the tab-cycle keys,
 		// and the home key switch so home shortcuts can't leak into a modal. The
@@ -676,9 +749,8 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// exclusive: only one is ever armed at a time, and each is only opened from
 		// the key switch below when none of the others is active and the list isn't
 		// filtering.
-		if m.palette {
-			cmd, _ := m.updatePalette(msg)
-			return m, cmd
+		if m.palette.Active {
+			return m, m.palette.Update(msg)
 		}
 		if m.actionsPopup {
 			cmd, _ := m.updateActionsPopup(msg)
@@ -715,6 +787,16 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Help overlay: read-only, so it swallows every key and only ? / esc / q
+		// dismiss it. Checked alongside the other overlays, before the filter guard.
+		if m.help {
+			switch {
+			case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Back), msg.String() == "q":
+				m.help = false
+			}
+			return m, nil
+		}
+
 		// Don't handle keys if filtering
 		if m.list.FilterState() == list.Filtering {
 			break
@@ -729,15 +811,15 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and returns to the list from the leftmost tab. setActiveTab resets the
 		// detail cursor on each tab switch. Disabled in compact mode (no detail pane).
 		if !m.compactLayout {
-			switch msg.String() {
-			case "right", "l", "]":
+			switch {
+			case key.Matches(msg, m.keys.StepRight):
 				if m.paneFocus == focusList {
 					m.focusDetailPane()
 				} else if m.activeTab < homeTabCount-1 {
 					m.setActiveTab(m.activeTab + 1)
 				}
 				return m, nil
-			case "left", "h", "[":
+			case key.Matches(msg, m.keys.StepLeft):
 				if m.paneFocus == focusDetail {
 					if m.activeTab == tabOverview {
 						m.focusListPane()
@@ -751,7 +833,7 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Tab toggles which column owns ↑/↓ + Enter (the instance list vs the active
 		// detail tab's rows); returning to the list restores the Overview summary.
-		if msg.String() == "tab" {
+		if key.Matches(msg, m.keys.FocusPane) {
 			if m.paneFocus == focusList {
 				m.focusDetailPane()
 			} else {
@@ -760,47 +842,49 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// In detail focus, ↑/↓ drive the active tab's rows, Enter activates the
-		// selected row, and Esc returns to the list — none may fall through to the
-		// list bubble below. (Global letter hotkeys further down still run.)
+		// In detail focus the tabs are read-only previews (not row-navigable):
+		// Esc returns to the list, ↑/↓ are inert (walk tabs with ←/→), and Enter
+		// activates the tab — Overview launches, the Mods / Resource packs previews
+		// open their manager. None may fall through to the list bubble below.
+		// (Global letter hotkeys further down still run.)
 		if m.paneFocus == focusDetail {
 			switch msg.String() {
 			case "esc":
 				m.focusListPane()
 				return m, nil
-			case "up", "k":
-				if n := m.detailRowCount(); n > 0 && m.detailCursor > 0 {
-					m.detailCursor--
-				}
-				return m, nil
-			case "down", "j":
-				if n := m.detailRowCount(); n > 0 && m.detailCursor < n-1 {
-					m.detailCursor++
-				}
+			case "up", "k", "down", "j":
 				return m, nil
 			case "enter":
-				// Overview has no rows — its Play button is the action, so Enter
-				// launches (matching Enter from the list). Other tabs activate the row.
-				if m.activeTab == tabOverview {
-					return m, m.launchSelected(false)
-				}
-				return m, m.activateDetailRow()
+				return m, m.activateDetailTab()
 			}
 		}
 
-		switch msg.String() {
-		case ":":
+		switch {
+		case key.Matches(msg, m.keys.Help):
+			// Open the read-only key reference overlay.
+			m.help = true
+			return m, nil
+		case key.Matches(msg, m.keys.Back):
+			// Esc = one step back. In list focus (detail-focus esc is handled above):
+			// clear an applied filter first, otherwise the list is already the root —
+			// hint how to actually leave rather than dying silently.
+			if m.list.FilterState() != list.Unfiltered {
+				m.list.ResetFilter()
+				return m, nil
+			}
+			return m, m.SetTransientBanner("Press q to quit.")
+		case key.Matches(msg, m.keys.Palette):
 			// Open the command palette (reached only when no overlay is active and
 			// the list isn't filtering — both guarded above).
 			m.openPalette()
 			return m, textinput.Blink
-		case "x":
+		case key.Matches(msg, m.keys.Actions):
 			// Open the per-instance actions popup.
 			if inst := m.SelectedInstance(); inst != nil {
 				m.openActionsPopup(inst)
 			}
 			return m, nil
-		case "e":
+		case key.Matches(msg, m.keys.Edit):
 			// Bare `e` edits the selected instance directly.
 			if inst := m.SelectedInstance(); inst != nil {
 				return m, func() tea.Msg { return NavigateToEditInstance{Instance: inst} }
@@ -822,9 +906,8 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return NavigateToNewInstance{} }
 		case key.Matches(msg, m.keys.Mods):
 			if inst := m.SelectedInstance(); inst != nil {
-				if !instanceSupportsModsBrowser(inst) {
-					m.SetTransientBanner("Mods browser isn't available for this instance.")
-					return m, nil
+				if ok, reason := CanBrowseMods(inst); !ok {
+					return m, m.SetTransientBanner(reason)
 				}
 				return m, func() tea.Msg { return NavigateToMods{Instance: inst} }
 			}
@@ -882,6 +965,9 @@ func (m *HomeModel) View() string {
 			Italic(true).
 			Render("A terminal-based Minecraft launcher")
 
+		// Minecraft-title-screen wink: the process's splash line under the wordmark.
+		splash := SplashLine()
+
 		// Size the rule to the content (cap it so it stays a tidy underline).
 		ruleW := m.width / 3
 		if ruleW > 40 {
@@ -911,6 +997,7 @@ func (m *HomeModel) View() string {
 			lipgloss.Center,
 			title,
 			tagline,
+			splash,
 			"",
 			divider,
 			"",
@@ -954,20 +1041,25 @@ func (m *HomeModel) View() string {
 
 	baseView := lipgloss.JoinVertical(lipgloss.Left, aboveStatus...)
 
-	// Show the command palette overlay if active (mutually exclusive with the
-	// other overlays).
-	if m.palette {
-		return boundToScreen(m.renderPalette(), m.width, m.height)
+	// Overlays composite over a dimmed copy of the instance list so context (which
+	// instance you're deleting / jumping to) stays visible behind the modal.
+	if m.help {
+		return Composite(baseView, HelpOverlay("Home", m.helpGroups(), m.width, m.height), m.width, m.height)
 	}
 
-	// Show the actions popup overlay if active.
+	// Command palette (mutually exclusive with the other overlays).
+	if m.palette.Active {
+		return Composite(baseView, m.palette.View(m.width, m.height), m.width, m.height)
+	}
+
+	// Per-instance actions popup.
 	if m.actionsPopup && m.actionsTarget != nil {
-		return boundToScreen(m.renderActionsPopup(), m.width, m.height)
+		return Composite(baseView, m.renderActionsPopup(), m.width, m.height)
 	}
 
-	// Show delete confirmation overlay if needed
+	// Delete confirmation.
 	if m.confirmDelete && m.deleteTarget != nil {
-		return ConfirmDialog{
+		dialog := ConfirmDialog{
 			Title:    "Delete instance?",
 			Message:  fmt.Sprintf("Delete %q?", m.deleteTarget.Name),
 			Warning:  "This cannot be undone.",
@@ -976,6 +1068,7 @@ func (m *HomeModel) View() string {
 			Kind:     ConfirmDanger,
 			FocusYes: m.deleteFocusYes,
 		}.Render(m.width, m.height)
+		return Composite(baseView, dialog, m.width, m.height)
 	}
 
 	// Bound the rendered width to the terminal so a too-narrow pane can never

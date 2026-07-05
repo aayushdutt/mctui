@@ -149,113 +149,90 @@ func TestFocusDetailKeepsOverview(t *testing.T) {
 	}
 }
 
-func TestDetailCursorMovesWithinBounds(t *testing.T) {
+// The detail tabs are read-only previews: ↑/↓ in detail focus are inert (no row
+// cursor), and they don't leave the pane or switch tabs.
+func TestDetailFocusArrowsAreInert(t *testing.T) {
 	restoreDark(t)
 	m := newHomeWith(t, fabricInstance(t))
 	m.activeTab = tabResourcePacks
 	m.focusDetailPane()
-	// Rows: "+ Add" + 2 packs = 3 rows; cursor starts at 0.
-	if m.detailCursor != 0 {
-		t.Fatalf("expected detailCursor 0, got %d", m.detailCursor)
-	}
 	sendKey(t, m, "down")
 	sendKey(t, m, "down")
-	if m.detailCursor != 2 {
-		t.Fatalf("expected detailCursor 2 after two downs, got %d", m.detailCursor)
-	}
-	// Past the end clamps.
-	sendKey(t, m, "down")
-	if m.detailCursor != 2 {
-		t.Fatalf("detailCursor should clamp at last row, got %d", m.detailCursor)
-	}
-	// Up walks back; clamps at 0.
 	sendKey(t, m, "up")
-	sendKey(t, m, "up")
-	sendKey(t, m, "up")
-	if m.detailCursor != 0 {
-		t.Fatalf("detailCursor should clamp at 0, got %d", m.detailCursor)
+	if m.paneFocus != focusDetail || m.activeTab != tabResourcePacks {
+		t.Fatalf("detail-focus ↑/↓ should be inert, got focus %d tab %d", m.paneFocus, m.activeTab)
 	}
 }
 
-func TestEnterAddModsEmitsNavigateToMods(t *testing.T) {
+// Enter on the focused Mods preview opens the full mods manager.
+func TestEnterOnModsPreviewOpensManager(t *testing.T) {
 	restoreDark(t)
 	m := newHomeWith(t, fabricInstance(t))
 	m.activeTab = tabMods
 	m.focusDetailPane()
-	m.detailCursor = 0 // the "+ Add mods…" row
 	cmd := sendKey(t, m, "enter")
 	if cmd == nil {
-		t.Fatal("Enter on +Add mods should return a cmd")
+		t.Fatal("Enter on the Mods preview should return a cmd")
 	}
-	switch cmd().(type) {
-	case NavigateToMods:
-		// ok
-	default:
+	if _, ok := cmd().(NavigateToMods); !ok {
 		t.Fatalf("expected NavigateToMods, got %T", cmd())
 	}
 }
 
-func TestEnterAddModsNonFabricShowsBanner(t *testing.T) {
+// Enter on the Mods preview for a non-Fabric instance is gated to a banner.
+func TestEnterOnModsPreviewNonFabricShowsBanner(t *testing.T) {
 	restoreDark(t)
 	dir := t.TempDir()
 	insts := []*core.Instance{{ID: "van", Name: "Vanilla", Version: "1.21", Loader: "vanilla", Path: dir}}
 	m := newHomeWith(t, insts)
 	m.activeTab = tabMods
 	m.focusDetailPane()
-	m.detailCursor = 0
-	cmd := sendKey(t, m, "enter")
-	if cmd != nil {
-		t.Fatalf("non-Fabric +Add mods should not navigate, got cmd %T", cmd())
-	}
+	// The banner cmd is a tea.Tick (auto-expiry); assert on state, not the cmd.
+	sendKey(t, m, "enter")
 	if m.transientBanner == "" {
-		t.Fatal("expected a transient banner for non-Fabric +Add mods")
+		t.Fatal("expected a transient banner for the non-Fabric Mods preview")
 	}
 }
 
-func TestEnterAddPacksEmitsNavigateToResourcePacks(t *testing.T) {
+// Enter on the focused Resource packs preview opens the resource-packs manager.
+func TestEnterOnPacksPreviewOpensManager(t *testing.T) {
 	restoreDark(t)
 	m := newHomeWith(t, fabricInstance(t))
 	m.activeTab = tabResourcePacks
 	m.focusDetailPane()
-	m.detailCursor = 0 // the "+ Add resource packs…" row
 	cmd := sendKey(t, m, "enter")
 	if cmd == nil {
-		t.Fatal("Enter on +Add resource packs should return a cmd")
+		t.Fatal("Enter on the Resource packs preview should return a cmd")
 	}
 	if _, ok := cmd().(NavigateToResourcePacks); !ok {
 		t.Fatalf("expected NavigateToResourcePacks, got %T", cmd())
 	}
 }
 
-func TestSwitchingTabResetsCursor(t *testing.T) {
+// Walking tabs in detail focus switches the active facet.
+func TestDetailFocusWalksTabs(t *testing.T) {
 	restoreDark(t)
 	m := newHomeWith(t, fabricInstance(t))
 	m.activeTab = tabMods
 	m.focusDetailPane()
-	m.detailCursor = 1
 	sendKey(t, m, "]") // next tab (Resource packs)
-	if m.detailCursor != 0 {
-		t.Fatalf("switching tabs should reset detailCursor, got %d", m.detailCursor)
-	}
 	if m.activeTab != tabResourcePacks {
 		t.Fatalf("expected tabResourcePacks after ], got %d", m.activeTab)
 	}
 }
 
-func TestSwitchingInstanceResetsCursorAndFocus(t *testing.T) {
+// Moving to a different instance returns focus to the list column.
+func TestSwitchingInstanceReturnsFocusToList(t *testing.T) {
 	restoreDark(t)
 	a := fabricInstance(t)[0]
 	b := &core.Instance{ID: "b", Name: "Second", Version: "1.20", Loader: "vanilla", Path: t.TempDir()}
 	m := newHomeWith(t, []*core.Instance{a, b})
 	startID := m.SelectedInstance().ID
-	// Leave a stale cursor behind, then return to the list to navigate.
 	m.focusDetailPane()
-	m.detailCursor = 1
 	m.paneFocus = focusList
 	// Move the list cursor; this should land on the other instance.
 	sendKey(t, m, "down")
 	if m.SelectedInstance().ID == startID {
-		// Single-step didn't change selection (recency tie ordering); try up.
 		sendKey(t, m, "up")
 	}
 	if m.SelectedInstance().ID == startID {
@@ -263,9 +240,6 @@ func TestSwitchingInstanceResetsCursorAndFocus(t *testing.T) {
 	}
 	if m.paneFocus != focusList {
 		t.Fatalf("changing instance should keep/return focus to the list, got %d", m.paneFocus)
-	}
-	if m.detailCursor != 0 {
-		t.Fatalf("changing instance should reset detailCursor, got %d", m.detailCursor)
 	}
 }
 

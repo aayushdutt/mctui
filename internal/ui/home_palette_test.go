@@ -22,23 +22,23 @@ func TestHomePaletteJumpToInstance(t *testing.T) {
 	}
 
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
-	if !m.palette {
+	if !m.palette.Active {
 		t.Fatal(": should open the palette")
 	}
 
 	// Type "creat" → fuzzy-match "Creative Flats" to the top.
 	typeRunes(m, "creat")
-	if len(m.paletteEntries) == 0 {
+	if len(m.palette.items) == 0 {
 		t.Fatal("expected fuzzy matches for 'creat'")
 	}
-	top := m.paletteEntries[0]
-	if top.kind != paletteInstance || top.label != "Creative Flats" {
+	top := m.palette.items[0]
+	if top.Kind != PaletteJump || top.Label != "Creative Flats" {
 		t.Fatalf("expected 'Creative Flats' ranked first, got %+v", top)
 	}
 
 	// Enter activates the highlighted entry → moves the list cursor and closes.
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.palette {
+	if m.palette.Active {
 		t.Error("enter should close the palette")
 	}
 	if m.SelectedInstance() == nil || m.SelectedInstance().ID != "b" {
@@ -51,8 +51,8 @@ func TestHomePaletteVerbNavigate(t *testing.T) {
 	m := homeWithInstances(t)
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
 	typeRunes(m, "settings")
-	if len(m.paletteEntries) == 0 || m.paletteEntries[0].action != "settings" {
-		t.Fatalf("expected 'settings' ranked first, got %+v", m.paletteEntries)
+	if len(m.palette.items) == 0 || m.palette.items[0].Label != "Settings" {
+		t.Fatalf("expected 'Settings' ranked first, got %+v", m.palette.items)
 	}
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -70,8 +70,8 @@ func TestHomePaletteModsGate(t *testing.T) {
 	m.list.Select(1) // Creative Flats (vanilla)
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
 	typeRunes(m, "mods")
-	if len(m.paletteEntries) == 0 || m.paletteEntries[0].action != "mods" {
-		t.Fatalf("expected 'mods' ranked first, got %+v", m.paletteEntries)
+	if len(m.palette.items) == 0 || m.palette.items[0].Label != "Mods" {
+		t.Fatalf("expected 'Mods' ranked first, got %+v", m.palette.items)
 	}
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd != nil {
@@ -84,15 +84,47 @@ func TestHomePaletteModsGate(t *testing.T) {
 	}
 }
 
+// The palette gains launch verbs (spec M1.2): Play emits a launch command.
+func TestHomePalettePlayVerb(t *testing.T) {
+	m := homeWithInstances(t)
+	// Offline account so Play routes straight to launch (no auth detour).
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	typeRunes(m, "play offline")
+	if len(m.palette.items) == 0 || m.palette.items[0].Label != "Play offline" {
+		t.Fatalf("expected 'Play offline' ranked first, got %+v", m.palette.items)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Play offline should emit a launch command")
+	}
+	if nav, ok := cmd().(NavigateToLaunch); !ok || !nav.Offline {
+		t.Fatalf("expected an offline NavigateToLaunch, got %T", cmd())
+	}
+}
+
+// The Delete verb arms the delete-confirm overlay for the current selection.
+func TestHomePaletteDeleteVerb(t *testing.T) {
+	m := homeWithInstances(t)
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	typeRunes(m, "delete")
+	if len(m.palette.items) == 0 || m.palette.items[0].Label != "Delete instance" {
+		t.Fatalf("expected 'Delete instance' ranked first, got %+v", m.palette.items)
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.confirmDelete || m.deleteTarget == nil {
+		t.Fatal("Delete verb should arm the delete-confirm overlay")
+	}
+}
+
 // Esc closes the palette.
 func TestHomePaletteEscCloses(t *testing.T) {
 	m := homeWithInstances(t)
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
-	if !m.palette {
+	if !m.palette.Active {
 		t.Fatal(": should open the palette")
 	}
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if m.palette {
+	if m.palette.Active {
 		t.Error("esc should close the palette")
 	}
 }

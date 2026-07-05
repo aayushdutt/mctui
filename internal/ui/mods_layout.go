@@ -1,9 +1,6 @@
 package ui
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 // Mods screen vertical layout: ModsModel.SetSize derives bubble list heights from the terminal so
 // split/stacked panes and the footer fit. See mods_layout_test.go for size invariants.
@@ -14,7 +11,7 @@ import (
 // Vertical budget for the mods screen (split + compact). Tuned against View(): outer
 // padding, header block, panel borders, chrome above lists, gaps, and help.
 const (
-	modsOuterPadY = 2 // lipgloss.NewStyle().Padding(1, 2) top + bottom on the screen block
+	modsOuterPadY = 0 // single-shell inset: the leaf view no longer self-pads (AppShellStyle owns it)
 
 	modsHeaderLines = 4 // title + context + rule + header margin
 
@@ -31,21 +28,18 @@ const (
 	// Installed pane: banner only (note, dialog, or toast). Its title lives in
 	// the panel border now.
 	modsLibraryChromeLines = 3
-
-	modsHelpRuleLines = 1
-	modsHelpMargin    = 1
 )
 
-// modsScreenHelpItems is the full footer when there is enough terminal space.
+// modsScreenHelpItems is the full footer: one line, six hints, ending in `? help`.
+// The long tail (←→ panes, r refresh, : palette) lives in the `?` overlay.
 func modsScreenHelpItems() []KeyHint {
 	return []KeyHint{
-		{"tab", "switch pane"},
-		{"←→", "panes"},
+		{"tab", "panes"},
 		{"/", "search"},
 		{"↵", "add"},
 		{"d", "remove"},
-		{"r", "refresh"},
 		{"esc", "home"},
+		{"?", "help"},
 	}
 }
 
@@ -54,17 +48,17 @@ func modsScreenHelpItemsCompact() []KeyHint {
 		{"tab", "pane"},
 		{"/", "search"},
 		{"↵", "add"},
-		{"d", "remove"},
 		{"esc", "home"},
+		{"?", "help"},
 	}
 }
 
 func modsScreenHelpItemsMicro() []KeyHint {
 	return []KeyHint{
 		{"tab", "pane"},
-		{"/", "search"},
 		{"↵", "add"},
 		{"esc", "home"},
+		{"?", "help"},
 	}
 }
 
@@ -92,12 +86,7 @@ func modsRenderHelp(items []KeyHint, width int) string {
 }
 
 func modsFooterHelpLinesFromItems(items []KeyHint, termW int) int {
-	body := modsRenderHelp(items, modsHelpBodyMaxWidth(termW))
-	textLines := 1
-	if body != "" {
-		textLines = strings.Count(body, "\n") + 1
-	}
-	return modsHelpRuleLines + textLines + modsHelpMargin
+	return footerHelpHeight(items, modsHelpBodyMaxWidth(termW))
 }
 
 func modsFooterHelpLines(termH, termW int) int {

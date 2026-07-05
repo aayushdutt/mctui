@@ -68,6 +68,34 @@ type WizardModel struct {
 	// State
 	loading bool
 	err     error
+
+	palette CommandPalette
+
+	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
+	// ? / esc / q.
+	help bool
+}
+
+// helpGroups returns the wizard's bindings grouped for the `?` overlay,
+// hand-built to match exactly what Update handles across the three steps
+// (version select + filter, loader select, name/starter form) and the footers.
+func (m *WizardModel) helpGroups() []HelpGroup {
+	return []HelpGroup{
+		{Title: "Navigate", Entries: []HelpEntry{
+			{"↑↓ / j k", "select"},
+			{"tab / ⇧tab", "move between fields"},
+		}},
+		{Title: "Act", Entries: []HelpEntry{
+			{"enter", "next · create"},
+			{"space", "toggle snapshots · starter mods"},
+			{"/", "filter versions"},
+		}},
+		{Title: "General", Entries: []HelpEntry{
+			{":", "command palette"},
+			{"?", "help"},
+			{"esc", "back · cancel"},
+		}},
+	}
 }
 
 // versionItem for the list
@@ -92,7 +120,7 @@ func (i versionItem) FilterValue() string { return i.version.ID }
 // snapshot filter from config; toggling it in-wizard persists back via [PersistShowSnapshots].
 func NewWizardModel(showSnapshots bool) *WizardModel {
 	// Version list
-	delegate := ThemeListDelegate(Active.Success, Active.SuccessSoft)
+	delegate := ThemeListDelegate(Active.Primary, Active.Secondary)
 
 	vl := list.New([]list.Item{}, delegate, 0, 0)
 	vl.Title = "Select Minecraft Version"
@@ -100,8 +128,8 @@ func NewWizardModel(showSnapshots bool) *WizardModel {
 	vl.SetFilteringEnabled(true)
 	vl.Styles.Title = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(OnColor(Active.Success)).
-		Background(Active.Success).
+		Foreground(OnColor(Active.Primary)).
+		Background(Active.Primary).
 		Padding(0, 1)
 	ThemeListChrome(&vl)
 
@@ -112,7 +140,7 @@ func NewWizardModel(showSnapshots bool) *WizardModel {
 	ti.Width = 40
 	ThemeTextInput(&ti)
 
-	return &WizardModel{
+	m := &WizardModel{
 		step:        StepSelectVersion,
 		versionList: vl,
 		// loaderIndex 0 = Fabric (first row; Vanilla below)
@@ -126,6 +154,17 @@ func NewWizardModel(showSnapshots bool) *WizardModel {
 		installStarterMods: true,
 		loading:            true,
 		showSnaps:          showSnapshots,
+	}
+	m.palette = NewCommandPalette("New instance · commands", "Run a command…", m.wizardPaletteItems)
+	return m
+}
+
+// wizardPaletteItems supplies the wizard's `:` command-palette verbs.
+func (m *WizardModel) wizardPaletteItems() []PaletteItem {
+	return []PaletteItem{
+		{Label: "Cancel (back to home)", Run: func() tea.Cmd {
+			return func() tea.Msg { return NavigateToHome{} }
+		}},
 	}
 }
 
@@ -150,11 +189,15 @@ func (m *WizardModel) updateVersionList(latest string) {
 	m.versionList.SetItems(items)
 }
 
-// SetSize updates dimensions
+// SetSize updates dimensions. The version step stacks a fair amount of chrome
+// around the list — screen header (2) + breadcrumb (2) + section header (2) +
+// the list's own status bar, the snapshot checkbox row (2), and the help line
+// (2) — so the list viewport is budgeted at height-12 to keep the whole step
+// within the terminal (measured in wizard_test.go).
 func (m *WizardModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	m.versionList.SetSize(width-4, height-8)
+	m.versionList.SetSize(width-4, max(3, height-12))
 }
 
 // Init implements tea.Model
@@ -174,6 +217,18 @@ func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.palette.Active {
+			return m, m.palette.Update(msg)
+		}
+		// Help overlay is read-only: it swallows every key, and only ? / esc / q
+		// dismiss it.
+		if m.help {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.help = false
+			}
+			return m, nil
+		}
 		// Space: toggle Fabric starter row (KeySpace and rune " " differ by platform/driver).
 		if m.step == StepEnterName && m.selectedLoader == "fabric" &&
 			m.nameFormFocus == focusWizardStarterCheckbox &&
@@ -181,7 +236,36 @@ func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.installStarterMods = !m.installStarterMods
 			return m, nil
 		}
+		// Space: toggle the snapshot filter on the version step (visible □ checkbox
+		// under the list). Tab is reserved for field/pane cycling everywhere, so the
+		// toggle lives on space; guarded against the list's filter input so space
+		// still types while filtering.
+		if m.step == StepSelectVersion && m.versionList.FilterState() != list.Filtering &&
+			(msg.Type == tea.KeySpace || msg.String() == " " || msg.String() == "space") {
+			m.showSnaps = !m.showSnaps
+			m.updateVersionList("")
+			show := m.showSnaps
+			return m, func() tea.Msg { return PersistShowSnapshots{Value: show} }
+		}
 		switch msg.String() {
+		case ":":
+			// Open the palette unless a text input is receiving keys: the name field
+			// on the name step, or the version list's filter box.
+			filtering := m.step == StepSelectVersion && m.versionList.FilterState() == list.Filtering
+			nameFocused := m.step == StepEnterName && m.nameFormFocus == focusWizardName
+			if !filtering && !nameFocused {
+				m.palette.Open()
+				return m, textinput.Blink
+			}
+		case "?":
+			// Open the read-only key reference — gated exactly like ":" so "?" stays
+			// typeable in the name field or the version filter box.
+			filtering := m.step == StepSelectVersion && m.versionList.FilterState() == list.Filtering
+			nameFocused := m.step == StepEnterName && m.nameFormFocus == focusWizardName
+			if !filtering && !nameFocused {
+				m.help = true
+				return m, nil
+			}
 		case "esc":
 			if m.step > StepSelectVersion {
 				if m.step == StepEnterName {
@@ -202,12 +286,6 @@ func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "tab":
-			if m.step == StepSelectVersion {
-				m.showSnaps = !m.showSnaps
-				m.updateVersionList("")
-				show := m.showSnaps
-				return m, func() tea.Msg { return PersistShowSnapshots{Value: show} }
-			}
 			if m.step == StepEnterName {
 				m.nameStepCycleFocus(1)
 				return m, textinput.Blink
@@ -450,6 +528,12 @@ func (m *WizardModel) stepBreadcrumb() string {
 
 // View implements tea.Model
 func (m *WizardModel) View() string {
+	if m.help {
+		return boundToScreen(HelpOverlay("New instance", m.helpGroups(), m.width, m.height), m.width, m.height)
+	}
+	if m.palette.Active {
+		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
+	}
 	if m.err != nil {
 		w := m.panelWidth()
 		body := lipgloss.NewStyle().
@@ -489,15 +573,19 @@ func (m *WizardModel) viewVersionStep() string {
 		return Panel("New Instance", loading, w, Active.Primary)
 	}
 
-	snapState := "snapshots: OFF"
-	if m.showSnaps {
-		snapState = "snapshots: ON"
-	}
+	// Visible snapshot checkbox under the list — space toggles it (Tab is reserved
+	// for field/pane cycling app-wide).
+	snapMark := wizardCheckboxGlyph(m.showSnaps, false)
+	snapLabel := lipgloss.NewStyle().Foreground(Active.TextDim).Render("Show snapshots")
+	snapKey := lipgloss.NewStyle().Foreground(Active.TextFaint).Render("space")
+	snapRow := lipgloss.JoinHorizontal(lipgloss.Top, snapMark, " ", snapLabel, "  ", snapKey)
+
 	help := KeyHints(w,
 		KeyHint{"↑↓", "select"},
-		KeyHint{"tab", snapState},
+		KeyHint{"space", "snapshots"},
 		KeyHint{"enter", "next"},
 		KeyHint{"esc", "cancel"},
+		KeyHint{"?", "help"},
 	)
 
 	return lipgloss.JoinVertical(
@@ -505,6 +593,8 @@ func (m *WizardModel) viewVersionStep() string {
 		SectionHeader("Minecraft version", w),
 		"",
 		m.versionList.View(),
+		"",
+		snapRow,
 		"",
 		help,
 	)
@@ -519,22 +609,23 @@ func (m *WizardModel) viewLoaderStep() string {
 
 	var rows []string
 	for i, ch := range m.loaderChoices {
-		prefix := "  "
+		selected := i == m.loaderIndex
 		style := lipgloss.NewStyle()
 		switch {
-		case i == m.loaderIndex:
-			prefix = GlyphPointer + " "
-			style = style.Bold(true).Foreground(Active.Success)
+		case selected:
+			// Selection is the ┃ accent bar (rowMarker) + Primary label — the one
+			// selection idiom, not a green ▸ pointer.
+			style = style.Bold(true).Foreground(Active.Primary)
 		case ch.ComingSoon:
 			style = style.Foreground(Active.TextFaint)
 		default:
 			style = style.Foreground(Active.Text)
 		}
-		rows = append(rows, style.Render(prefix+ch.Label))
+		rows = append(rows, rowMarker(selected)+style.Render(ch.Label))
 	}
 
 	body := lipgloss.JoinVertical(lipgloss.Left, append([]string{subtitle, ""}, rows...)...)
-	panel := Panel("Mod loader", body, w, Active.Primary)
+	panel := Zone("Mod loader", body, w, true)
 
 	hintBlock := ""
 	if m.loaderHint != "" {
@@ -547,6 +638,7 @@ func (m *WizardModel) viewLoaderStep() string {
 		KeyHint{"↑↓", "select"},
 		KeyHint{"enter", "next"},
 		KeyHint{"esc", "back"},
+		KeyHint{"?", "help"},
 	)
 
 	return lipgloss.JoinVertical(
@@ -566,19 +658,7 @@ func (m *WizardModel) viewNameStep() string {
 		Render(fmt.Sprintf("Minecraft %s · %s", m.selectedVersion, m.selectedLoaderLabel))
 
 	nameFocused := m.nameFormFocus == focusWizardName
-	nameBorder := Active.BorderSubtle
-	if nameFocused {
-		nameBorder = Active.Success
-	}
-	fieldLabel := lipgloss.NewStyle().
-		Foreground(Active.TextDim).
-		MarginBottom(0).
-		Render("Instance name")
-
-	inputStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(nameBorder).
-		Padding(0, 1)
+	nameField := underlineField("Instance name", "", m.nameInput, nameFocused)
 
 	errText := ""
 	if m.nameErr != "" {
@@ -588,12 +668,7 @@ func (m *WizardModel) viewNameStep() string {
 			Render(m.nameErr)
 	}
 
-	nameBlock := lipgloss.JoinVertical(
-		lipgloss.Left,
-		fieldLabel,
-		inputStyle.Render(m.nameInput.View()),
-		errText,
-	)
+	nameBlock := lipgloss.JoinVertical(lipgloss.Left, nameField, errText)
 
 	starterBlock := ""
 	if m.selectedLoader == "fabric" {
@@ -609,7 +684,7 @@ func (m *WizardModel) viewNameStep() string {
 		if cbFocused {
 			rowStyle = lipgloss.NewStyle().
 				Border(lipgloss.NormalBorder(), false, false, false, true).
-				BorderForeground(Active.Success).
+				BorderForeground(Active.Primary).
 				Background(Active.BorderFaint).
 				PaddingLeft(1).
 				PaddingRight(1)
@@ -617,12 +692,8 @@ func (m *WizardModel) viewNameStep() string {
 		starterBlock = rowStyle.Render(starterInner)
 	}
 
-	// Match vertical rhythm to the gap below the bordered name field → checkbox:
-	// the input box adds visual weight, so we add explicit space before Create.
-	formSectionGap := 1
-
-	createBtn := wizardFormButton("Create", m.nameFormFocus == focusWizardSubmit, true)
-	buttonRow := lipgloss.NewStyle().MarginTop(formSectionGap).Render(createBtn)
+	createBtn := Pill("Create", m.nameFormFocus == focusWizardSubmit)
+	buttonRow := lipgloss.NewStyle().MarginTop(1).Render(createBtn)
 
 	bodyParts := []string{summary, "", nameBlock}
 	if starterBlock != "" {
@@ -630,7 +701,7 @@ func (m *WizardModel) viewNameStep() string {
 	}
 	bodyParts = append(bodyParts, buttonRow)
 	body := lipgloss.JoinVertical(lipgloss.Left, bodyParts...)
-	panel := Panel("Name your instance", body, w, Active.Primary)
+	panel := Zone("Name your instance", body, w, true)
 
 	hints := []KeyHint{
 		{"tab/↑↓", "move"},
@@ -640,6 +711,7 @@ func (m *WizardModel) viewNameStep() string {
 	if m.selectedLoader == "fabric" {
 		hints = append(hints, KeyHint{"space", "toggle mods"})
 	}
+	hints = append(hints, KeyHint{"?", "help"})
 	help := KeyHints(w, hints...)
 
 	return lipgloss.JoinVertical(
@@ -653,36 +725,16 @@ func (m *WizardModel) viewNameStep() string {
 // wizardCheckboxGlyph uses □ / ■ — one monospace cell each, so the glyph is always square in the grid.
 // Lipgloss borders + Width/Height do not reliably map to equal row/column counts, which caused tall boxes.
 func wizardCheckboxGlyph(checked, focused bool) string {
+	// Checkboxes live in the focus/selection domain, so an on/focused box reads in
+	// the accent (Primary), never green — Success/Warning are reserved for state.
 	if checked {
-		return lipgloss.NewStyle().
-			Foreground(Active.SuccessAccent).
-			Render("■")
+		return lipgloss.NewStyle().Foreground(Active.Primary).Render("■")
 	}
 	st := lipgloss.NewStyle().Foreground(Active.TextMuted)
 	if focused {
-		st = st.Foreground(Active.Success)
+		st = st.Foreground(Active.Primary)
 	}
 	return st.Render("□")
-}
-
-func wizardFormButton(label string, focused, primary bool) string {
-	st := lipgloss.NewStyle().
-		Padding(0, 2).
-		Border(lipgloss.RoundedBorder())
-	if primary {
-		if focused {
-			st = st.BorderForeground(Active.Success).Foreground(Active.Text).Bold(true)
-		} else {
-			st = st.BorderForeground(Active.BorderSubtle).Foreground(Active.TextSubtle)
-		}
-	} else {
-		if focused {
-			st = st.BorderForeground(Active.TextDim).Foreground(Active.Title)
-		} else {
-			st = st.BorderForeground(Active.BorderFaint).Foreground(Active.TextDim)
-		}
-	}
-	return st.Render(label)
 }
 
 // validateInstanceName validates the freeform display name only. Filesystem safety

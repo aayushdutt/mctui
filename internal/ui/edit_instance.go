@@ -53,6 +53,31 @@ type EditInstanceModel struct {
 	jvmArgs  textinput.Model
 
 	saveErr string
+
+	palette CommandPalette
+
+	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
+	// ? / esc / q.
+	help bool
+}
+
+// helpGroups returns the edit-instance screen's bindings grouped for the `?`
+// overlay, hand-built to match exactly what Update handles (field cycling, save)
+// and the footer hints.
+func (m *EditInstanceModel) helpGroups() []HelpGroup {
+	return []HelpGroup{
+		{Title: "Navigate", Entries: []HelpEntry{
+			{"tab / ↑↓", "move between fields"},
+		}},
+		{Title: "Act", Entries: []HelpEntry{
+			{"enter", "save"},
+		}},
+		{Title: "General", Entries: []HelpEntry{
+			{":", "command palette"},
+			{"?", "help"},
+			{"esc", "back home"},
+		}},
+	}
 }
 
 // NewEditInstanceModel seeds the form from inst (read-only; nothing is mutated
@@ -79,7 +104,21 @@ func NewEditInstanceModel(inst *core.Instance) *EditInstanceModel {
 		jvmArgs:  mk(strings.Join(rest, " "), "Extra space-separated flags (optional)", 48),
 	}
 	m.applyFocus(focusEditName)
+	m.palette = NewCommandPalette("Edit instance · commands", "Run a command…", m.editPaletteItems)
 	return m
+}
+
+// editPaletteItems supplies the edit-instance screen's `:` command-palette verbs.
+func (m *EditInstanceModel) editPaletteItems() []PaletteItem {
+	return []PaletteItem{
+		{Label: "Save", Run: func() tea.Cmd {
+			_, cmd := m.submit()
+			return cmd
+		}},
+		{Label: "Back to home", Run: func() tea.Cmd {
+			return func() tea.Msg { return NavigateToHome{} }
+		}},
+	}
 }
 
 // SetSize updates dimensions. The content area is already padded by the app
@@ -140,7 +179,33 @@ func (m *EditInstanceModel) cycleFocus(delta int) {
 func (m *EditInstanceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.palette.Active {
+			return m, m.palette.Update(msg)
+		}
+		// Help overlay is read-only: it swallows every key, and only ? / esc / q
+		// dismiss it.
+		if m.help {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.help = false
+			}
+			return m, nil
+		}
 		switch msg.String() {
+		case ":":
+			// Open the palette only when no text input is focused (Save row), so ":"
+			// still types a literal colon into a focused field.
+			if m.focusedInput() == nil {
+				m.palette.Open()
+				return m, textinput.Blink
+			}
+		case "?":
+			// Open the read-only key reference — gated exactly like ":" so "?" stays
+			// typeable in a focused field.
+			if m.focusedInput() == nil {
+				m.help = true
+				return m, nil
+			}
 		case "esc":
 			return m, func() tea.Msg { return NavigateToHome{} }
 		case "tab", "down":
@@ -201,29 +266,21 @@ func (m *EditInstanceModel) submit() (*EditInstanceModel, tea.Cmd) {
 
 // View implements tea.Model.
 func (m *EditInstanceModel) View() string {
-	header := ScreenHeader("Edit · "+m.inst.Name, "Per-instance overrides. Identity (version, loader) is fixed.")
-
-	field := func(label, hint string, in textinput.Model, focused bool) string {
-		border := Active.BorderSubtle
-		if focused {
-			border = Active.Success
-		}
-		lbl := lipgloss.NewStyle().Foreground(Active.TextDim).Render(label)
-		box := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(border).
-			Padding(0, 1).
-			Render(in.View())
-		hintLine := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(hint)
-		return lipgloss.JoinVertical(lipgloss.Left, lbl, box, hintLine)
+	if m.help {
+		return boundToScreen(HelpOverlay("Edit instance", m.helpGroups(), m.width, m.height), m.width, m.height)
+	}
+	if m.palette.Active {
+		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
 	}
 
-	nameBlock := field("Name", "Display name only. Does not move or rename the instance folder.", m.name, m.focus == focusEditName)
-	memBlock := field("Memory (max heap)", "Sets -Xmx. e.g. 4G or 2048M. Empty leaves the default.", m.memory, m.focus == focusEditMemory)
-	javaBlock := field("Java path", "Leave empty to auto-detect or download.", m.javaPath, m.focus == focusEditJavaPath)
-	jvmBlock := field("JVM arguments", "Space-separated. The -Xmx flag is managed by the Memory field above.", m.jvmArgs, m.focus == focusEditJVMArgs)
+	header := ScreenHeader("Edit · "+m.inst.Name, "Per-instance overrides. Identity (version, loader) is fixed.")
 
-	saveBtn := lipgloss.NewStyle().MarginTop(1).Render(wizardFormButton("Save", m.focus == focusEditSave, true))
+	nameBlock := underlineField("Name", "Display name only. Does not move or rename the instance folder.", m.name, m.focus == focusEditName)
+	memBlock := underlineField("Memory (max heap)", "Sets -Xmx. e.g. 4G or 2048M. Empty leaves the default.", m.memory, m.focus == focusEditMemory)
+	javaBlock := underlineField("Java path", "Leave empty to auto-detect or download.", m.javaPath, m.focus == focusEditJavaPath)
+	jvmBlock := underlineField("JVM arguments", "Space-separated. The -Xmx flag is managed by the Memory field above.", m.jvmArgs, m.focus == focusEditJVMArgs)
+
+	saveBtn := lipgloss.NewStyle().MarginTop(1).Render(Pill("Save", m.focus == focusEditSave))
 
 	errBlock := ""
 	if m.saveErr != "" {
@@ -234,6 +291,7 @@ func (m *EditInstanceModel) View() string {
 		KeyHint{"tab", "move"},
 		KeyHint{"enter", "save"},
 		KeyHint{"esc", "cancel"},
+		KeyHint{"?", "help"},
 	))
 
 	return lipgloss.JoinVertical(

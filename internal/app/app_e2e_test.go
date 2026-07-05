@@ -224,10 +224,13 @@ func TestE2E_HomeDeleteConfirm(t *testing.T) {
 		tm.Send(keyRunes("d"))
 		waitForOutput(t, tm, "Delete instance?")
 
-		// Esc cancels; the instance remains listed.
+		// Esc cancels. Overlays now composite over a dimmed backdrop, so the
+		// instance name stays on screen the whole time (it can't serve as a
+		// "reappeared" sync marker). Messages are processed FIFO, so esc clears the
+		// dialog before q is handled: if esc failed to cancel, q would be swallowed
+		// by the dialog and WaitFinished would time out. The dir check confirms the
+		// instance was not deleted.
 		tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
-		waitForOutput(t, tm, "Keeper Pack")
-
 		tm.Send(keyRunes("q"))
 		tm.WaitFinished(t, teatest.WithFinalTimeout(waitDuration))
 

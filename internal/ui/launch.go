@@ -9,6 +9,7 @@ import (
 	"github.com/aayushdutt/mctui/internal/core"
 	"github.com/aayushdutt/mctui/internal/launch"
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -27,6 +28,45 @@ type LaunchModel struct {
 	logs     []string
 
 	cfg *config.Config // optional; used for log verbosity while playing
+
+	palette CommandPalette
+
+	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
+	// ? / esc / q.
+	help bool
+}
+
+// helpGroups returns the launch screen's bindings grouped for the `?` overlay,
+// hand-built to match exactly what Update handles (retry/offline on failure,
+// log verbosity while playing, esc cancel/back, force quit) and the footers.
+func (m *LaunchModel) helpGroups() []HelpGroup {
+	// State-aware so the overlay never advertises a key that is a no-op right now:
+	// retry/offline only exist after a failure, enter only navigates once done,
+	// and v only cycles verbosity while the game is running.
+	var act []HelpEntry
+	escDesc := "cancel launch"
+	switch {
+	case m.done && m.err != nil:
+		act = []HelpEntry{{"enter", "back home"}, {"r", "retry"}, {"o", "retry offline"}}
+		escDesc = "back home"
+	case m.done:
+		act = []HelpEntry{{"enter", "back home"}}
+		escDesc = "back home"
+	case m.status.Step == "Playing":
+		act = []HelpEntry{{"v", "cycle log verbosity"}}
+	}
+
+	groups := make([]HelpGroup, 0, 2)
+	if len(act) > 0 {
+		groups = append(groups, HelpGroup{Title: "Act", Entries: act})
+	}
+	groups = append(groups, HelpGroup{Title: "General", Entries: []HelpEntry{
+		{":", "command palette"},
+		{"?", "help"},
+		{"esc", escDesc},
+		{"ctrl+c", "force quit"},
+	}})
+	return groups
 }
 
 type stepInfo struct {
@@ -34,11 +74,74 @@ type stepInfo struct {
 	status string // pending, running, done, error
 }
 
+// advancementCopy maps each technical launch step to Minecraft advancement-style
+// flavor text (Phase 3's launch personality). The technical name is kept in the
+// running row so the line still says what is really happening; unmapped steps
+// (e.g. "Installing starter mods") fall back to their plain name.
+var advancementCopy = map[string]string{
+	"Checking Java":         "Java acquired",
+	"Downloading libraries": "Getting an upgrade",
+	"Downloading assets":    "Punching trees…",
+	"Preparing game":        "Ready to spawn",
+	"Launching":             "Entering world…",
+}
+
+// stepRowText renders one step's line text. Done steps read as an unlocked
+// advancement; the running step shows the advancement with its technical name in
+// parentheses; errors stay plain (never joke in an error).
+func stepRowText(step stepInfo) string {
+	adv := advancementCopy[step.name]
+	if adv == "" {
+		adv = step.name
+	}
+	switch step.status {
+	case "done":
+		return "Advancement made: " + adv
+	case "running":
+		if adv == step.name {
+			return adv
+		}
+		return adv + " (" + strings.ToLower(step.name) + ")"
+	case "error":
+		return step.name
+	default:
+		return adv
+	}
+}
+
+// xpBar renders the launch progress as Minecraft's experience bar: a thin
+// segmented ▰▱ track, Success-green fill, with the percentage flush right. Themed
+// (Active.Success / BorderFaint) so it reads correctly in all six palettes.
+func xpBar(percent float64, width int) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
+	if width < 8 {
+		width = 8
+	}
+	pctStr := fmt.Sprintf(" %3.0f%%", percent*100)
+	barW := width - lipgloss.Width(pctStr)
+	if barW < 1 {
+		barW = 1
+	}
+	filled := int(percent*float64(barW) + 0.5)
+	if filled > barW {
+		filled = barW
+	}
+	fill := lipgloss.NewStyle().Foreground(Active.Success).Render(strings.Repeat("▰", filled))
+	rest := lipgloss.NewStyle().Foreground(Active.BorderFaint).Render(strings.Repeat("▱", barW-filled))
+	pct := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(pctStr)
+	return fill + rest + pct
+}
+
 // NewLaunchModel creates a new launch view. cfg is used for game log verbosity ([v] while playing).
 func NewLaunchModel(instance *core.Instance, cfg *config.Config) *LaunchModel {
 	p := ThemeProgress(50)
 
-	return &LaunchModel{
+	m := &LaunchModel{
 		instance: instance,
 		cfg:      cfg,
 		progress: p,
@@ -50,6 +153,40 @@ func NewLaunchModel(instance *core.Instance, cfg *config.Config) *LaunchModel {
 			{name: "Launching", status: "pending"},
 		},
 	}
+	m.palette = NewCommandPalette("Launch · commands", "Run a command…", m.launchPaletteItems)
+	return m
+}
+
+// leaveLaunch returns the command for leaving the launch screen. A completed
+// launch just navigates home, but an IN-PROGRESS one must cancel first
+// (CancelLaunch tears down the launch context + status channel in app.go); a
+// plain NavigateToHome would leave the launch goroutine running and the context
+// leaked. Shared by the esc key and the palette "Back to home" verb so both
+// paths clean up identically.
+func (m *LaunchModel) leaveLaunch() tea.Cmd {
+	if m.done {
+		return func() tea.Msg { return NavigateToHome{} }
+	}
+	m.status.Message = "Cancelling..."
+	return func() tea.Msg { return CancelLaunch{} }
+}
+
+// launchPaletteItems supplies the launch screen's `:` command-palette verbs.
+// Retry is offered only once a launch has failed.
+func (m *LaunchModel) launchPaletteItems() []PaletteItem {
+	leaveLabel := "Back to home"
+	if !m.done {
+		leaveLabel = "Cancel launch"
+	}
+	items := []PaletteItem{
+		{Label: leaveLabel, Run: m.leaveLaunch},
+	}
+	if m.done && m.err != nil {
+		items = append(items, PaletteItem{Label: "Retry", Run: func() tea.Cmd {
+			return func() tea.Msg { return RetryLaunch{Offline: false} }
+		}})
+	}
+	return items
 }
 
 // SetSize updates dimensions
@@ -106,18 +243,31 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
+		if m.palette.Active {
+			return m, m.palette.Update(msg)
+		}
+		// Help overlay is read-only: it swallows every key, and only ? / esc / q
+		// dismiss it.
+		if m.help {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.help = false
+			}
+			return m, nil
+		}
 		switch msg.String() {
+		case ":":
+			m.palette.Open()
+			return m, textinput.Blink
+		case "?":
+			// No text input on this screen, so "?" always opens the key reference.
+			m.help = true
+			return m, nil
 		case "ctrl+c":
 			return m, tea.Quit
 		case "esc", "q":
-			if m.done {
-				return m, func() tea.Msg { return NavigateToHome{} }
-			}
-			// Cancel launch if still in progress
-			if !m.done {
-				m.status.Message = "Cancelling..."
-				return m, func() tea.Msg { return CancelLaunch{} }
-			}
+			// Same teardown as the palette "Cancel launch" / "Back to home" verb.
+			return m, m.leaveLaunch()
 		case "enter":
 			if m.done {
 				return m, func() tea.Msg { return NavigateToHome{} }
@@ -199,6 +349,13 @@ func (m *LaunchModel) updateStepStatus(stepName, status string) {
 
 // View implements tea.Model
 func (m *LaunchModel) View() string {
+	if m.help {
+		return boundToScreen(HelpOverlay("Launch", m.helpGroups(), m.width, m.height), m.width, m.height)
+	}
+	if m.palette.Active {
+		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
+	}
+
 	// Panel width: derive from content width, clamp to a readable band and
 	// guard against an unset (0) width early in the lifecycle. The progress bar
 	// (width 50) lives just above the panels, so keep panels at least 54 wide.
@@ -250,12 +407,12 @@ func (m *LaunchModel) View() string {
 		if i > 0 {
 			steps.WriteString("\n")
 		}
-		steps.WriteString(style.Render(icon + " " + step.name))
+		steps.WriteString(style.Render(icon + " " + stepRowText(step)))
 	}
 
 	// The progress bar renders at its own fixed width, so keep it above the
 	// panel rather than inside (where the bar + percentage would wrap).
-	stepsPanel := Panel("Progress", steps.String(), panelW, Active.Primary)
+	stepsPanel := Zone("Progress", steps.String(), panelW, true)
 
 	// Status message under the progress panel.
 	statusMsg := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(m.status.Message)
@@ -272,6 +429,7 @@ func (m *LaunchModel) View() string {
 				KeyHint{"r", "retry"},
 				KeyHint{"o", "offline mode"},
 				KeyHint{"enter", "home"},
+				KeyHint{"?", "help"},
 			)
 			footer = lipgloss.JoinVertical(lipgloss.Left, fail, "", hints)
 		} else {
@@ -286,6 +444,7 @@ func (m *LaunchModel) View() string {
 			footer = KeyHints(panelW,
 				KeyHint{"ctrl+c", "force quit"},
 				KeyHint{"v", "logs: " + v.ShortLabel()},
+				KeyHint{"?", "help"},
 			)
 		} else {
 			footer = KeyHints(panelW, KeyHint{"ctrl+c", "force quit"})
@@ -294,15 +453,18 @@ func (m *LaunchModel) View() string {
 		footer = KeyHints(panelW,
 			KeyHint{"esc", "cancel"},
 			KeyHint{"ctrl+c", "quit"},
+			KeyHint{"?", "help"},
 		)
 	}
 
-	// Assemble: gaps are explicit "" entries rather than embedded "\n".
+	// Assemble: gaps are explicit "" entries rather than embedded "\n". The
+	// progress model still drives the animation; xpBar renders its % as the
+	// Minecraft experience bar.
 	parts := []string{
 		header,
 		info,
 		"",
-		m.progress.View(),
+		xpBar(m.progress.Percent(), m.progress.Width),
 		"",
 		stepsPanel,
 	}
@@ -317,7 +479,7 @@ func (m *LaunchModel) View() string {
 		for i, line := range m.logs {
 			styled[i] = logStyle.Render(line)
 		}
-		logsPanel := Panel("Logs", strings.Join(styled, "\n"), panelW, Active.BorderSubtle)
+		logsPanel := Zone("Logs", strings.Join(styled, "\n"), panelW, false)
 		parts = append(parts, "", logsPanel)
 	}
 

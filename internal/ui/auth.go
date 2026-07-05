@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -36,6 +37,11 @@ type AuthModel struct {
 	account    *core.Account
 	copied     bool
 
+	// notice is a one-line fallback shown when a best-effort side action fails —
+	// the browser wouldn't open, or the clipboard copy failed — so the user isn't
+	// left staring at a code/URL wondering why nothing happened.
+	notice string
+
 	// pendingLaunch is the instance the user was trying to launch when this auth
 	// screen opened (nil when opened from the Accounts menu). When set, the screen
 	// offers an "[o] play offline" escape hatch that launches it without signing in.
@@ -47,6 +53,34 @@ type AuthModel struct {
 	client   *api.AuthClient
 	manager  *core.AccountManager
 	clientID string
+
+	palette CommandPalette
+
+	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
+	// ? / esc / q.
+	help bool
+}
+
+// helpGroups returns the accounts screen's bindings grouped for the `?` overlay,
+// hand-built to match exactly what Update handles (copy code, open browser, the
+// optional play-offline escape hatch, continue) and the card footer hints.
+func (m *AuthModel) helpGroups() []HelpGroup {
+	act := []HelpEntry{
+		{"c", "copy device code"},
+		{"b", "open browser"},
+	}
+	if m.pendingLaunch != nil {
+		act = append(act, HelpEntry{"o", "play offline"})
+	}
+	act = append(act, HelpEntry{"enter", "continue"})
+	return []HelpGroup{
+		{Title: "Act", Entries: act},
+		{Title: "General", Entries: []HelpEntry{
+			{":", "command palette"},
+			{"?", "help"},
+			{"esc", "back home"},
+		}},
+	}
 }
 
 func NewAuthModel(dataDir string, clientID string, manager *core.AccountManager, pendingLaunch *core.Instance) *AuthModel {
@@ -54,13 +88,24 @@ func NewAuthModel(dataDir string, clientID string, manager *core.AccountManager,
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(Active.Secondary)
 
-	return &AuthModel{
+	m := &AuthModel{
 		state:         AuthStateInit,
 		spinner:       s,
 		manager:       manager,
 		clientID:      clientID,
 		client:        api.NewAuthClient(clientID),
 		pendingLaunch: pendingLaunch,
+	}
+	m.palette = NewCommandPalette("Accounts · commands", "Run a command…", m.authPaletteItems)
+	return m
+}
+
+// authPaletteItems supplies the accounts screen's `:` command-palette verbs.
+func (m *AuthModel) authPaletteItems() []PaletteItem {
+	return []PaletteItem{
+		{Label: "Back to home", Run: func() tea.Cmd {
+			return func() tea.Msg { return NavigateToHome{} }
+		}},
 	}
 }
 
@@ -140,7 +185,28 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		if m.palette.Active {
+			return m, m.palette.Update(msg)
+		}
+		// Help overlay is read-only: it swallows every key, and only ? / esc / q
+		// dismiss it.
+		if m.help {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.help = false
+			}
+			return m, nil
+		}
 		switch msg.String() {
+		case ":":
+			// No text entry on this screen (the device code is auto-filled), so the
+			// palette can always open.
+			m.palette.Open()
+			return m, textinput.Blink
+		case "?":
+			// No text entry on this screen, so "?" always opens the key reference.
+			m.help = true
+			return m, nil
 		case "esc", "q":
 			return m, func() tea.Msg { return NavigateToHome{} }
 		case "o":
@@ -151,12 +217,20 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "b":
 			if m.state == AuthStateWaitingForUser && m.deviceCode != nil {
-				openBrowser(m.deviceCode.VerificationURI)
+				if err := openBrowser(m.deviceCode.VerificationURI); err != nil {
+					m.notice = "Couldn't open browser — visit the URL above manually."
+				} else {
+					m.notice = ""
+				}
 			}
 		case "c":
 			if m.state == AuthStateWaitingForUser && m.deviceCode != nil {
-				copyToClipboard(m.deviceCode.UserCode)
-				m.copied = true
+				if err := copyToClipboard(m.deviceCode.UserCode); err != nil {
+					m.notice = "Couldn't copy — type the code above manually."
+				} else {
+					m.copied = true
+					m.notice = ""
+				}
 				return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearCopiedMsg{} })
 			}
 		case "enter":
@@ -168,9 +242,12 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case deviceCodeMsg:
 		m.deviceCode = msg.resp
 		m.state = AuthStateWaitingForUser
-		// Auto-copy the code
-		copyToClipboard(msg.resp.UserCode)
-		m.copied = true
+		// Auto-copy the code (best effort; surface a fallback if it fails).
+		if err := copyToClipboard(msg.resp.UserCode); err != nil {
+			m.notice = "Couldn't copy — type the code above manually."
+		} else {
+			m.copied = true
+		}
 		// Schedule browser open after 1 second, also start polling, and schedule copied reset
 		return m, tea.Batch(
 			m.pollToken(msg.resp),
@@ -206,7 +283,9 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openBrowserMsg:
 		if m.deviceCode != nil {
-			openBrowser(m.deviceCode.VerificationURI)
+			if err := openBrowser(m.deviceCode.VerificationURI); err != nil {
+				m.notice = "Couldn't open browser — visit the URL above manually."
+			}
 		}
 		return m, nil
 
@@ -219,6 +298,12 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AuthModel) View() string {
+	if m.help {
+		return boundToScreen(HelpOverlay("Accounts", m.helpGroups(), m.width, m.height), m.width, m.height)
+	}
+	if m.palette.Active {
+		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
+	}
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.authCard())
 }
 
@@ -249,7 +334,7 @@ func (m *AuthModel) authCard() string {
 		bad := lipgloss.NewStyle().Bold(true).Foreground(Active.Error).Render(GlyphFail + " Sign-in failed")
 		body := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(fmt.Sprintf("%v", m.err))
 		panel := Panel("Error", body, w, Active.Error)
-		errHints := []KeyHint{{"esc", "back"}}
+		errHints := []KeyHint{{"esc", "back"}, {"?", "help"}}
 		if m.pendingLaunch != nil {
 			errHints = append([]KeyHint{{"o", "play offline"}}, errHints...)
 		}
@@ -289,10 +374,15 @@ func (m *AuthModel) authDeviceCard(w int) string {
 	if m.pendingLaunch != nil {
 		cardHints = append(cardHints, KeyHint{"o", "play offline"})
 	}
-	cardHints = append(cardHints, KeyHint{"esc", "back"})
+	cardHints = append(cardHints, KeyHint{"esc", "back"}, KeyHint{"?", "help"})
 	hints := KeyHints(w, cardHints...)
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, "", panel, "", waiting, "", hints)
+	parts := []string{header, "", panel, "", waiting}
+	if m.notice != "" {
+		parts = append(parts, "", lipgloss.NewStyle().Foreground(Active.Warning).Render(GlyphWarn+" "+m.notice))
+	}
+	parts = append(parts, "", hints)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // authStatusLine is a spinner + message for transient auth states.
@@ -317,8 +407,8 @@ type msaTokenMsg struct{ resp *api.MSATokenResponse }
 type accountCreatedMsg struct{ acc *core.Account }
 type errMsg struct{ err error }
 
-func openBrowser(url string) {
-	_ = openURL(url)
+func openBrowser(url string) error {
+	return openURL(url)
 }
 
 func copyToClipboard(text string) error {

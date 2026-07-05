@@ -8,7 +8,6 @@ import (
 
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/core"
-	"github.com/aayushdutt/mctui/internal/loader"
 	"github.com/aayushdutt/mctui/internal/mods"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -19,8 +18,6 @@ import (
 type ModsModel struct {
 	inst *core.Instance
 	svc  *mods.Service
-
-	blocked bool
 
 	width         int
 	height        int
@@ -59,14 +56,44 @@ type ModsModel struct {
 
 	libraryListW int
 	resultsListW int
+
+	palette CommandPalette
+
+	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
+	// ? / esc / q.
+	help bool
 }
 
-// NewModsModel builds a mod browser for inst.
-func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
-	blocked := inst == nil || loader.ParseKind(inst.Loader) != loader.KindFabric
+// helpGroups returns the mods screen's bindings grouped for the `?` overlay,
+// hand-built to match exactly what Update handles (pane cycling, list moves,
+// install/remove/refresh/search) and the footer hints.
+func (m *ModsModel) helpGroups() []HelpGroup {
+	return []HelpGroup{
+		{Title: "Navigate", Entries: []HelpEntry{
+			{"↑↓ / j k", "move"},
+			{"tab / ⇧tab", "switch pane"},
+			{"← → / h l", "switch pane"},
+		}},
+		{Title: "Act", Entries: []HelpEntry{
+			{"enter", "install mod"},
+			{"d / backspace", "remove mod"},
+			{"r", "refresh installed"},
+			{"/", "search"},
+		}},
+		{Title: "General", Entries: []HelpEntry{
+			{":", "command palette"},
+			{"?", "help"},
+			{"esc", "back home"},
+		}},
+	}
+}
 
+// NewModsModel builds a mod browser for inst. Callers must have cleared the
+// mods gate ([CanBrowseMods]) first — every navigation into this screen does —
+// so inst is always a Fabric instance and there is no "unsupported" fallback.
+func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
 	installedList := NewThemedList(ThemedListConfig{
-		Accent: Active.Warning, AccentSoft: Active.WarningSoft, StatusBar: true,
+		Accent: Active.Primary, AccentSoft: Active.Secondary, StatusBar: true,
 	})
 	installedList.Title = "Installed (0)"
 
@@ -77,26 +104,45 @@ func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
 	ThemeTextInput(&ti)
 
 	browseList := NewThemedList(ThemedListConfig{
-		Accent: Active.Success, AccentSoft: Active.SuccessSoft, StatusBar: true,
+		Accent: Active.Primary, AccentSoft: Active.Secondary, StatusBar: true,
 	})
 	browseList.Title = "Modrinth"
 
 	m := &ModsModel{
 		inst:      inst,
 		svc:       mods.NewService(client),
-		blocked:   blocked,
 		installed: installedList,
 		query:     ti,
 		results:   browseList,
 		modsFocus: panelBrowse,
 		catalog:   &mods.ModrinthCatalog{},
 	}
-	if !blocked {
+	if inst != nil {
 		_ = mods.EnsureModsDir(inst)
 		m.reloadCatalogAndJars()
 		m.refreshInstalled()
 	}
+	m.palette = NewCommandPalette("Mods · commands", "Run a command…", m.modsPaletteItems)
 	return m
+}
+
+// modsPaletteItems supplies the mod screen's `:` command-palette verbs.
+func (m *ModsModel) modsPaletteItems() []PaletteItem {
+	return []PaletteItem{
+		{Label: "Back to home", Run: func() tea.Cmd {
+			return func() tea.Msg { return NavigateToHome{} }
+		}},
+		{Label: "Refresh installed", Run: func() tea.Cmd {
+			m.refreshInstalled()
+			return nil
+		}},
+		{Label: "Search mods", Run: func() tea.Cmd {
+			m.libraryToast = ""
+			m.modsFocus = panelQuery
+			m.query.Focus()
+			return textinput.Blink
+		}},
+	}
 }
 
 func (m *ModsModel) reloadCatalogAndJars() {
@@ -177,7 +223,7 @@ func (m *ModsModel) openRemoveConfirmDialog() bool {
 func (m *ModsModel) removeConfirmedJar(name string) {
 	idx := m.installed.Index()
 	if err := mods.RemoveInstalledJar(m.inst, name); err != nil {
-		m.installedErr = err.Error()
+		m.installedErr = "Couldn't remove jar: " + err.Error()
 		m.libraryToast = ""
 		return
 	}
@@ -203,7 +249,7 @@ func (m *ModsModel) loadInstalledJarList() {
 	m.installedErr = ""
 	jars, err := mods.ListInstalledJars(m.inst)
 	if err != nil {
-		m.installedErr = err.Error()
+		m.installedErr = "Couldn't read installed mods: " + err.Error()
 		m.installed.SetItems(nil)
 		m.installed.Title = "Installed"
 		m.rebuildBrowseBadges()
@@ -235,9 +281,6 @@ func (m *ModsModel) SetSize(w, h int) {
 		h = 1
 	}
 	m.width, m.height = w, h
-	if m.blocked {
-		return
-	}
 	m.compactLayout = w < splitMinWidth
 	if m.compactLayout {
 		m.query.Width = min(60, max(24, w-10))
@@ -256,8 +299,10 @@ func (m *ModsModel) SetSize(w, h int) {
 		rightInner = w - leftW - 5
 	}
 	m.query.Width = min(58, max(24, rightInner-4))
-	lw := max(22, leftW-4)
-	rw := max(28, rightInner-2)
+	// Zones have no border to inset for, so the lists fill their panes fully
+	// (reclaiming the ~4 columns the old rounded borders took).
+	lw := max(22, leftW)
+	rw := max(28, rightInner)
 	m.libraryListW = lw
 	m.resultsListW = rw
 	listH := modsSplitListViewportHeight(h, w)
@@ -287,9 +332,6 @@ func (m *ModsModel) CancelPending() {
 
 // Init implements tea.Model.
 func (m *ModsModel) Init() tea.Cmd {
-	if m.blocked {
-		return nil
-	}
 	m.refreshInstalled()
 	m.cancelSearch()
 	m.cancelInstallDownload()
