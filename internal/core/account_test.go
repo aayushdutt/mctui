@@ -2,6 +2,8 @@ package core
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -74,4 +76,43 @@ func TestAccountManager_SetActive(t *testing.T) {
 	if err := manager.SetActive("3"); err == nil {
 		t.Error("Expected error for missing account, got nil")
 	}
+}
+
+// accounts.json holds access + refresh tokens: Save must write it owner-only,
+// and Load must tighten a file an older version wrote world-readable.
+func TestAccountManager_FileIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "accounts.json")
+
+	m := NewAccountManager(dir)
+	m.Add(&Account{ID: "u1", Name: "Steve", Type: AccountTypeMSA})
+	if err := m.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if perm := fileperm(t, path); perm != 0o600 {
+		t.Errorf("after Save perm = %o, want 600", perm)
+	}
+
+	// A legacy world-readable file gets tightened on Load.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewAccountManager(dir).Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if perm := fileperm(t, path); perm != 0o600 {
+		t.Errorf("after Load perm = %o, want 600", perm)
+	}
+}
+
+func fileperm(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Mode().Perm()
 }

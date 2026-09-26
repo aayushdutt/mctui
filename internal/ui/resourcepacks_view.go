@@ -32,7 +32,7 @@ func (m *ResourcePacksModel) View() string {
 			Confirm:  "Clear",
 			Cancel:   "Keep",
 			Kind:     ConfirmDanger,
-			FocusYes: false,
+			FocusYes: m.rpDialogFocusYes,
 		}.Render(m.width, m.height)
 	}
 

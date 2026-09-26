@@ -1,8 +1,10 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -326,5 +328,169 @@ func TestInstanceManager_EmptyDir(t *testing.T) {
 	// Should have no instances
 	if len(mgr.List()) != 0 {
 		t.Error("Expected empty list from new directory")
+	}
+}
+
+// A running launch holds the *Instance it started with and persists through the
+// manager. A reload mid-game must not swap in a fresh copy, or the launch's
+// final save (stale copy) overwrites the playtime credited at exit.
+func TestInstanceManager_LoadKeepsExistingPointers(t *testing.T) {
+	mgr := NewInstanceManager(t.TempDir())
+	inst := &Instance{ID: "a", Name: "A", Version: "1.21.4"}
+	if err := mgr.Create(inst); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mgr.Get("a"); got != inst {
+		t.Fatal("Load replaced a known instance's pointer")
+	}
+
+	// Simulate game exit: credit playtime by ID, then the launch's final save.
+	if err := mgr.AddPlayTime("a", 90); err != nil {
+		t.Fatal(err)
+	}
+	inst.IsFullyDownloaded = true
+	if err := mgr.Update(inst); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := NewInstanceManager(mgr.basePath)
+	if err := fresh.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := fresh.Get("a")
+	if got.PlayTime != 90 || !got.IsFullyDownloaded {
+		t.Errorf("on disk: PlayTime=%d IsFullyDownloaded=%v, want 90/true", got.PlayTime, got.IsFullyDownloaded)
+	}
+}
+
+// Instances whose folder was removed outside the app disappear on reload;
+// new folders appear.
+func TestInstanceManager_LoadSyncsWithDisk(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewInstanceManager(dir)
+	for _, id := range []string{"keep", "gone"} {
+		if err := mgr.Create(&Instance{ID: id, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "instances", "gone")); err != nil {
+		t.Fatal(err)
+	}
+	other := NewInstanceManager(dir)
+	if err := other.Create(&Instance{ID: "new", Name: "new"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.Load(); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]bool{"keep": true, "gone": false, "new": true} {
+		if _, ok := mgr.Get(id); ok != want {
+			t.Errorf("Get(%q) present=%v, want %v", id, ok, want)
+		}
+	}
+}
+
+// The event loop (Load/List via Cmds) and a running launch (AddPlayTime,
+// UpdateLastPlayed, Update) hit the manager concurrently; unguarded, that was a
+// fatal "concurrent map read and map write". Run with -race.
+func TestInstanceManager_ConcurrentAccess(t *testing.T) {
+	mgr := NewInstanceManager(t.TempDir())
+	for i := range 4 {
+		if err := mgr.Create(&Instance{ID: fmt.Sprintf("i%d", i), Name: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	for w := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id := fmt.Sprintf("i%d", w)
+			for range 50 {
+				switch w {
+				case 0:
+					_ = mgr.Load()
+				case 1:
+					_ = mgr.List()
+				case 2:
+					_ = mgr.AddPlayTime(id, 1)
+				case 3:
+					_ = mgr.UpdateLastPlayed(id)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// Hand-editing instance.json (the only way to change version/loader) must be
+// picked up on reload — and not reverted by the next save — while the
+// in-memory pointer stays the same. Changes mctui made itself are kept.
+func TestInstanceManager_LoadPicksUpHandEdits(t *testing.T) {
+	mgr := NewInstanceManager(t.TempDir())
+	inst := &Instance{ID: "a", Name: "A", Version: "1.21.4"}
+	if err := mgr.Create(inst); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unsaved in-memory state survives a reload when the file didn't change.
+	inst.IsFullyDownloaded = true
+	if err := mgr.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if !inst.IsFullyDownloaded {
+		t.Fatal("a reload discarded in-memory state although the file was unchanged")
+	}
+
+	// A hand edit is taken into the same pointer.
+	path := filepath.Join(inst.Path, "instance.json")
+	edited := `{"id": "a", "name": "A", "version": "1.20.1", "path": ` + fmt.Sprintf("%q", inst.Path) + `}`
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := mgr.Get("a")
+	if got != inst {
+		t.Fatal("reload replaced the pointer")
+	}
+	if inst.Version != "1.20.1" {
+		t.Errorf("Version = %q, want the hand-edited 1.20.1", inst.Version)
+	}
+
+	// …and the next save keeps it.
+	if err := mgr.AddPlayTime("a", 60); err != nil {
+		t.Fatal(err)
+	}
+	fresh := NewInstanceManager(mgr.basePath)
+	if err := fresh.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := fresh.Get("a"); g.Version != "1.20.1" || g.PlayTime != 60 {
+		t.Errorf("on disk: Version=%q PlayTime=%d, want 1.20.1 / 60", g.Version, g.PlayTime)
+	}
+}
+
+// Removing the whole instances folder while mctui runs empties the list.
+func TestInstanceManager_LoadWithInstancesDirGone(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewInstanceManager(dir)
+	if err := mgr.Create(&Instance{ID: "a", Name: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "instances")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(mgr.List()); n != 0 {
+		t.Errorf("%d instances listed after their folder was removed", n)
 	}
 }

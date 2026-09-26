@@ -7,6 +7,8 @@ import (
 
 	"github.com/aayushdutt/mctui/internal/config"
 	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/launch"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Advancement-style copy (spec M3.2): done reads as an unlocked advancement,
@@ -80,5 +82,83 @@ func TestLaunch_LeaveWhileInProgressCancels(t *testing.T) {
 	}
 	if items := m.launchPaletteItems(); items[0].Label != "Back to home" {
 		t.Fatalf("completed leave verb should read 'Back to home', got %q", items[0].Label)
+	}
+}
+
+func playingLaunchModel(t *testing.T) *LaunchModel {
+	t.Helper()
+	restoreDark(t)
+	m := NewLaunchModel(&core.Instance{Name: "W", Version: "1.21", Loader: "fabric"}, config.DefaultConfig())
+	m.SetSize(100, 30)
+	m.Update(LaunchStatusUpdate{Status: launch.Status{Step: "Playing", Message: "Game running..."}})
+	if !m.playing() {
+		t.Fatal("setup: expected the playing state")
+	}
+	return m
+}
+
+func cmdMsg(cmd tea.Cmd) tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	return cmd()
+}
+
+// esc/q while the game runs used to CancelLaunch — which SIGKILLed Minecraft.
+// Leaving now returns home and the game keeps running.
+func TestLaunch_LeavingWhilePlayingKeepsTheGame(t *testing.T) {
+	for _, k := range []string{"esc", "q"} {
+		m := playingLaunchModel(t)
+		_, cmd := m.Update(keyMsg(k))
+		if _, ok := cmdMsg(cmd).(LeaveLaunchScreen); !ok {
+			t.Errorf("%s while playing: got %T, want LeaveLaunchScreen", k, cmdMsg(cmd))
+		}
+	}
+	m := playingLaunchModel(t)
+	items := m.launchPaletteItems()
+	if _, ok := items[0].Run()().(LeaveLaunchScreen); !ok {
+		t.Errorf("palette %q should leave without stopping the game", items[0].Label)
+	}
+}
+
+// Stopping the game is explicit and confirmed, with "Keep playing" focused.
+func TestLaunch_StopGameNeedsConfirmation(t *testing.T) {
+	m := playingLaunchModel(t)
+	m.Update(keyMsg("s"))
+	if !m.confirmStop {
+		t.Fatal("s while playing should ask to stop the game")
+	}
+	if !strings.Contains(m.View(), "Stop Minecraft?") {
+		t.Error("the stop confirmation should render")
+	}
+	if _, cmd := m.Update(keyMsg("enter")); cmd != nil || m.confirmStop {
+		t.Error("enter on the default (Keep playing) must close the dialog without stopping")
+	}
+
+	m.Update(keyMsg("s"))
+	m.Update(keyMsg("left"))
+	_, cmd := m.Update(keyMsg("enter"))
+	if _, ok := cmdMsg(cmd).(CancelLaunch); !ok {
+		t.Errorf("confirming Stop game should CancelLaunch, got %T", cmdMsg(cmd))
+	}
+
+	m = playingLaunchModel(t)
+	m.Update(keyMsg("s"))
+	if _, cmd := m.Update(keyMsg("esc")); cmd != nil || m.confirmStop {
+		t.Error("esc should dismiss the stop dialog without leaving or stopping")
+	}
+}
+
+// If the game exits while "Stop Minecraft?" is open, the dialog goes away (it
+// would hide the result, and confirming would discard it).
+func TestLaunch_StopDialogClosesWhenGameExits(t *testing.T) {
+	m := playingLaunchModel(t)
+	m.Update(keyMsg("s"))
+	m.Update(LaunchComplete{Error: errors.New("crashed")})
+	if m.confirmStop {
+		t.Error("the stop dialog should close when the launch completes")
+	}
+	if m.askStopGame(); m.confirmStop {
+		t.Error("stop can't be asked once the game has exited")
 	}
 }

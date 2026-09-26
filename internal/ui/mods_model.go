@@ -51,7 +51,7 @@ type ModsModel struct {
 
 	modsDialog         modsDialogKind
 	modsDialogJar      string
-	modsDialogFocusYes bool   // which confirm option is highlighted (defaults to Remove on open)
+	modsDialogFocusYes bool   // which confirm option is highlighted (opens on Cancel)
 	libraryToast       string // short success line under the installed-mods pane (right pane stays Modrinth-only).
 
 	libraryListW int
@@ -216,7 +216,7 @@ func (m *ModsModel) openRemoveConfirmDialog() bool {
 	m.libraryToast = ""
 	m.modsDialog = modsDialogConfirmRemoveJar
 	m.modsDialogJar = it.jar.Name
-	m.modsDialogFocusYes = true
+	m.modsDialogFocusYes = false
 	return true
 }
 

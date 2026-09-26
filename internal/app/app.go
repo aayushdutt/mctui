@@ -4,13 +4,17 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/config"
 	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/fsutil"
 	"github.com/aayushdutt/mctui/internal/launch"
 	"github.com/aayushdutt/mctui/internal/loader"
 	"github.com/aayushdutt/mctui/internal/mods"
@@ -57,7 +61,13 @@ type Model struct {
 	modrinth      *api.ModrinthClient
 	vanillaTweaks *api.VanillaTweaksClient
 
-	// Launch state
+	// Launch state. At most one launch runs at a time. launchID increments per
+	// launch and tags its messages, so results from a cancelled or replaced
+	// launch are recognised and dropped.
+	launchID         int
+	launchLive       bool // the launch pipeline (and then the game) is running
+	launchStopping   bool // the user stopped the running game; waiting for it to exit
+	gatingLaunch     bool // an online session check for a launch is in flight
 	launchStatusChan chan launch.Status
 	launchCtxCancel  context.CancelFunc
 
@@ -66,6 +76,14 @@ type Model struct {
 
 	// Shared state
 	ready bool
+
+	// startupWarnings are shown in the home banner on Init (e.g. a config or
+	// accounts file that couldn't be read and was moved aside).
+	startupWarnings []string
+
+	// quitArmed is set by a first q on home while a game is still running; a
+	// second q (with no other key in between) quits.
+	quitArmed bool
 }
 
 // keyMap defines the keybindings for the app
@@ -99,24 +117,75 @@ func defaultKeyMap() keyMap {
 
 // New creates a new application model
 func New() *Model {
-	cfg, _ := config.Load()
+	var warnings []string
+
+	cfg, err := config.Load()
+	if err != nil {
+		// Never crash on a bad config: start from defaults (a malformed file is
+		// moved aside so a later save can't silently destroy it).
+		cfg = config.DefaultConfig()
+		warnings = append(warnings, recoverUnreadable(filepath.Join(cfg.DataDir, "config.json"), err, "started with default settings", 0))
+	}
 	if !ui.Apply(cfg.Theme) {
 		ui.Apply("dark")
 		cfg.Theme = "dark"
 	}
-	cfg.EnsureDirs()
+	if err := cfg.EnsureDirs(); err != nil {
+		warnings = append(warnings, fmt.Sprintf("Couldn't create the data folders: %v", err))
+	}
 
 	instances := core.NewInstanceManager(cfg.DataDir)
 	accounts := core.NewAccountManager(cfg.DataDir)
-	accounts.Load()
+	if err := accounts.Load(); err != nil {
+		// Load may have partially populated the manager before failing; start
+		// clean, and never let a later Save overwrite the file (it holds refresh
+		// tokens): a malformed one is moved aside, an unreadable one is left
+		// alone and saves are refused this session.
+		accounts = core.NewAccountManager(cfg.DataDir)
+		if !isMalformedJSON(err) {
+			accounts.BlockSaves(err)
+		}
+		warnings = append(warnings, recoverUnreadable(filepath.Join(cfg.DataDir, "accounts.json"), err, "signed out for now", 0o600))
+	}
 
-	return newWithDeps(
+	m := newWithDeps(
 		cfg,
 		instances,
 		accounts,
 		api.NewMojangClient(cfg.DataDir),
 		api.NewModrinthClient(),
 	)
+	m.startupWarnings = warnings
+	return m
+}
+
+// recoverUnreadable handles a state file that failed to load and returns a
+// warning for the home notice; consequence says what the user should expect
+// (e.g. "started with default settings"). A malformed file is moved aside (see
+// [fsutil.Quarantine]) — chmod'ed to perm when non-zero, since it may hold
+// tokens — so a later save can't destroy it. A file that merely couldn't be
+// read (permissions, I/O) is left where it is.
+func recoverUnreadable(path string, loadErr error, consequence string, perm os.FileMode) string {
+	name := filepath.Base(path)
+	if !isMalformedJSON(loadErr) {
+		return fmt.Sprintf("Couldn't read %s (%v) — %s.", name, loadErr, consequence)
+	}
+	dest, err := fsutil.Quarantine(path)
+	if err != nil {
+		return fmt.Sprintf("%s is damaged (%v) — %s.", name, loadErr, consequence)
+	}
+	if perm != 0 {
+		_ = os.Chmod(dest, perm)
+	}
+	return fmt.Sprintf("%s was damaged — %s. The old file was kept as %s.", name, consequence, filepath.Base(dest))
+}
+
+// isMalformedJSON reports whether a load error is about the file's content
+// (vs. failing to read it at all).
+func isMalformedJSON(err error) bool {
+	var syntax *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syntax) || errors.As(err, &typ)
 }
 
 // newWithDeps builds a Model from already-constructed dependencies. It is the
@@ -143,6 +212,9 @@ func newWithDeps(cfg *config.Config, instances *core.InstanceManager, accounts *
 
 // Init implements tea.Model
 func (m *Model) Init() tea.Cmd {
+	if len(m.startupWarnings) > 0 {
+		m.home.SetNotice(m.startupWarnings...)
+	}
 	return tea.Batch(
 		m.home.Init(),
 		m.loadInstances(),
@@ -273,7 +345,7 @@ func (m *Model) gateOnlineLaunch(inst *core.Instance) tea.Cmd {
 		switch acc.Type {
 		case core.AccountTypeOffline:
 			// No Minecraft Services token; online launch would run with an empty accessToken.
-			return ui.NavigateToLaunch{Instance: inst, Offline: true}
+			return ui.ProceedWithLaunch{Instance: inst, Offline: true}
 		case core.AccountTypeMSA:
 			// continue below
 		default:
@@ -398,6 +470,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Instance == nil {
 			return m, nil
 		}
+		if cmd := m.blockIfRunning(msg.Instance, "settings"); cmd != nil {
+			return m, cmd
+		}
 		m.state = StateEditInstance
 		m.editInstance = ui.NewEditInstanceModel(msg.Instance)
 		cw, ch := m.contentSize()
@@ -425,6 +500,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Instance == nil {
 			return m, nil
 		}
+		if cmd := m.blockIfRunning(msg.Instance, "mods"); cmd != nil {
+			return m, cmd
+		}
 		m.state = StateMods
 		m.mods = ui.NewModsModel(msg.Instance, m.modrinth)
 		cw, ch := m.contentSize()
@@ -435,6 +513,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Instance == nil {
 			return m, nil
 		}
+		if cmd := m.blockIfRunning(msg.Instance, "resource packs"); cmd != nil {
+			return m, cmd
+		}
 		m.state = StateResourcePacks
 		m.resourcePacks = ui.NewResourcePacksModel(msg.Instance, m.vanillaTweaks)
 		cw, ch := m.contentSize()
@@ -442,39 +523,51 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.resourcePacks.Init()
 
 	case ui.NavigateToLaunch:
-		if msg.Offline {
-			m.state = StateLaunch
-			m.launch = ui.NewLaunchModel(msg.Instance, m.cfg)
-			cw, ch := m.contentSize()
-			m.launch.SetSize(cw, ch)
-			return m, tea.Batch(
-				m.launch.Init(),
-				m.beginLaunch(msg.Instance, true),
-			)
+		// One launch at a time: a second Enter while the session check or a
+		// launch is running must not start another (two JVMs on one game dir,
+		// and the first launch would become uncancellable).
+		if m.gatingLaunch {
+			return m, nil
 		}
+		if m.launchLive {
+			// The game kept running after the user left its screen: Enter on
+			// that instance reopens it; any other instance waits its turn.
+			if running := m.runningInstance(); running != nil && m.state != StateLaunch {
+				if msg.Instance != nil && msg.Instance.ID == running.ID {
+					m.state = StateLaunch
+					cw, ch := m.contentSize()
+					m.launch.SetSize(cw, ch)
+					return m, nil
+				}
+				return m, m.home.SetTransientBanner(fmt.Sprintf("%s is still running — close Minecraft before launching another instance.", running.Name))
+			}
+			return m, nil
+		}
+		if msg.Offline {
+			return m, m.openLaunchScreen(msg.Instance, true)
+		}
+		m.gatingLaunch = true
+		m.home.SetLaunchGate(msg.Instance.Name)
 		return m, m.gateOnlineLaunch(msg.Instance)
 
 	case ui.ProceedWithLaunch:
-		m.state = StateLaunch
-		m.launch = ui.NewLaunchModel(msg.Instance, m.cfg)
-		cw, ch := m.contentSize()
-		m.launch.SetSize(cw, ch)
-		return m, tea.Batch(
-			m.launch.Init(),
-			m.beginLaunch(msg.Instance, false),
-		)
+		m.gatingLaunch = false
+		m.home.SetLaunchGate("")
+		if m.launchLive {
+			return m, nil
+		}
+		return m, m.openLaunchScreen(msg.Instance, msg.Offline)
 
 	case ui.SessionGateFailed:
+		m.gatingLaunch = false
+		m.home.SetLaunchGate("")
 		if msg.NeedAuth {
 			return m, m.prepareAuthScreen(msg.Instance)
 		}
 		m.state = StateHome
-		if m.launchCtxCancel != nil {
-			m.launchCtxCancel()
-			m.launchCtxCancel = nil
+		if !m.launchLive {
+			m.launch = nil
 		}
-		m.launch = nil
-		m.launchStatusChan = nil
 		bannerCmd := m.home.SetTransientBanner("Could not verify Microsoft session. Check your connection or press [o] for offline.")
 		return m, tea.Batch(bannerCmd, m.loadInstances(), m.sessionRecheckCmd())
 
@@ -533,7 +626,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if acc := m.accounts.GetActive(); acc != nil && acc.ID == msg.accountID {
 			acc.AccessToken = msg.accessToken
 			acc.ExpiresAt = msg.expiresAt
-			acc.MSARefreshToken = msg.refreshToken
+			// refresh_token is optional in an OAuth refresh response: keep the
+			// stored one unless Microsoft actually rotated it, or every later
+			// expiry would force a full device-code sign-in.
+			if msg.refreshToken != "" {
+				acc.MSARefreshToken = msg.refreshToken
+			}
 			if err := m.accounts.Save(); err != nil {
 				bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Refreshed session, but couldn't save: %v", err))
 			}
@@ -602,6 +700,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ui.DeleteInstance:
+		if running := m.runningInstance(); running != nil && msg.Instance != nil && msg.Instance.ID == running.ID {
+			return m, m.home.SetTransientBanner(fmt.Sprintf("Can't delete %s while it's running.", running.Name))
+		}
 		if msg.Instance != nil {
 			var bannerCmd tea.Cmd
 			if err := m.instances.Delete(msg.Instance.ID); err != nil {
@@ -622,62 +723,105 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Launch status updates - continue subscription
 	case ui.LaunchStatusUpdate:
+		if !m.isCurrentLaunch(msg.ID) {
+			return m, nil // from a cancelled/replaced launch: drop, don't resubscribe
+		}
 		var cmd tea.Cmd
 		if m.launch != nil {
 			_, cmd = m.launch.Update(msg)
 		}
-		// Continue listening for more status updates
-		return m, tea.Batch(cmd, m.waitForLaunchStatus(m.launchStatusChan))
+		// Continue listening on this launch's channel
+		return m, tea.Batch(cmd, m.waitForLaunchStatus(msg.ID, m.launchStatusChan))
 
-	// Cancel launch - user pressed ESC
+	// Cancel launch - user pressed ESC (or confirmed "Stop game")
 	case ui.CancelLaunch:
-		// Cancel the context to stop ongoing operations
-		if m.launchCtxCancel != nil {
-			m.launchCtxCancel()
-			m.launchCtxCancel = nil
+		if m.launchLive && m.launch != nil && m.launch.Playing() {
+			// Stopping the running game: interrupt it, but keep the launch —
+			// and the one-launch lock — until it has actually exited. It may
+			// take a while to save, and a relaunch meanwhile would put two
+			// games on one game dir.
+			m.launchStopping = true
+			if m.launchCtxCancel != nil {
+				m.launchCtxCancel()
+			}
+			return m, nil
 		}
-		// Clean up
-		m.launchStatusChan = nil
-		// Return to home
+		m.stopLaunch()
+		m.launch = nil
+		playingCmd := m.home.SetPlaying("")
 		m.state = StateHome
-		return m, tea.Batch(m.loadInstances(), m.sessionRecheckCmd())
+		return m, tea.Batch(playingCmd, m.loadInstances(), m.sessionRecheckCmd())
+
+	// Back home while the game keeps running.
+	case ui.LeaveLaunchScreen:
+		m.state = StateHome
+		var playingCmd tea.Cmd
+		if running := m.runningInstance(); running != nil {
+			playingCmd = m.home.SetPlaying(running.ID)
+		}
+		return m, tea.Batch(playingCmd, m.loadInstances(), m.sessionRecheckCmd())
 
 	// Launch complete - clean up
 	case ui.LaunchComplete:
+		if !m.isCurrentLaunch(msg.ID) {
+			return m, nil
+		}
+		if m.launchStopping {
+			msg.Error = nil // the interrupt exit the user asked for, not a crash
+		}
+		m.stopLaunch()
+		playingCmd := m.home.SetPlaying("")
+		if m.state != StateLaunch {
+			// The game exited while the user was elsewhere: don't navigate
+			// them; refresh (playtime) and report a crash.
+			m.launch = nil
+			if msg.Error != nil {
+				// Persistent: the user may be on another screen right now.
+				m.home.SetNotice(fmt.Sprintf("Minecraft exited with an error: %v", msg.Error))
+			}
+			return m, tea.Batch(playingCmd, m.loadInstances())
+		}
 		var cmd tea.Cmd
 		if m.launch != nil {
 			newLaunch, c := m.launch.Update(msg)
 			m.launch = newLaunch.(*ui.LaunchModel)
 			cmd = c
 		}
-		// Clean up
-		m.launchStatusChan = nil
-		if m.launchCtxCancel != nil {
-			m.launchCtxCancel = nil
-		}
-		return m, cmd
+		return m, tea.Batch(playingCmd, cmd)
 
 	// Retry launch
 	case ui.RetryLaunch:
-		if m.launch != nil {
-			inst := m.launch.GetInstance()
-			if msg.Offline {
-				return m, m.beginLaunch(inst, true)
-			}
-			return m, m.gateOnlineLaunch(inst)
+		if m.launch == nil || m.launchLive || m.gatingLaunch {
+			return m, nil
 		}
-		return m, nil
+		inst := m.launch.GetInstance()
+		if msg.Offline {
+			// A fresh screen: the failed one still has done/err set, which
+			// would keep showing "Failed" and make esc skip the cancel.
+			return m, m.openLaunchScreen(inst, true)
+		}
+		m.gatingLaunch = true
+		m.home.SetLaunchGate(inst.Name)
+		return m, m.gateOnlineLaunch(inst)
 
 	// Global key handlers
 	case tea.KeyMsg:
+		armed := m.quitArmed
+		m.quitArmed = false
 		switch {
 		case key.Matches(msg, m.keys.ForceQuit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Quit):
-			// Don't quit on `q` while a home overlay (palette/actions/delete) owns
-			// input — let the overlay handle the key (e.g. typing `q` in the palette,
-			// or `q` cancelling a dialog).
-			if m.state == StateHome && !m.home.HasOverlay() {
+			// Don't quit on `q` while home owns input — an overlay (typing `q` in
+			// the palette, or `q` cancelling a dialog) or the list filter (a name
+			// containing "q").
+			if m.state == StateHome && !m.home.CapturesInput() {
+				if m.launchLive && !armed {
+					// The game would keep running unmanaged (and its playtime
+					// unrecorded): ask for a second q.
+					m.quitArmed = true
+					return m, m.home.SetTransientBanner("Minecraft is still running — press q again to quit (its playtime won't be recorded).")
+				}
 				return m, tea.Quit
 			}
 		}
@@ -738,13 +882,69 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// openLaunchScreen shows a fresh launch screen for inst and starts the launch.
+func (m *Model) openLaunchScreen(inst *core.Instance, offline bool) tea.Cmd {
+	m.state = StateLaunch
+	m.launch = ui.NewLaunchModel(inst, m.cfg)
+	cw, ch := m.contentSize()
+	m.launch.SetSize(cw, ch)
+	return tea.Batch(
+		m.launch.Init(),
+		m.beginLaunch(inst, offline),
+	)
+}
+
+// runningInstance is the instance of the live launch, or nil.
+func (m *Model) runningInstance() *core.Instance {
+	if !m.launchLive || m.launch == nil {
+		return nil
+	}
+	return m.launch.GetInstance()
+}
+
+// isCurrentLaunch reports whether a launch message belongs to the live launch.
+func (m *Model) isCurrentLaunch(id int) bool {
+	return m.launchLive && id == m.launchID
+}
+
+// stopLaunch cancels the live launch (if any) and forgets its channel. Its
+// goroutine unwinds on the cancelled context and closes the channel; any
+// messages still in flight carry the old ID and are dropped.
+func (m *Model) stopLaunch() {
+	if m.launchCtxCancel != nil {
+		m.launchCtxCancel()
+	}
+	m.launchCtxCancel = nil
+	m.launchStatusChan = nil
+	m.launchLive = false
+	m.launchStopping = false
+}
+
+// blockIfRunning refuses to open a screen that changes the running instance's
+// files (the game holds them open, and rewrites options.txt when it exits).
+func (m *Model) blockIfRunning(inst *core.Instance, what string) tea.Cmd {
+	if running := m.runningInstance(); running != nil && inst != nil && inst.ID == running.ID {
+		return m.home.SetTransientBanner(fmt.Sprintf("Close Minecraft before changing %s's %s.", running.Name, what))
+	}
+	return nil
+}
+
 // beginLaunch sets up the launch context and status channel on the event loop
 // (so reads/writes of m.launchCtxCancel and m.launchStatusChan stay single-threaded),
 // then hands them to startLaunch's command goroutine.
 func (m *Model) beginLaunch(inst *core.Instance, offline bool) tea.Cmd {
+	m.stopLaunch() // never leave a previous launch running unreachable
+	m.launchID++
+	m.launchLive = true
 	ctx, cancel := context.WithCancel(context.Background())
 	m.launchCtxCancel = cancel
 	m.launchStatusChan = make(chan launch.Status, 10)
+
+	// The launch screen's [v] and the launcher's log readers share this filter.
+	logFilter := launch.NewLogFilter(launch.ParseLaunchLogVerbosity(m.cfg.LaunchLogVerbosity))
+	if m.launch != nil {
+		m.launch.SetLogFilter(logFilter)
+	}
 
 	// Snapshot credentials ON the event loop so the command goroutine never reads
 	// the shared *core.Account fields, which Update may concurrently rewrite when a
@@ -760,15 +960,23 @@ func (m *Model) beginLaunch(inst *core.Instance, offline bool) tea.Cmd {
 		}
 	}
 
-	return m.startLaunch(ctx, m.launchStatusChan, inst, offline, playerName, uuid, accessToken)
+	return m.startLaunch(ctx, m.launchID, m.launchStatusChan, logFilter, inst, offline, playerName, uuid, accessToken)
 }
 
-func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, inst *core.Instance, offline bool, playerName, uuid, accessToken string) tea.Cmd {
+func (m *Model) startLaunch(ctx context.Context, id int, statusChan chan launch.Status, logFilter *launch.LogFilter, inst *core.Instance, offline bool, playerName, uuid, accessToken string) tea.Cmd {
+	// send delivers a status unless the launch was cancelled — after a cancel
+	// nobody reads statusChan, so a plain send would block this goroutine forever.
+	send := func(s launch.Status) {
+		select {
+		case statusChan <- s:
+		case <-ctx.Done():
+		}
+	}
 	return func() tea.Msg {
 		// Find version info (vanilla or merged loader profile)
 		details, err := loader.ResolveVersionDetails(ctx, m.mojang, inst, offline)
 		if err != nil {
-			return ui.LaunchComplete{Error: err}
+			return ui.LaunchComplete{ID: id, Error: err}
 		}
 		if loader.ParseKind(inst.Loader) == loader.KindFabric {
 			_ = m.instances.Update(inst)
@@ -776,7 +984,7 @@ func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, 
 
 		// Validate version info
 		if details.MainClass == "" {
-			return ui.LaunchComplete{Error: fmt.Errorf("invalid version info: missing main class")}
+			return ui.LaunchComplete{ID: id, Error: fmt.Errorf("invalid version info: missing main class")}
 		}
 
 		// Player info (playerName/uuid/accessToken) is snapshotted by beginLaunch on
@@ -785,6 +993,7 @@ func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, 
 
 		// Start launcher in goroutine (starter Fabric mods first if requested, with progress on this screen)
 		go func() {
+			defer close(statusChan)
 			if loader.ParseKind(inst.Loader) == loader.KindFabric && inst.InstallStarterFabricMods {
 				if mods.StarterFabricModsComplete(inst) {
 					inst.InstallStarterFabricMods = false
@@ -796,19 +1005,18 @@ func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, 
 						if total > 0 {
 							p = float64(i) / float64(total) * 0.12
 						}
-						statusChan <- launch.Status{
+						send(launch.Status{
 							Step:     "Installing starter mods",
 							Message:  fmt.Sprintf("Downloading %s (%d/%d). Slow connections may take several minutes.", label, i+1, total),
 							Progress: p,
-						}
+						})
 					})
 					if err != nil {
-						statusChan <- launch.Status{
+						send(launch.Status{
 							Step:    "Installing starter mods",
 							Message: err.Error(),
 							Error:   err,
-						}
-						close(statusChan)
+						})
 						return
 					}
 					inst.InstallStarterFabricMods = false
@@ -824,6 +1032,7 @@ func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, 
 				UUID:             uuid,
 				AccessToken:      accessToken,
 				Config:           m.cfg,
+				LogFilter:        logFilter,
 				UpdateLastPlayed: m.instances.UpdateLastPlayed,
 				AddPlayTime:      m.instances.AddPlayTime,
 				UpdateInstance:   m.instances.Update,
@@ -831,46 +1040,46 @@ func (m *Model) startLaunch(ctx context.Context, statusChan chan launch.Status, 
 
 			err := launcher.Launch(ctx)
 
-			// Send final status then close
+			// Send final status; the deferred close ends the subscription.
 			if err != nil {
-				statusChan <- launch.Status{
+				send(launch.Status{
 					Step:    "Error",
 					Message: err.Error(),
 					Error:   err,
-				}
+				})
 			}
-			close(statusChan)
 		}()
 
 		// Return first status update command
-		return m.waitForLaunchStatus(statusChan)()
+		return m.waitForLaunchStatus(id, statusChan)()
 	}
 }
 
-// waitForLaunchStatus creates a command that waits for the next launch status.
-// The channel is captured by value so the command goroutine never reads the
-// m.launchStatusChan field (which the event loop may set to nil on cancel/complete).
-func (m *Model) waitForLaunchStatus(ch chan launch.Status) tea.Cmd {
+// waitForLaunchStatus creates a command that waits for the next status of
+// launch id. The channel is captured by value so the command goroutine never
+// reads the m.launchStatusChan field (which the event loop may nil on
+// cancel/complete); every message carries id so stale ones can be dropped.
+func (m *Model) waitForLaunchStatus(id int, ch chan launch.Status) tea.Cmd {
 	return func() tea.Msg {
 		if ch == nil {
-			return ui.LaunchComplete{}
+			return ui.LaunchComplete{ID: id}
 		}
 
 		status, ok := <-ch
 		if !ok {
 			// Channel closed, launch complete
-			return ui.LaunchComplete{}
+			return ui.LaunchComplete{ID: id}
 		}
 
 		if status.Error != nil {
-			return ui.LaunchComplete{Error: status.Error}
+			return ui.LaunchComplete{ID: id, Error: status.Error}
 		}
 
 		if status.IsComplete {
-			return ui.LaunchComplete{}
+			return ui.LaunchComplete{ID: id}
 		}
 
-		return ui.LaunchStatusUpdate{Status: status}
+		return ui.LaunchStatusUpdate{ID: id, Status: status}
 	}
 }
 

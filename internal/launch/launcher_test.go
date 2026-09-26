@@ -53,59 +53,33 @@ func TestLauncher_IsFullyDownloaded(t *testing.T) {
 	t.Run("AlreadyDownloaded_True", func(t *testing.T) {
 		inst.IsFullyDownloaded = true
 
-		l := NewLauncher(&Options{
-			Instance:    inst,
-			VersionInfo: version,
-			Config:      cfg,
-		}, nil)
-		l.retryMax = 0 // fail fast if a download is wrongly attempted
-
-		// Should skip download and return nil (success)
-		// even though the library file is missing and URL is bad.
-		err := l.Launch(context.Background())
-		// checkJava might fail if not found, but we want to test downloadLibraries specifically.
-		// Since Launch calls checkJava first, we might hit that.
-		// Let's call downloadLibraries directly via a test-specific export or just rely on Launch failure point.
-		// Launcher doesn't export downloadLibraries.
-		// But verify behaviour via log/status if possible?
-		// Or assume checkJava passes if we provide a dummy java path.
-
-		l.opts.JavaPath = "dummy-java" // Skip checkJava
-
-		// However, downloadLibraries is step 2.
-		// If checkJava passes, downloadLibraries is next.
-		// If it skips, it goes to downloadAssets.
-		// Assets also has items? VersionInfo has AssetIndex.
-		// If we leave AssetIndex empty or dummy, it might fail there if not skipped.
-		// We want verification that it SKIPPED.
-
-		// Let's set the AssetIndex URL to bad too.
-		version.AssetIndex = core.AssetIndexRef{
+		// Both the library and the asset index point at unroutable URLs, so any
+		// download attempt fails. JavaPath is set up front so checkJava never runs
+		// real detection or an Adoptium download.
+		v := *version
+		v.AssetIndex = core.AssetIndexRef{
 			ID:  "test-assets",
 			URL: "http://localhost:0/assets.json",
 		}
+		l := NewLauncher(&Options{
+			Instance:    inst,
+			VersionInfo: &v,
+			Config:      cfg,
+			JavaPath:    "dummy-java",
+		}, nil)
+		l.retryMax = 0 // fail fast if a download is wrongly attempted
 
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// Launch should proceed comfortably through "Downloading libraries" and "Downloading assets"
-		// because of the flag.
-		// It will eventually fail at "Launching" because Java path is dummy or game jar missing.
-		// But if it fails at "Downloading ...", then the flag didn't work.
-
-		err = l.Launch(ctx)
-
-		// We expect error at "Launching" or "Preparing game", NOT download.
-		// "Preparing game" makes dirs. "Launching" fails exec.
-
+		// The dummy java can't be exec'd, so Launch must fail — but only at the
+		// final "Launching" step, proving both download steps were skipped.
+		err := l.Launch(ctx)
 		if err == nil {
-			// It shouldn't succeed fully with dummy java
-		} else {
-			// Check error message.
-			errStr := err.Error()
-			if strings.Contains(errStr, "downloading libraries") || strings.Contains(errStr, "downloading assets") || strings.Contains(errStr, "dial tcp") {
-				t.Errorf("Launcher tried to download despite IsFullyDownloaded=true: %v", err)
-			}
+			t.Fatal("expected Launch to fail exec'ing the dummy java")
+		}
+		if !strings.HasPrefix(err.Error(), "Launching:") {
+			t.Errorf("expected failure at the Launching step (downloads skipped), got: %v", err)
 		}
 	})
 

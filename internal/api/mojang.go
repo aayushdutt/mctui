@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/fsutil"
 )
 
 const (
@@ -210,7 +211,7 @@ func (c *MojangClient) saveVersionDetails(versionID string, details *core.Versio
 		return fmt.Errorf("encoding version details: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0o644)
+	return fsutil.WriteFileAtomic(path, data, 0o644)
 }
 
 func (c *MojangClient) versionDetailsPath(versionID string) string {

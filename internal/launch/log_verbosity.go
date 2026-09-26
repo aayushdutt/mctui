@@ -2,6 +2,7 @@ package launch
 
 import (
 	"strings"
+	"sync/atomic"
 )
 
 // LogVerbosity controls which game log lines are surfaced in the TUI during play.
@@ -21,6 +22,34 @@ const (
 	logSeverityWarn
 	logSeverityError
 )
+
+// LogFilter is the live game-log verbosity for a running launch. The launch
+// screen changes it ([v]) on the UI goroutine while the launcher's log readers
+// consult it per line on their own goroutines, so it is atomic. A nil
+// *LogFilter reads as LogVerbosityError.
+type LogFilter struct{ v atomic.Int32 }
+
+// NewLogFilter returns a filter starting at v.
+func NewLogFilter(v LogVerbosity) *LogFilter {
+	f := &LogFilter{}
+	f.Set(v)
+	return f
+}
+
+// Get returns the current verbosity.
+func (f *LogFilter) Get() LogVerbosity {
+	if f == nil {
+		return LogVerbosityError
+	}
+	return LogVerbosity(f.v.Load())
+}
+
+// Set changes the verbosity; later log lines use it.
+func (f *LogFilter) Set(v LogVerbosity) {
+	if f != nil {
+		f.v.Store(int32(v))
+	}
+}
 
 // ParseLaunchLogVerbosity maps config / JSON values to LogVerbosity.
 func ParseLaunchLogVerbosity(s string) LogVerbosity {

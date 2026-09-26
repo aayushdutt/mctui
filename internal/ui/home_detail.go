@@ -74,13 +74,18 @@ func statusBadge(inst *core.Instance) string {
 // the focused Overview tab) launches via launchSelected; the offline key is the
 // lowercase `o` bound in defaultHomeKeyMap / shown in buildFooter.
 func (m *HomeModel) playControls() string {
+	mark := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(GlyphPointer + " ")
+	playKey := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("  Enter")
+	if inst := m.SelectedInstance(); inst != nil && inst.ID == m.playingID {
+		// Its game is running: Enter reopens the launch screen.
+		label := lipgloss.NewStyle().Bold(true).Foreground(Active.Text).Render("View game")
+		return mark + label + playKey
+	}
 	action := "Play"
 	if m.noOnlineSession() {
 		action = "Login & play"
 	}
-	mark := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(GlyphPointer + " ")
 	label := lipgloss.NewStyle().Bold(true).Foreground(Active.Text).Render(action)
-	playKey := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("  Enter")
 	gap := "      "
 	offline := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Play offline")
 	offlineKey := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(" o")

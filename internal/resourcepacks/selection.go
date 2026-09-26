@@ -9,6 +9,7 @@ import (
 
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/fsutil"
 )
 
 // cartFileName is the persisted per-instance cart, stored alongside the merged
@@ -93,12 +94,7 @@ func SaveSelection(inst *core.Instance, sel *Selection) error {
 	if err != nil {
 		return err
 	}
-	p := cartPath(inst)
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
+	return fsutil.WriteFileAtomic(cartPath(inst), data, 0o644)
 }
 
 // NewSelection returns an empty cart targeting the given catalog version.

@@ -27,3 +27,6 @@ Thumbs.db
 # Local config (may contain secrets)
 config.local.json
 docs/
+
+# Local agent tooling (worktrees, settings)
+.claude/

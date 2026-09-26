@@ -238,9 +238,7 @@ func (m *ResourcePacksModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.startApply()
 
 	case "c", "C":
-		if m.sel.Count() > 0 {
-			m.rpDialog = rpDialogConfirmClear
-		}
+		m.askClear()
 		return m, nil
 
 	case ":":
@@ -272,8 +270,25 @@ func (m *ResourcePacksModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, m.forwardToFocused(msg)
 }
 
+// askClear opens the "Clear your pack?" confirmation (Keep focused) when the
+// cart has anything to clear.
+func (m *ResourcePacksModel) askClear() {
+	if m.sel.Count() > 0 {
+		m.rpDialog = rpDialogConfirmClear
+		m.rpDialogFocusYes = false
+	}
+}
+
 func (m *ResourcePacksModel) handleClearDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	if ConfirmKeyToggles(msg.String()) {
+		m.rpDialogFocusYes = !m.rpDialogFocusYes
+		return m, nil
+	}
+	key := msg.String()
+	if key == "enter" && !m.rpDialogFocusYes {
+		key = "n" // Enter follows the highlight: Keep
+	}
+	switch key {
 	case "y", "Y", "enter":
 		m.rpDialog = rpDialogNone
 		m.sel.Clear()

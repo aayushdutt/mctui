@@ -21,8 +21,12 @@ func (m *HomeModel) openPalette() {
 // selection at Run time; the palette is modal, so the selection can't move while
 // it is open.
 func (m *HomeModel) homePaletteItems() []PaletteItem {
+	playLabel := "Play"
+	if sel := m.SelectedInstance(); sel != nil && sel.ID == m.playingID {
+		playLabel = "View game"
+	}
 	items := []PaletteItem{
-		{Label: "Play", Run: func() tea.Cmd { return m.launchSelected(false) }},
+		{Label: playLabel, Run: func() tea.Cmd { return m.launchSelected(false) }},
 		{Label: "Play offline", Run: func() tea.Cmd { return m.launchSelected(true) }},
 		{Label: "Mods", Run: m.paletteOpenMods},
 		{Label: "Resource packs", Run: m.paletteOpenResourcePacks},
@@ -64,6 +68,7 @@ func (m *HomeModel) jumpToInstance(idx int) {
 	}
 	m.list.ResetFilter()
 	m.list.Select(idx)
+	m.resetDetailFocus()
 }
 
 func (m *HomeModel) paletteOpenMods() tea.Cmd {
@@ -101,9 +106,7 @@ func (m *HomeModel) paletteDeleteInstance() tea.Cmd {
 	if sel == nil {
 		return nil
 	}
-	m.confirmDelete = true
-	m.deleteTarget = sel
-	m.deleteFocusYes = true
+	m.armDelete(sel)
 	return nil
 }
 

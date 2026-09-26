@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/aayushdutt/mctui/internal/fsutil"
 )
 
 // AccountManager handles account storage
@@ -12,6 +14,15 @@ type AccountManager struct {
 	Accounts []*Account `json:"accounts"`
 	ActiveID string     `json:"activeId"` // ID of the active account
 	filePath string
+
+	// saveBlocked, when set, makes Save refuse: accounts.json exists but
+	// couldn't be read, so writing over it could destroy the tokens it holds.
+	saveBlocked error
+}
+
+// BlockSaves makes Save refuse with reason (see saveBlocked).
+func (m *AccountManager) BlockSaves(reason error) {
+	m.saveBlocked = reason
 }
 
 // NewAccountManager creates a new manager
@@ -22,6 +33,10 @@ func NewAccountManager(dataDir string) *AccountManager {
 	}
 }
 
+// accountsFilePerm keeps accounts.json owner-only: it holds the Minecraft access
+// token and the long-lived Microsoft refresh token.
+const accountsFilePerm = 0o600
+
 // Load reads accounts from disk
 func (m *AccountManager) Load() error {
 	data, err := os.ReadFile(m.filePath)
@@ -31,16 +46,25 @@ func (m *AccountManager) Load() error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, m)
+	if err := json.Unmarshal(data, m); err != nil {
+		return err
+	}
+	// Tighten files written by older versions (0644). Best effort: a failure
+	// here must not lose the accounts we just read.
+	_ = os.Chmod(m.filePath, accountsFilePerm)
+	return nil
 }
 
-// Save writes accounts to disk
+// Save writes accounts to disk atomically, readable only by the owner.
 func (m *AccountManager) Save() error {
+	if m.saveBlocked != nil {
+		return fmt.Errorf("not overwriting accounts.json, which couldn't be read: %w", m.saveBlocked)
+	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.filePath, data, 0644)
+	return fsutil.WriteFileAtomic(m.filePath, data, accountsFilePerm)
 }
 
 // Add adds or updates an account

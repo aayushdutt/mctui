@@ -77,18 +77,26 @@ type (
 		Error   error
 	}
 
-	// LaunchStatusUpdate is sent during launch
+	// LaunchStatusUpdate is sent during launch. ID identifies the launch it
+	// belongs to, so results from a cancelled or replaced launch are dropped.
 	LaunchStatusUpdate struct {
+		ID     int
 		Status launch.Status
 	}
 
-	// LaunchComplete is sent when launch finishes
+	// LaunchComplete is sent when launch finishes (ID as for LaunchStatusUpdate).
 	LaunchComplete struct {
+		ID    int
 		Error error
 	}
 
-	// CancelLaunch is sent when user cancels launch
+	// CancelLaunch is sent when user cancels launch (or confirms "Stop game"
+	// while it runs)
 	CancelLaunch struct{}
+
+	// LeaveLaunchScreen returns home while the game keeps running; the launch
+	// stays live and its screen can be reopened from the instance.
+	LeaveLaunchScreen struct{}
 
 	// RetryLaunch is sent when user retries launch (generic or offline)
 	RetryLaunch struct {
@@ -98,6 +106,7 @@ type (
 	// ProceedWithLaunch continues to the launch view after online session checks pass.
 	ProceedWithLaunch struct {
 		Instance *core.Instance
+		Offline  bool // the active account is offline-only: launch without a token
 	}
 
 	// SessionGateFailed blocks online launch until the user re-authenticates or network is available.

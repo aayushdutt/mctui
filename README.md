@@ -90,6 +90,7 @@ mctui/
 | Key                | Action                                    |
 | ------------------ | ----------------------------------------- |
 | `↑` `↓` or `j` `k` | Move selection                            |
+| `PgUp` `PgDn`      | Page through the instance list            |
 | `Enter`            | Launch (online if signed in)              |
 | `→` `l` / `←` `h`  | Focus detail panel / step tabs / back     |
 | `Tab`              | Toggle focus between list and detail pane |
@@ -109,7 +110,7 @@ mctui/
 | `q`                | Quit                                      |
 
 
-Grammar across screens: **Enter** = confirm/launch/add, **Esc** = one step back, **Tab/Shift+Tab** = cycle panes or fields, **`d`** = delete/remove in any list, and **`h` `j` `k` `l`** mirror the arrows. **`?`** opens a full key reference on any screen, and **`:`** opens the command palette everywhere. On the **launch** screen, `v` cycles log verbosity. On the **mods** screen, `Tab` (or `h`/`l`) moves between the installed list, search, and results; `d`/`Backspace` removes an installed jar; `Esc` returns home. In the **new-instance** wizard, `space` toggles snapshot versions.
+Grammar across screens: **Enter** = confirm/launch/add, **Esc** = one step back, **Tab/Shift+Tab** = cycle panes or fields, **`d`** = delete/remove in any list, and **`h` `j` `k` `l`** mirror the arrows. **`?`** opens a full key reference on any screen, and **`:`** opens the command palette everywhere. On the **launch** screen, `v` cycles log verbosity; while the game is running, `Esc` returns home and **leaves the game running** (Enter on the instance reopens its screen), and `s` stops the game after a confirmation (mctui waits for it to exit). With a game running, `q` on home asks for a second `q` before quitting, and the running instance's mods, resource packs, and settings are locked. On the **mods** screen, `Tab` (or `h`/`l`) moves between the installed list, search, and results; `d`/`Backspace` removes an installed jar; `Esc` returns home. In the **new-instance** wizard, `space` toggles snapshot versions.
 
 ## Data and configuration
 

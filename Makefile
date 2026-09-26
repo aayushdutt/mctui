@@ -59,12 +59,17 @@ lint:
 fmt:
 	go fmt ./...
 	@if command -v goimports >/dev/null; then \
-		goimports -w .; \
+		goimports -w $$(git ls-files --cached --others --exclude-standard '*.go'); \
 	fi
 
-# Fail if any file is not gofmt-clean (CI-friendly)
+# Fail if any Go file is not gofmt-clean (CI-friendly). Scoped to files git
+# tracks or would track (new files included; ignored trees such as agent
+# worktrees under .claude/ excluded) so they can't fail the gate or get
+# rewritten by `make fmt`.
 fmt-check:
-	@unformatted=$$(gofmt -l .); \
+	@files=$$(git ls-files --cached --others --exclude-standard '*.go'); \
+	if [ -z "$$files" ]; then echo "fmt-check: no Go files found (not a git checkout?)"; exit 1; fi; \
+	unformatted=$$(gofmt -l $$files); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Not gofmt-clean:"; echo "$$unformatted"; exit 1; \
 	fi

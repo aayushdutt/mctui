@@ -14,6 +14,7 @@ import (
 
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/fsutil"
 )
 
 // metaBase is the Fabric meta host. It is a package var (not a const) and
@@ -148,5 +149,5 @@ func saveMergedCache(path string, merged *core.VersionDetails) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return fsutil.WriteFileAtomic(path, data, 0o644)
 }

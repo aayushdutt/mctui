@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/fsutil"
 )
 
 // optionsEntry is the resourcePacks array entry referencing the merged pack.
@@ -250,13 +251,9 @@ func encodeEntries(entries []string) string {
 	return "[" + strings.Join(parts, ",") + "]"
 }
 
-// atomicWriteFile writes data to path via a tmp file + rename.
+// atomicWriteFile writes data to path atomically (see [fsutil.WriteFileAtomic]).
 func atomicWriteFile(path string, data []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fsutil.WriteFileAtomic(path, data, 0o644)
 }
 
 // optionsTxtPath is the unexported path helper; OptionsTxtPath wraps it.

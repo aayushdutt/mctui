@@ -3,12 +3,16 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/aayushdutt/mctui/internal/fsutil"
 )
 
 // Instance represents a Minecraft instance
@@ -95,10 +99,16 @@ func RecencyForSort(inst *Instance) time.Time {
 	}
 }
 
-// InstanceManager handles instance CRUD operations
+// InstanceManager handles instance CRUD operations. It is safe for concurrent
+// use: the TUI event loop, Cmd goroutines (Load/List), and a running launch
+// (Update/UpdateLastPlayed/AddPlayTime) all go through it.
 type InstanceManager struct {
+	mu        sync.Mutex
 	basePath  string
 	instances map[string]*Instance
+	// onDisk is the instance.json content last read or written per ID, so a
+	// reload can tell a hand edit (take it) from our own save (keep memory).
+	onDisk map[string][]byte
 }
 
 // NewInstanceManager creates a new instance manager
@@ -106,22 +116,34 @@ func NewInstanceManager(basePath string) *InstanceManager {
 	return &InstanceManager{
 		basePath:  basePath,
 		instances: make(map[string]*Instance),
+		onDisk:    make(map[string][]byte),
 	}
 }
 
-// Load reads all instances from disk
+// Load syncs the in-memory set with the instances on disk.
+//
+// Instances already loaded keep their *Instance: a running launch holds that
+// pointer and persists through the manager, so swapping in a fresh copy would
+// let the stale one overwrite newer state (e.g. playtime credited at game exit).
+// If an instance.json changed on disk since mctui last read or wrote it (a hand
+// edit — the only way to change version/loader), its contents are taken into
+// the existing pointer. New folders are added; instances whose folder is gone
+// are dropped.
+//
+// The whole scan runs under the lock so a concurrent save or delete can't
+// interleave with it (and on Windows, a save's rename can't race a read here).
 func (im *InstanceManager) Load() error {
-	instancesPath := filepath.Join(im.basePath, "instances")
+	im.mu.Lock()
+	defer im.mu.Unlock()
 
+	instancesPath := filepath.Join(im.basePath, "instances")
 	entries, err := os.ReadDir(instancesPath)
-	if os.IsNotExist(err) {
-		// No instances directory yet, that's fine
-		return nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
+	next := make(map[string]*Instance, len(entries))
+	onDisk := make(map[string][]byte, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -138,14 +160,37 @@ func (im *InstanceManager) Load() error {
 			continue // Skip malformed configs
 		}
 
-		im.instances[inst.ID] = &inst
+		if cur, ok := im.instances[inst.ID]; ok {
+			if !bytes.Equal(data, im.onDisk[inst.ID]) {
+				*cur = inst // edited outside mctui: take the file's contents
+			}
+			next[inst.ID] = cur
+		} else {
+			next[inst.ID] = &inst
+		}
+		onDisk[inst.ID] = data
 	}
 
+	// Keep known instances the scan couldn't read while their folder still
+	// exists (e.g. an instance.json being hand-edited into invalid JSON).
+	for id, cur := range im.instances {
+		if _, ok := next[id]; ok {
+			continue
+		}
+		if _, err := os.Stat(cur.Path); err == nil {
+			next[id] = cur
+			onDisk[id] = im.onDisk[id]
+		}
+	}
+	im.instances = next
+	im.onDisk = onDisk
 	return nil
 }
 
 // List returns all instances
 func (im *InstanceManager) List() []*Instance {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	result := make([]*Instance, 0, len(im.instances))
 	for _, inst := range im.instances {
 		result = append(result, inst)
@@ -155,12 +200,14 @@ func (im *InstanceManager) List() []*Instance {
 
 // Get returns an instance by ID
 func (im *InstanceManager) Get(id string) (*Instance, bool) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	inst, ok := im.instances[id]
 	return inst, ok
 }
 
 // idTaken reports whether an instance ID (folder basename) is already in use,
-// either in memory or on disk.
+// either in memory or on disk. Caller holds im.mu.
 func (im *InstanceManager) idTaken(id string) bool {
 	if _, ok := im.instances[id]; ok {
 		return true
@@ -172,6 +219,7 @@ func (im *InstanceManager) idTaken(id string) bool {
 // generateInstanceID derives a unique, filesystem-safe folder name from a display
 // name. Duplicates get a " (2)", " (3)", … suffix (PrismLauncher-style), so display
 // names may collide freely while folder names stay unique and recognizable.
+// Caller holds im.mu.
 func (im *InstanceManager) generateInstanceID(name string) string {
 	base := SanitizeInstanceDirName(name)
 	if base == "" {
@@ -188,6 +236,8 @@ func (im *InstanceManager) generateInstanceID(name string) string {
 // (sanitized + de-duplicated); the display Name is kept verbatim and stays editable
 // independently of the folder/ID.
 func (im *InstanceManager) Create(inst *Instance) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	if inst.ID == "" {
 		inst.ID = im.generateInstanceID(inst.Name)
 	}
@@ -214,6 +264,8 @@ func (im *InstanceManager) Create(inst *Instance) error {
 
 // Delete removes an instance
 func (im *InstanceManager) Delete(id string) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	inst, ok := im.instances[id]
 	if !ok {
 		return nil
@@ -225,10 +277,12 @@ func (im *InstanceManager) Delete(id string) error {
 	}
 
 	delete(im.instances, id)
+	delete(im.onDisk, id)
 	return nil
 }
 
-// save writes instance config to disk
+// save writes instance config to disk atomically. Caller holds im.mu, which
+// also serializes concurrent saves of the same instance.json.
 func (im *InstanceManager) save(inst *Instance) error {
 	data, err := json.MarshalIndent(inst, "", "  ")
 	if err != nil {
@@ -236,17 +290,25 @@ func (im *InstanceManager) save(inst *Instance) error {
 	}
 
 	configPath := filepath.Join(inst.Path, "instance.json")
-	return os.WriteFile(configPath, data, 0644)
+	if err := fsutil.WriteFileAtomic(configPath, data, 0o644); err != nil {
+		return err
+	}
+	im.onDisk[inst.ID] = data
+	return nil
 }
 
 // Update updates an existing instance
 func (im *InstanceManager) Update(inst *Instance) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	im.instances[inst.ID] = inst
 	return im.save(inst)
 }
 
 // UpdateLastPlayed updates the last played timestamp
 func (im *InstanceManager) UpdateLastPlayed(id string) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	inst, ok := im.instances[id]
 	if !ok {
 		return nil
@@ -263,6 +325,8 @@ func (im *InstanceManager) AddPlayTime(id string, seconds int64) error {
 	if seconds <= 0 {
 		return nil
 	}
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	inst, ok := im.instances[id]
 	if !ok {
 		return nil

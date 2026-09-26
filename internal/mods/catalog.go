@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/fsutil"
 )
 
 const catalogFileName = ".mctui-modrinth.json"
@@ -63,12 +64,7 @@ func SaveModrinthCatalog(inst *core.Instance, c *ModrinthCatalog) error {
 	if err != nil {
 		return err
 	}
-	p := catalogPath(inst)
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
+	return fsutil.WriteFileAtomic(catalogPath(inst), data, 0o644)
 }
 
 // RecordModrinthInstall appends or updates an entry and saves.

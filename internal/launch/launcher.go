@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aayushdutt/mctui/internal/config"
@@ -41,6 +43,10 @@ type Options struct {
 	AccessToken string // Auth Token
 	Config      *config.Config
 
+	// LogFilter is the live game-log verbosity, shared with the launch screen.
+	// Nil means "fixed at Config.LaunchLogVerbosity as of NewLauncher".
+	LogFilter *LogFilter
+
 	// Callbacks
 	UpdateLastPlayed func(id string) error
 	AddPlayTime      func(id string, seconds int64) error
@@ -62,10 +68,20 @@ type Launcher struct {
 	// to download.DefaultRetryMax; tests set it to 0 so failed-download paths fail
 	// fast instead of incurring retryablehttp's multi-second backoff.
 	retryMax int
+	// cancelled is the launch context's Done channel: once closed nobody reads
+	// statusChan any more, so sendStatus stops waiting.
+	cancelled <-chan struct{}
 }
 
 // NewLauncher creates a new launcher
 func NewLauncher(opts *Options, statusChan chan<- Status) *Launcher {
+	if opts.LogFilter == nil {
+		v := LogVerbosityError
+		if opts.Config != nil {
+			v = ParseLaunchLogVerbosity(opts.Config.LaunchLogVerbosity)
+		}
+		opts.LogFilter = NewLogFilter(v)
+	}
 	return &Launcher{
 		opts:       opts,
 		statusChan: statusChan,
@@ -76,6 +92,7 @@ func NewLauncher(opts *Options, statusChan chan<- Status) *Launcher {
 
 // Launch executes the full launch pipeline
 func (l *Launcher) Launch(ctx context.Context) error {
+	l.cancelled = ctx.Done()
 	// Invalidate download skip if instance version/loader changed (before any download step).
 	l.invalidateStaleDownloadCache()
 
@@ -126,12 +143,17 @@ func (l *Launcher) Launch(ctx context.Context) error {
 	return nil
 }
 
+// sendStatus delivers s to the launch screen, waiting until it's read — dropping
+// statuses when the channel was full lost the "Playing" step (the screen then
+// treated a running game as still launching) and the tail of crash logs. After
+// the launch is cancelled nobody reads the channel, so it stops waiting.
 func (l *Launcher) sendStatus(s Status) {
-	if l.statusChan != nil {
-		select {
-		case l.statusChan <- s:
-		default:
-		}
+	if l.statusChan == nil {
+		return
+	}
+	select {
+	case l.statusChan <- s:
+	case <-l.cancelled:
 	}
 }
 
@@ -367,21 +389,37 @@ func (l *Launcher) prepareGame(ctx context.Context) error {
 }
 
 func (l *Launcher) launchGame(ctx context.Context) error {
+	l.cancelled = ctx.Done()
+	// Cancelled after the previous step: don't start a game only to stop it.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	args := l.buildArguments()
 	inst := l.opts.Instance
 
 	gameDir := filepath.Join(inst.Path, ".minecraft")
 
-	cmd := exec.CommandContext(ctx, l.opts.JavaPath, args...)
+	// Not exec.CommandContext: its cancel is Process.Kill, which gives the game
+	// no chance to shut down. stopOnCancel interrupts first (see below).
+	cmd := exec.Command(l.opts.JavaPath, args...)
 	cmd.Dir = gameDir
 
-	// Capture output
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
+	// Capture output through in-memory pipes rather than StdoutPipe: exec then
+	// copies the game's output into them and Wait joins that copying, bounded
+	// by WaitDelay — so a child process that inherited the game's stdout can't
+	// keep this launch "playing" after the game itself has exited.
+	stdout, stdoutW := io.Pipe()
+	stderr, stderrW := io.Pipe()
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
+	cmd.WaitDelay = outputDrainDelay
 
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	exited := make(chan struct{})
+	defer close(exited)
+	go stopOnCancel(ctx, cmd.Process, exited, stopGracePeriod)
 
 	l.sendStatus(Status{
 		Step:    "Playing",
@@ -395,12 +433,23 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 	// Mark the session start so we can credit playtime once the game exits.
 	startedAt := time.Now()
 
-	// Stream logs
-	go l.streamLog(stdout, "stdout")
-	go l.streamLog(stderr, "stderr")
+	// Stream logs until EOF. The readers are joined before returning, so no
+	// status is sent after Launch returns — the caller closes statusChan then.
+	var streams sync.WaitGroup
+	streams.Add(2)
+	go func() { defer streams.Done(); l.streamLog(stdout, "stdout") }()
+	go func() { defer streams.Done(); l.streamLog(stderr, "stderr") }()
 
-	// Wait for game to finish
+	// Wait for the game to exit and exec to finish copying its output (all of
+	// it has been read by then — the pipes are synchronous), then end the
+	// streams.
 	err := cmd.Wait()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil // the game exited cleanly; a lingering child held its output
+	}
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+	streams.Wait()
 
 	// Credit the session's wall-clock duration to the instance's total playtime,
 	// regardless of how the game exited (clean quit, crash, or ctx cancel).
@@ -420,15 +469,52 @@ func (l *Launcher) launchGame(ctx context.Context) error {
 	return nil
 }
 
+// outputDrainDelay bounds how long Wait keeps copying the game's output after
+// the game has exited (see launchGame). A var so tests can shorten it.
+var outputDrainDelay = 2 * time.Second
+
+// stopGracePeriod is how long a cancelled game gets to shut down after the
+// interrupt before it is killed. A var so tests can shorten it.
+var stopGracePeriod = 15 * time.Second
+
+// stopOnCancel stops the game when ctx is cancelled (the user chose "Stop
+// game"): it interrupts the JVM, which runs its shutdown hooks, and kills it
+// only if it is still running after grace. Returns once the game has exited
+// (exited is closed after Wait) or been killed.
+func stopOnCancel(ctx context.Context, p *os.Process, exited <-chan struct{}, grace time.Duration) {
+	select {
+	case <-exited:
+		return
+	case <-ctx.Done():
+	}
+	if err := p.Signal(os.Interrupt); err != nil {
+		// Windows can't deliver an interrupt to another process.
+		_ = p.Kill()
+		return
+	}
+	select {
+	case <-exited:
+	case <-time.After(grace):
+		_ = p.Kill()
+	}
+}
+
+// maxLogLineBytes caps how much of one game log line is kept; the rest of an
+// overlong line is discarded (the launch screen shows a line, not a blob).
+const maxLogLineBytes = 16 << 10
+
+// streamLog forwards the game's output to the launch screen until EOF. It must
+// keep draining no matter what the game prints: if it stopped reading, the pipe
+// would fill and the game would block writing its log (a bufio.Scanner quits
+// for good on a line over 64 KiB, which froze the game).
 func (l *Launcher) streamLog(r io.Reader, apiType string) {
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		text := scanner.Text()
-		verb := LogVerbosityError
-		if l.cfg != nil {
-			verb = ParseLaunchLogVerbosity(l.cfg.LaunchLogVerbosity)
+	br := bufio.NewReaderSize(r, 64<<10)
+	for {
+		text, err := readLogLine(br, maxLogLineBytes)
+		if err != nil {
+			return
 		}
-		if !shouldEmitGameLogLine(verb, text) {
+		if !shouldEmitGameLogLine(l.opts.LogFilter.Get(), text) {
 			continue
 		}
 		l.sendStatus(Status{
@@ -438,6 +524,28 @@ func (l *Launcher) streamLog(r io.Reader, apiType string) {
 				Type: apiType,
 			},
 		})
+	}
+}
+
+// readLogLine reads one line (without its line ending), keeping at most max
+// bytes and discarding the remainder of a longer line. It returns an error only
+// when no line was read (io.EOF at the end of the stream).
+func readLogLine(br *bufio.Reader, max int) (string, error) {
+	var buf []byte
+	for {
+		chunk, isPrefix, err := br.ReadLine()
+		if err != nil {
+			if len(buf) > 0 {
+				return string(buf), nil
+			}
+			return "", err
+		}
+		if room := max - len(buf); room > 0 {
+			buf = append(buf, chunk[:min(len(chunk), room)]...)
+		}
+		if !isPrefix {
+			return string(buf), nil
+		}
 	}
 }
 
@@ -628,8 +736,11 @@ func (l *Launcher) performDownload(ctx context.Context, stepName string, items [
 	mgr := download.NewManagerWithRetryMax(workerCount, l.retryMax)
 	progressChan := make(chan download.Progress, 10)
 
-	// Forward progress
+	// Forward progress. Joined below so no status is sent after the step
+	// returns (Download stops sending before it returns).
+	forwarded := make(chan struct{})
 	go func() {
+		defer close(forwarded)
 		for p := range progressChan {
 			percent := 0.0
 			if p.TotalBytes > 0 {
@@ -647,6 +758,7 @@ func (l *Launcher) performDownload(ctx context.Context, stepName string, items [
 
 	result, err := mgr.Download(ctx, items, progressChan)
 	close(progressChan)
+	<-forwarded
 
 	if err != nil {
 		return err

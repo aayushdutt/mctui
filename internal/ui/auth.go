@@ -37,6 +37,11 @@ type AuthModel struct {
 	account    *core.Account
 	copied     bool
 
+	// saveErr is set when sign-in succeeded but persisting the account failed:
+	// the session works now but won't survive a restart, so the success card
+	// says so instead of auto-closing.
+	saveErr error
+
 	// notice is a one-line fallback shown when a best-effort side action fails —
 	// the browser wouldn't open, or the clipboard copy failed — so the user isn't
 	// left staring at a code/URL wondering why nothing happened.
@@ -265,8 +270,12 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = AuthStateSuccess
 		m.account = msg.acc
 		m.manager.Add(msg.acc)
-		m.manager.Save()
-		// Auto-close after 2s?
+		if err := m.manager.Save(); err != nil {
+			// Signed in for this session only. Say so, and don't auto-close
+			// over the message — enter/esc still continue.
+			m.saveErr = err
+			return m, nil
+		}
 		return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
 			return NavigateToHome{}
 		})
@@ -327,6 +336,12 @@ func (m *AuthModel) authCard() string {
 	case AuthStateSuccess:
 		ok := lipgloss.NewStyle().Bold(true).Foreground(Active.Success).Render(GlyphDone + " Signed in")
 		name := lipgloss.NewStyle().Foreground(Active.Text).Render("as " + m.account.Name)
+		if m.saveErr != nil {
+			warn := lipgloss.NewStyle().Foreground(Active.Warning).Width(w).Align(lipgloss.Center).
+				Render(fmt.Sprintf("Couldn't save the account (%v) — you'll need to sign in again next time.", m.saveErr))
+			hints := KeyHints(w, KeyHint{"enter", "continue"})
+			return lipgloss.JoinVertical(lipgloss.Center, ok, name, "", warn, "", hints)
+		}
 		hint := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("Returning to home…")
 		return lipgloss.JoinVertical(lipgloss.Center, ok, name, "", hint)
 

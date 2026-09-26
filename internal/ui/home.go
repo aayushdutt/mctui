@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aayushdutt/mctui/internal/core"
@@ -62,6 +63,19 @@ type HomeModel struct {
 	// Microsoft session hint from background check (MSA accounts only)
 	sessionRemote sessionRemoteLine
 
+	// playingID is the instance whose game is running after the user left the
+	// launch screen ("" when none). Enter on it reopens the launch screen.
+	playingID string
+
+	// gatingName is the instance whose online launch is waiting on the session
+	// check; while set, the status line says so (Enter is ignored meanwhile).
+	gatingName string
+
+	// notice is a persistent message (startup recovery, a crash while away)
+	// shown until the next key press — unlike transientBanner, which expires
+	// on a timer and could go unseen.
+	notice []string
+
 	// transientBanner is a one-line notice (e.g. session gate network error).
 	// It auto-expires after homeBannerTTL via a tea.Tick keyed on bannerGen, so
 	// it survives unrelated keypresses instead of vanishing on the next key.
@@ -71,7 +85,7 @@ type HomeModel struct {
 	// Delete confirmation state
 	confirmDelete  bool
 	deleteTarget   *core.Instance
-	deleteFocusYes bool // which option arrows / Enter apply to (default Yes so Enter still confirms delete)
+	deleteFocusYes bool // which option arrows / Enter apply to (opens on Cancel; see armDelete)
 
 	// Actions popup state (home_actions.go). Mutually exclusive with the other
 	// overlays — never armed while confirmDelete or palette is active.
@@ -139,6 +153,7 @@ const (
 // advertise a key the screen doesn't handle, or omit one it does.
 type homeKeyMap struct {
 	Move        key.Binding // ↑↓/jk within the focused pane (handled by the list bubble)
+	Page        key.Binding // pgup/pgdn pages the instance list (handled by the list bubble)
 	FocusPane   key.Binding // tab: toggle list ↔ detail focus
 	StepRight   key.Binding // →/l/]: focus detail, then walk tabs right
 	StepLeft    key.Binding // ←/h/[: walk tabs left, then back to the list
@@ -163,6 +178,10 @@ func defaultHomeKeyMap() homeKeyMap {
 		Move: key.NewBinding(
 			key.WithKeys("up", "down", "j", "k"),
 			key.WithHelp("↑↓ / j k", "move"),
+		),
+		Page: key.NewBinding(
+			key.WithKeys("pgup", "pgdown"),
+			key.WithHelp("pgup / pgdn", "page"),
 		),
 		FocusPane: key.NewBinding(
 			key.WithKeys("tab"),
@@ -241,7 +260,7 @@ func defaultHomeKeyMap() homeKeyMap {
 // straight from homeKeyMap so the overlay always matches what Update handles.
 func (m *HomeModel) helpGroups() []HelpGroup {
 	return []HelpGroup{
-		helpGroup("Navigate", m.keys.Move, m.keys.FocusPane, m.keys.StepRight, m.keys.StepLeft),
+		helpGroup("Navigate", m.keys.Move, m.keys.Page, m.keys.FocusPane, m.keys.StepRight, m.keys.StepLeft),
 		helpGroup("Act", m.keys.Launch, m.keys.PlayOffline, m.keys.NewInst, m.keys.Edit, m.keys.Delete, m.keys.OpenFolder),
 		helpGroup("Screens", m.keys.Mods, m.keys.ResPacks, m.keys.Settings, m.keys.Auth),
 		helpGroup("General", m.keys.Actions, m.keys.Palette, m.keys.Back, m.keys.Help,
@@ -254,6 +273,7 @@ func (m *HomeModel) helpGroups() []HelpGroup {
 // instanceItem represents a Minecraft instance in the list
 type instanceItem struct {
 	instance *core.Instance
+	playing  bool // its game is running (launched, then left via esc)
 }
 
 func (i instanceItem) Title() string { return i.instance.Name }
@@ -267,6 +287,10 @@ func (i instanceItem) Description() string {
 	lastPlayed := "Never played"
 	if !i.instance.LastPlayed.IsZero() {
 		lastPlayed = formatRelativeTime(i.instance.LastPlayed)
+	}
+	if i.playing {
+		// Lead with it so narrow columns truncate the details, not the state.
+		return fmt.Sprintf("%s Playing • %s • %s", GlyphDot, i.instance.Version, loader)
 	}
 
 	return fmt.Sprintf("%s • %s • %s", i.instance.Version, loader, lastPlayed)
@@ -311,6 +335,10 @@ func NewHomeModel() *HomeModel {
 	l.SetFilteringEnabled(true)
 	l.SetShowTitle(false)
 	l.SetShowHelp(false)
+	// The list's default paging keys (h/l/←/→/f/d/b/u) collide with home's own
+	// letters and pane/tab steps; page with PgUp/PgDn only.
+	l.KeyMap.PrevPage.SetKeys("pgup")
+	l.KeyMap.NextPage.SetKeys("pgdown")
 	ThemeListChrome(&l)
 
 	m := &HomeModel{
@@ -333,8 +361,22 @@ func (m *HomeModel) ApplyTheme() {
 	ThemeListChrome(&m.list)
 }
 
-// SetInstances updates the instance list. If selectID is non-empty, the cursor moves to that instance (usually index 0 for a new instance).
-func (m *HomeModel) SetInstances(instances []*core.Instance, selectID string) {
+// SetInstances updates the instance list. If selectID is non-empty, the cursor
+// moves to that instance (usually index 0 for a new instance); otherwise it
+// stays on whatever is selected now — the same instance wherever it sorts to,
+// or the "+ New instance" row. The returned command re-applies an active filter
+// (the list clears its filtered view on SetItems); callers must run it.
+func (m *HomeModel) SetInstances(instances []*core.Instance, selectID string) tea.Cmd {
+	// Capture the live selection before the items change: the list re-sorts by
+	// recency, so keeping the row index would land on another instance (e.g.
+	// after playing one) and Enter would launch the wrong one.
+	prevID := ""
+	if inst := m.SelectedInstance(); inst != nil {
+		prevID = inst.ID
+	}
+	// Only a deliberate choice: with no instances, + New is the only row.
+	onAddRow := m.addRowSelected() && len(m.instances) > 0
+
 	m.instances = instances
 	m.loading = false
 	// Invalidate the lazy mod-count cache — instances (and their mod folders) may
@@ -350,23 +392,43 @@ func (m *HomeModel) SetInstances(instances []*core.Instance, selectID string) {
 
 	items := make([]list.Item, 0, len(instances)+1)
 	for _, inst := range instances {
-		items = append(items, instanceItem{instance: inst})
+		items = append(items, instanceItem{instance: inst, playing: inst.ID == m.playingID})
 	}
 	// Trailing "+ New instance" action row, always last.
 	items = append(items, addInstanceItem{})
-	m.list.SetItems(items)
+	cmd := m.list.SetItems(items)
 
-	if selectID != "" {
-		for i, inst := range instances {
-			if inst.ID == selectID {
-				m.list.Select(i)
-				m.resetDetailFocus()
-				return
-			}
-		}
-		m.list.Select(0)
+	if m.list.FilterState() != list.Unfiltered {
+		// Cursor positions index the filtered view, which SetItems cleared and
+		// cmd rebuilds; leave the cursor alone rather than land on a wrong row.
+		return cmd
 	}
-	m.resetDetailFocus()
+
+	target := selectID
+	if target == "" {
+		target = prevID
+	}
+	found := false
+	for i, inst := range instances {
+		if target != "" && inst.ID == target {
+			m.list.Select(i)
+			found = true
+			break
+		}
+	}
+	switch {
+	case found:
+	case selectID != "":
+		m.list.Select(0)
+	case onAddRow:
+		m.list.Select(len(instances))
+	}
+	// Only a different selection resets the detail pane (a background reload,
+	// e.g. a game exiting, shouldn't yank focus back to the list).
+	if cur := m.SelectedInstance(); cur == nil || cur.ID != prevID {
+		m.resetDetailFocus()
+	}
+	return cmd
 }
 
 // resetDetailFocus returns to the list pane, clears the detail cursor, and
@@ -414,6 +476,27 @@ const homeBannerTTL = 4 * time.Second
 // this tick (gen match) — a newer banner supersedes an older pending expiry.
 type homeBannerExpireMsg struct{ gen int }
 
+// SetNotice shows lines as a persistent notice above the footer (and on the
+// empty-state screen) until the next key press. No lines clears it.
+func (m *HomeModel) SetNotice(lines ...string) {
+	m.notice = lines
+	m.applyListSize()
+}
+
+// noticeView renders the notice wrapped to the screen width ("" when none).
+func (m *HomeModel) noticeView() string {
+	if len(m.notice) == 0 {
+		return ""
+	}
+	style := lipgloss.NewStyle().Foreground(Active.Warning).Width(max(1, m.width))
+	rows := make([]string, 0, len(m.notice)+1)
+	for _, line := range m.notice {
+		rows = append(rows, style.Render(GlyphWarn+" "+line))
+	}
+	rows = append(rows, lipgloss.NewStyle().Foreground(Active.TextMuted).Render("  (press any key to dismiss)"))
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
 // SetTransientBanner shows a short notice above the footer and returns a command
 // that clears it after homeBannerTTL. The banner no longer vanishes on the next
 // keypress; callers should run the returned cmd (batch it with theirs). An empty
@@ -429,6 +512,29 @@ func (m *HomeModel) SetTransientBanner(s string) tea.Cmd {
 	return tea.Tick(homeBannerTTL, func(time.Time) tea.Msg {
 		return homeBannerExpireMsg{gen: gen}
 	})
+}
+
+// SetPlaying marks the instance whose game is running ("" clears it). The
+// returned command re-applies an active filter (see SetInstances).
+func (m *HomeModel) SetPlaying(id string) tea.Cmd {
+	if m.playingID == id {
+		return nil
+	}
+	m.playingID = id
+	items := m.list.Items()
+	for i, it := range items {
+		if ii, ok := it.(instanceItem); ok {
+			ii.playing = ii.instance.ID == id
+			items[i] = ii
+		}
+	}
+	return m.list.SetItems(items)
+}
+
+// SetLaunchGate shows (name != "") or clears the "verifying session" status
+// for an online launch that is waiting on the session check.
+func (m *HomeModel) SetLaunchGate(name string) {
+	m.gatingName = name
 }
 
 func (m *HomeModel) activeMSAAccount() *core.Account {
@@ -473,6 +579,11 @@ func (m *HomeModel) launchSelected(offline bool) tea.Cmd {
 	if inst == nil {
 		return nil
 	}
+	if m.playingID != "" {
+		// A game is running: the app reopens its screen (this instance) or says
+		// it's still running (another one). No session check or sign-in detour.
+		return func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: true} }
+	}
 	if offline {
 		return func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: true} }
 	}
@@ -516,6 +627,11 @@ func (m *HomeModel) buildFooter() string {
 		}
 	}
 
+	if m.gatingName != "" {
+		authStatus = fmt.Sprintf("Verifying Microsoft session to play %s…", m.gatingName)
+		authWarn = false
+	}
+
 	// One footer line: the top six context-relevant hints, always ending in
 	// `? help`. Everything else lives in the `?` overlay and the `:` palette, so
 	// the bar stays a single line instead of an eleven-binding wall. In detail
@@ -532,7 +648,9 @@ func (m *HomeModel) buildFooter() string {
 		}
 	} else {
 		launchLabel := "play"
-		if m.noOnlineSession() {
+		if inst := m.SelectedInstance(); inst != nil && inst.ID == m.playingID {
+			launchLabel = "view game"
+		} else if m.noOnlineSession() {
 			launchLabel = "login & play"
 		}
 		items = []KeyHint{
@@ -571,6 +689,9 @@ func (m *HomeModel) homeFooterHeight() int {
 	if m.transientBanner != "" {
 		footerLines++
 	}
+	if n := m.noticeView(); n != "" {
+		footerLines += lipgloss.Height(n)
+	}
 	return footerLines
 }
 
@@ -590,10 +711,43 @@ func (m *HomeModel) applyListSize() {
 	m.list.SetSize(m.listPaneW, listH)
 }
 
+// armDelete opens the delete-instance confirmation for inst with Cancel
+// focused: deleting removes the whole folder, worlds included, so d then Enter
+// must not do it. Every entry point (d, the x popup, the palette) goes here.
+func (m *HomeModel) armDelete(inst *core.Instance) {
+	m.confirmDelete = true
+	m.deleteTarget = inst
+	m.deleteFocusYes = false
+}
+
+// deleteSummary says what deleting inst destroys, e.g.
+// "Removes its folder: 2 worlds · 5 mods · 4h 12m played."
+func (m *HomeModel) deleteSummary(inst *core.Instance) string {
+	var parts []string
+	if n := len(m.instanceWorlds(inst)); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d world%s", n, plural(n)))
+	}
+	if n := m.modCount(inst); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d mod%s", n, plural(n)))
+	}
+	if inst.PlayTime > 0 {
+		parts = append(parts, formatPlayTime(inst.PlayTime)+" played")
+	}
+	if len(parts) == 0 {
+		return "Removes its folder."
+	}
+	return "Removes its folder: " + strings.Join(parts, " · ") + "."
+}
+
+// CapturesInput reports whether home is consuming keystrokes as input — an
+// overlay, or typing into the list filter — so global keys (q = quit) must not
+// fire.
+func (m *HomeModel) CapturesInput() bool {
+	return m.HasOverlay() || m.list.FilterState() == list.Filtering
+}
+
 // HasOverlay reports whether a transient modal (command palette, actions popup,
-// or delete confirmation) is currently capturing input. The app uses this so the
-// global quit key (q) doesn't fire — and discard palette text — while a modal is
-// open; the modal's own esc/q handler should win instead.
+// delete confirmation, or help) is currently capturing input. See CapturesInput.
 func (m *HomeModel) HasOverlay() bool {
 	return m.palette.Active || m.actionsPopup || m.confirmDelete || m.help
 }
@@ -730,8 +884,7 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = false
 			return m, m.SetTransientBanner("Couldn't load instances: " + msg.Error.Error())
 		}
-		m.SetInstances(msg.Instances, msg.SelectID)
-		return m, nil
+		return m, m.SetInstances(msg.Instances, msg.SelectID)
 
 	case homeBannerExpireMsg:
 		// Clear only if no newer banner has superseded this tick.
@@ -742,6 +895,10 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if len(m.notice) > 0 {
+			// Any key dismisses the notice (and still does its normal job).
+			m.SetNotice()
+		}
 
 		// Overlay key handling — runs BEFORE the filter guard, the tab-cycle keys,
 		// and the home key switch so home shortcuts can't leak into a modal. The
@@ -911,11 +1068,13 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, func() tea.Msg { return NavigateToMods{Instance: inst} }
 			}
+			return m, nil
 		case key.Matches(msg, m.keys.ResPacks):
 			// Resource packs work on ANY instance (vanilla or modded) — no gate.
 			if inst := m.SelectedInstance(); inst != nil {
 				return m, func() tea.Msg { return NavigateToResourcePacks{Instance: inst} }
 			}
+			return m, nil
 		case key.Matches(msg, m.keys.Settings):
 			return m, func() tea.Msg { return NavigateToSettings{} }
 		case key.Matches(msg, m.keys.Auth):
@@ -924,15 +1083,15 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if inst := m.SelectedInstance(); inst != nil {
 				openInstanceFolder(inst.Path)
 			}
+			return m, nil
 		case key.Matches(msg, m.keys.Delete):
 			if inst := m.SelectedInstance(); inst != nil {
-				// Show confirmation prompt (Yes focused: Enter deletes; arrows or Tab change choice)
-				m.confirmDelete = true
-				m.deleteTarget = inst
-				m.deleteFocusYes = true
-				return m, nil
+				m.armDelete(inst)
 			}
+			return m, nil
 		}
+		// Handled home hotkeys return above; only unclaimed keys (↑/↓, paging,
+		// filter) reach the list.
 	}
 
 	var cmd tea.Cmd
@@ -1004,15 +1163,26 @@ func (m *HomeModel) View() string {
 			emptyMsg,
 			tips,
 		)
+		// Notices must show here too: with no instances (e.g. a config pointing
+		// at another data folder was just reset) this is the only screen.
+		notice := m.noticeView()
+		placeH := m.height
+		if notice != "" {
+			placeH = max(1, m.height-lipgloss.Height(notice))
+		}
 
 		// Center the content
-		return lipgloss.Place(
+		centered := lipgloss.Place(
 			m.width,
-			m.height,
+			placeH,
 			lipgloss.Center,
 			lipgloss.Center,
 			content,
 		)
+		if notice != "" {
+			return lipgloss.JoinVertical(lipgloss.Left, notice, centered)
+		}
+		return centered
 	}
 
 	footer := m.buildFooter()
@@ -1032,6 +1202,9 @@ func (m *HomeModel) View() string {
 	columns := m.renderColumns()
 
 	aboveStatus := []string{titleRow, "", columns}
+	if n := m.noticeView(); n != "" {
+		aboveStatus = append(aboveStatus, n)
+	}
 	if m.transientBanner != "" {
 		aboveStatus = append(aboveStatus, lipgloss.NewStyle().
 			Foreground(Active.Warning).
@@ -1061,7 +1234,7 @@ func (m *HomeModel) View() string {
 	if m.confirmDelete && m.deleteTarget != nil {
 		dialog := ConfirmDialog{
 			Title:    "Delete instance?",
-			Message:  fmt.Sprintf("Delete %q?", m.deleteTarget.Name),
+			Message:  fmt.Sprintf("Delete %q?\n%s", m.deleteTarget.Name, m.deleteSummary(m.deleteTarget)),
 			Warning:  "This cannot be undone.",
 			Confirm:  "Delete",
 			Cancel:   "Cancel",
@@ -1083,8 +1256,9 @@ func boundToScreen(s string, w, h int) string {
 	return lipgloss.NewStyle().MaxWidth(w).MaxHeight(h).Render(s)
 }
 
-// openInstanceFolder opens the instance folder in the system file manager
-func openInstanceFolder(path string) {
+// openInstanceFolder opens the instance's .minecraft folder in the OS file
+// manager. A var so tests can stub it (pressing f must not open a real window).
+var openInstanceFolder = func(path string) {
 	mcDir := filepath.Join(path, ".minecraft")
 	_ = os.MkdirAll(mcDir, 0755)
 	var cmd *exec.Cmd

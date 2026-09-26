@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/aayushdutt/mctui/internal/fsutil"
 )
 
 // Config holds the application configuration
@@ -83,7 +85,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes config to disk
+// Save writes config to disk atomically.
 func (c *Config) Save() error {
 	if err := os.MkdirAll(c.DataDir, 0755); err != nil {
 		return err
@@ -95,7 +97,7 @@ func (c *Config) Save() error {
 	}
 
 	configPath := filepath.Join(c.DataDir, "config.json")
-	return os.WriteFile(configPath, data, 0644)
+	return fsutil.WriteFileAtomic(configPath, data, 0o644)
 }
 
 // EnsureDirs creates all required directories

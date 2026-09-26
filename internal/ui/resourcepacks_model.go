@@ -50,6 +50,8 @@ type ResourcePacksModel struct {
 	expanded map[string]bool
 
 	rpDialog rpDialogKind
+	// rpDialogFocusYes is the clear dialog's highlighted option (opens on Keep).
+	rpDialogFocusYes bool
 
 	// searchMode flattens the pack pane to every pack for a screen-wide search;
 	// enter on a match jumps to it in its category.
@@ -169,9 +171,7 @@ func (m *ResourcePacksModel) rpPaletteItems() []PaletteItem {
 			return m.startApply()
 		}},
 		{Label: "Clear pack", Run: func() tea.Cmd {
-			if m.sel.Count() > 0 {
-				m.rpDialog = rpDialogConfirmClear
-			}
+			m.askClear()
 			return nil
 		}},
 	}

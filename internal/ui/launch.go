@@ -29,11 +29,32 @@ type LaunchModel struct {
 
 	cfg *config.Config // optional; used for log verbosity while playing
 
+	// logFilter is the running launcher's live log verbosity (see
+	// SetLogFilter); [v] updates it so the change applies to the next line.
+	logFilter *launch.LogFilter
+
 	palette CommandPalette
 
 	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
 	// ? / esc / q.
 	help bool
+
+	// confirmStop shows the "Stop Minecraft?" dialog; stopFocusYes is its
+	// highlighted option (Cancel by default — stopping can lose unsaved progress).
+	confirmStop  bool
+	stopFocusYes bool
+	stopping     bool // "Stop game" confirmed; waiting for the game to exit
+}
+
+// playing reports whether the game process is running.
+func (m *LaunchModel) playing() bool {
+	return !m.done && m.status.Step == "Playing"
+}
+
+// Playing reports whether the game process is running (for the app: stopping
+// it waits for the exit instead of tearing the launch down).
+func (m *LaunchModel) Playing() bool {
+	return m.playing()
 }
 
 // helpGroups returns the launch screen's bindings grouped for the `?` overlay,
@@ -52,8 +73,9 @@ func (m *LaunchModel) helpGroups() []HelpGroup {
 	case m.done:
 		act = []HelpEntry{{"enter", "back home"}}
 		escDesc = "back home"
-	case m.status.Step == "Playing":
-		act = []HelpEntry{{"v", "cycle log verbosity"}}
+	case m.playing():
+		act = []HelpEntry{{"s", "stop game"}, {"v", "cycle log verbosity"}}
+		escDesc = "home (game keeps running)"
 	}
 
 	groups := make([]HelpGroup, 0, 2)
@@ -64,7 +86,7 @@ func (m *LaunchModel) helpGroups() []HelpGroup {
 		{":", "command palette"},
 		{"?", "help"},
 		{"esc", escDesc},
-		{"ctrl+c", "force quit"},
+		{"ctrl+c", "quit mctui"},
 	}})
 	return groups
 }
@@ -163,11 +185,51 @@ func NewLaunchModel(instance *core.Instance, cfg *config.Config) *LaunchModel {
 // plain NavigateToHome would leave the launch goroutine running and the context
 // leaked. Shared by the esc key and the palette "Back to home" verb so both
 // paths clean up identically.
+//
+// While the game is running, leaving does NOT stop it: it returns home and the
+// game keeps running (stopping is the separate, confirmed "Stop game").
 func (m *LaunchModel) leaveLaunch() tea.Cmd {
 	if m.done {
 		return func() tea.Msg { return NavigateToHome{} }
 	}
+	if m.playing() {
+		return func() tea.Msg { return LeaveLaunchScreen{} }
+	}
 	m.status.Message = "Cancelling..."
+	return func() tea.Msg { return CancelLaunch{} }
+}
+
+// askStopGame opens the "Stop Minecraft?" confirmation.
+func (m *LaunchModel) askStopGame() tea.Cmd {
+	if !m.playing() || m.stopping {
+		return nil
+	}
+	m.confirmStop = true
+	m.stopFocusYes = false
+	return nil
+}
+
+// updateStopDialog handles keys while the stop confirmation is open.
+func (m *LaunchModel) updateStopDialog(msg tea.KeyMsg) tea.Cmd {
+	if ConfirmKeyToggles(msg.String()) {
+		m.stopFocusYes = !m.stopFocusYes
+		return nil
+	}
+	stop := false
+	switch msg.String() {
+	case "y", "Y":
+		stop = true
+	case "enter":
+		stop = m.stopFocusYes
+	case "n", "N", "esc", "q":
+	default:
+		return nil
+	}
+	m.confirmStop = false
+	if !stop || !m.playing() {
+		return nil
+	}
+	m.stopping = true
 	return func() tea.Msg { return CancelLaunch{} }
 }
 
@@ -175,11 +237,17 @@ func (m *LaunchModel) leaveLaunch() tea.Cmd {
 // Retry is offered only once a launch has failed.
 func (m *LaunchModel) launchPaletteItems() []PaletteItem {
 	leaveLabel := "Back to home"
-	if !m.done {
+	switch {
+	case m.playing():
+		leaveLabel = "Back to home (game keeps running)"
+	case !m.done:
 		leaveLabel = "Cancel launch"
 	}
 	items := []PaletteItem{
 		{Label: leaveLabel, Run: m.leaveLaunch},
+	}
+	if m.playing() {
+		items = append(items, PaletteItem{Label: "Stop game", Run: m.askStopGame})
 	}
 	if m.done && m.err != nil {
 		items = append(items, PaletteItem{Label: "Retry", Run: func() tea.Cmd {
@@ -194,6 +262,11 @@ func (m *LaunchModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	m.progress.Width = width - 10
+}
+
+// SetLogFilter connects [v] to the running launcher's log filter.
+func (m *LaunchModel) SetLogFilter(f *launch.LogFilter) {
+	m.logFilter = f
 }
 
 // GetInstance returns the instance being launched
@@ -226,6 +299,7 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case LaunchComplete:
+		m.confirmStop = false // the game is gone; don't leave "Stop?" over the result
 		m.done = true
 		m.err = msg.Error
 		if msg.Error != nil {
@@ -245,6 +319,9 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.palette.Active {
 			return m, m.palette.Update(msg)
+		}
+		if m.confirmStop {
+			return m, m.updateStopDialog(msg)
 		}
 		// Help overlay is read-only: it swallows every key, and only ? / esc / q
 		// dismiss it.
@@ -266,8 +343,12 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "esc", "q":
-			// Same teardown as the palette "Cancel launch" / "Back to home" verb.
+			// Same path as the palette "Cancel launch" / "Back to home" verb.
 			return m, m.leaveLaunch()
+		case "s":
+			if m.playing() {
+				return m, m.askStopGame()
+			}
 		case "enter":
 			if m.done {
 				return m, func() tea.Msg { return NavigateToHome{} }
@@ -281,8 +362,9 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg { return RetryLaunch{Offline: true} }
 			}
 		case "v":
-			if m.cfg != nil && m.status.Step == "Playing" && !m.done {
+			if m.cfg != nil && m.playing() {
 				m.cfg.LaunchLogVerbosity = launch.CycleLaunchLogVerbosity(m.cfg.LaunchLogVerbosity)
+				m.logFilter.Set(launch.ParseLaunchLogVerbosity(m.cfg.LaunchLogVerbosity))
 				_ = m.cfg.Save()
 			}
 		}
@@ -354,6 +436,17 @@ func (m *LaunchModel) View() string {
 	}
 	if m.palette.Active {
 		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
+	}
+	if m.confirmStop {
+		return ConfirmDialog{
+			Title:    "Stop Minecraft?",
+			Message:  fmt.Sprintf("Stop %s now?", m.instance.Name),
+			Warning:  "Progress not yet saved in-game may be lost. Quitting from the game menu is safer.",
+			Confirm:  "Stop game",
+			Cancel:   "Keep playing",
+			Kind:     ConfirmDanger,
+			FocusYes: m.stopFocusYes,
+		}.Render(m.width, m.height)
 	}
 
 	// Panel width: derive from content width, clamp to a readable band and
@@ -438,17 +531,17 @@ func (m *LaunchModel) View() string {
 				Foreground(Active.Success).
 				Render(fmt.Sprintf("%s Game closed. Returning to home…", GlyphDone))
 		}
-	} else if m.status.Step == "Playing" {
+	} else if m.stopping {
+		stopping := lipgloss.NewStyle().Foreground(Active.WarningStrong).
+			Render("Stopping Minecraft… (it may take a few seconds to save)")
+		footer = lipgloss.JoinVertical(lipgloss.Left, stopping, "", KeyHints(panelW, KeyHint{"esc", "home"}))
+	} else if m.playing() {
+		hints := []KeyHint{{"esc", "home"}, {"s", "stop"}}
 		if m.cfg != nil {
 			v := launch.ParseLaunchLogVerbosity(m.cfg.LaunchLogVerbosity)
-			footer = KeyHints(panelW,
-				KeyHint{"ctrl+c", "force quit"},
-				KeyHint{"v", "logs: " + v.ShortLabel()},
-				KeyHint{"?", "help"},
-			)
-		} else {
-			footer = KeyHints(panelW, KeyHint{"ctrl+c", "force quit"})
+			hints = append(hints, KeyHint{"v", "logs: " + v.ShortLabel()})
 		}
+		footer = KeyHints(panelW, append(hints, KeyHint{"?", "help"})...)
 	} else {
 		footer = KeyHints(panelW,
 			KeyHint{"esc", "cancel"},

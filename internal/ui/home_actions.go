@@ -91,10 +91,8 @@ func (m *HomeModel) runAction(a homeAction) tea.Cmd {
 		openInstanceFolder(inst.Path)
 		return nil
 	case "d":
-		// Hand off to the existing delete-confirm overlay (Yes focused).
-		m.confirmDelete = true
-		m.deleteTarget = inst
-		m.deleteFocusYes = true
+		// Hand off to the delete-confirm overlay (Cancel focused).
+		m.armDelete(inst)
 		return nil
 	}
 	return nil

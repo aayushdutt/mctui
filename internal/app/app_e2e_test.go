@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,11 +22,23 @@ import (
 // short enough that a genuinely stuck flow fails fast instead of hanging.
 const waitDuration = 3 * time.Second
 
+// testManifestJSON is the version manifest served to the wizard in e2e tests
+// (the wizard fetches it on open).
+const testManifestJSON = `{
+  "latest": {"release": "1.21.4", "snapshot": "1.21.4"},
+  "versions": [
+    {"id": "1.21.4", "type": "release", "url": "", "releaseTime": "2024-12-03T10:12:57+00:00"},
+    {"id": "1.21.3", "type": "release", "url": "", "releaseTime": "2024-10-23T12:28:15+00:00"}
+  ]
+}`
+
 // newTestModel builds a fully wired *Model backed by a temp data dir, with no
 // accounts (so the active-session check short-circuits to NotApplicable and never
-// hits the network). The Modrinth client is the real one; none of the scenarios
-// here touch it. The global theme is snapshotted and restored in cleanup, so
-// theme-mutating tests must NOT run in parallel.
+// hits the network). The Mojang client points at a local httptest manifest (the
+// wizard loads versions on open) and the Modrinth client at an unroutable
+// address, so the suite never touches the real network. The global theme is
+// snapshotted and restored in cleanup, so theme-mutating tests must NOT run in
+// parallel.
 func newTestModel(t *testing.T) *Model {
 	t.Helper()
 
@@ -52,11 +66,17 @@ func newTestModel(t *testing.T) *Model {
 	instances := core.NewInstanceManager(cfg.DataDir)
 	accounts := core.NewAccountManager(cfg.DataDir) // empty: GetActive() == nil
 
+	manifest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(testManifestJSON))
+	}))
+	t.Cleanup(manifest.Close)
+
 	return newWithDeps(
 		cfg,
 		instances,
 		accounts,
-		api.NewMojangClient(cfg.DataDir),
+		api.NewMojangClientWithManifestURL(cfg.DataDir, manifest.URL),
 		api.NewModrinthClientWithBaseURL("http://127.0.0.1:0"),
 	)
 }
@@ -95,8 +115,8 @@ func TestE2E_BootAndNavigateWizard(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(waitDuration))
 }
 
-// S2: drive the wizard end to end with injected versions (no Mojang call) and
-// assert the new instance lands on Home and instance.json exists on disk.
+// S2: drive the wizard end to end against the local test manifest and assert
+// the new instance lands on Home and instance.json exists on disk.
 func TestE2E_WizardCreatesInstance(t *testing.T) {
 	m := newTestModel(t)
 	instancesDir := m.cfg.InstancesDir
@@ -104,20 +124,10 @@ func TestE2E_WizardCreatesInstance(t *testing.T) {
 
 	waitForOutput(t, tm, "No instances yet")
 
-	// Enter the wizard.
+	// Enter the wizard; it loads versions from the local test manifest. Wait on
+	// the version itself (not the title): teatest output is a stream, and the
+	// list can render in the same frame as the title.
 	tm.Send(keyRunes("n"))
-	waitForOutput(t, tm, "Select Minecraft Version")
-
-	// Bypass Mojang by injecting the version-manifest message the wizard consumes.
-	now := time.Now()
-	tm.Send(ui.VersionsLoaded{
-		Versions: []core.Version{
-			{ID: "1.21.4", Type: core.VersionTypeRelease, ReleaseTime: now},
-			{ID: "1.21.3", Type: core.VersionTypeRelease, ReleaseTime: now.Add(-time.Hour)},
-		},
-		Latest: "1.21.4",
-	})
-	// Version list now populated (latest is starred).
 	waitForOutput(t, tm, "1.21.4")
 
 	// Pick the highlighted version -> loader step.
