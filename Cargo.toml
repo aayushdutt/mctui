@@ -12,23 +12,29 @@ repository = "https://github.com/aayushdutt/mctui"
 mctui-core = { path = "crates/mctui-core" }
 
 anyhow = "1"
+bytes = "1"
 crossterm = "0.29"
 dirs = "7"
+futures-util = "0.3"
 insta = "1.48"
 jiff = { version = "0.2", features = ["serde"] }
 nucleo-matcher = "0.3"
 open = "5"
 ratatui = "0.30"
+reqwest = { version = "0.13", features = ["json", "stream", "gzip", "form", "query"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.11"
+sha2 = "0.11"
 tempfile = "3"
 terminal-colorsaurus = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
+wiremock = "0.6"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

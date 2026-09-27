@@ -12,6 +12,7 @@ pub mod config;
 pub mod facets;
 pub mod fsutil;
 pub mod instance;
+pub mod net;
 pub mod paths;
 
 mod gotime;
