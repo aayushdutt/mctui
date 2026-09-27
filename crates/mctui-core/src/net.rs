@@ -316,22 +316,28 @@ impl Http {
             bytes_total: jobs.iter().filter_map(|j| j.size).sum(),
             ..Progress::default()
         });
-        let report = |update: &dyn Fn(&mut Progress)| {
+        let report = |bytes: u64, file_done: bool| {
             let snapshot = {
                 let mut p = progress
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                update(&mut p);
+                p.bytes_done += bytes;
+                p.files_done += usize::from(file_done);
                 *p
             };
             on_progress(snapshot);
         };
-        let mut pending = futures_util::stream::iter(&jobs)
-            .map(|job| self.download(job, |n| report(&|p| p.bytes_done += n)))
-            .buffer_unordered(concurrency.max(1));
+        // Built up front (not in a `map` closure over the stream) so the
+        // future stays `Send` and can run on a spawned task.
+        let downloads: Vec<_> = jobs
+            .iter()
+            .map(|job| self.download(job, |n| report(n, false)))
+            .collect();
+        let mut pending =
+            futures_util::stream::iter(downloads).buffer_unordered(concurrency.max(1));
         while let Some(result) = pending.next().await {
             result?;
-            report(&|p| p.files_done += 1);
+            report(0, true);
         }
         Ok(())
     }
@@ -487,6 +493,14 @@ mod tests {
         let last = *last.lock().unwrap();
         assert_eq!((last.files_done, last.files_total), (2, 2));
         assert_eq!((last.bytes_done, last.bytes_total), (10, 10));
+    }
+
+    #[test]
+    fn batches_can_run_on_spawned_tasks() {
+        fn assert_send<T: Send>(_: &T) {}
+        let http = Http::new().unwrap();
+        let batch = http.download_all(Vec::new(), 4, |_| {});
+        assert_send(&batch);
     }
 
     #[tokio::test]
