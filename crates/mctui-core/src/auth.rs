@@ -10,7 +10,9 @@
 //!
 //! Every call is cancelled by dropping its future. Nothing is retried here:
 //! token requests aren't idempotent, and the caller knows best whether to try
-//! again. Tokens stay in [`Secret`]s and never appear in errors or logs.
+//! again. Tokens stay in [`Secret`]s and never appear in errors or logs, and
+//! no request follows a redirect, which would send its body (tokens and all)
+//! on to wherever the redirect points.
 
 use std::time::Duration;
 
@@ -22,10 +24,13 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::account::{Account, AccountKind, Secret};
-use crate::net::Http;
+use crate::net::{self, Http};
 
 /// Xbox Live sign-in, plus a refresh token so the player needn't sign in again.
 const SCOPE: &str = "XboxLive.signin offline_access";
+/// Where players enter a code, for when Microsoft names somewhere that isn't
+/// a web page.
+const VERIFICATION_URI: &str = "https://www.microsoft.com/link";
 const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 /// Seconds between polls when Microsoft doesn't say (RFC 8628 §3.2).
 const DEFAULT_INTERVAL: u32 = 5;
@@ -110,15 +115,13 @@ impl Auth {
     /// site. `client_id` is the Microsoft app registration to sign in with.
     pub async fn start(&self, client_id: &str) -> Result<DeviceCode> {
         let form = [("client_id", client_id), ("scope", SCOPE)];
-        let request = self
-            .http
-            .client()
-            .post(&self.endpoints.device_code)
-            .form(&form);
+        let request = self.client().post(&self.endpoints.device_code).form(&form);
         let reply: DeviceCodeReply = send(MICROSOFT, request).await?.json()?;
         Ok(DeviceCode {
             user_code: reply.user_code,
-            verification_uri: reply.verification_uri,
+            // The UI opens it in a browser.
+            verification_uri: net::web_url(&reply.verification_uri)
+                .unwrap_or_else(|| VERIFICATION_URI.to_owned()),
             expires_at: from_now(reply.expires_in),
             interval: self.poll_unit.saturating_mul(reply.interval.max(1)),
             secret: reply.device_code,
@@ -170,7 +173,6 @@ impl Auth {
 
         let login = MinecraftLogin::new(&xsts);
         let request = self
-            .http
             .client()
             .post(&self.endpoints.minecraft_login)
             .json(&login);
@@ -191,7 +193,8 @@ impl Auth {
     /// Renews `account` with its saved Microsoft refresh token, without asking
     /// the player, and fetches its profile again. [`Error::NeedsSignIn`] means
     /// the saved sign-in is gone (or there never was one); after any other
-    /// error it may still work later.
+    /// error it may still work later. [`Error::Renewed`] carries an account
+    /// to save even though the refresh failed.
     pub async fn refresh(&self, account: &Account, client_id: &str) -> Result<Account> {
         let Some(refresh_token) = &account.msa_refresh_token else {
             return Err(Error::NeedsSignIn);
@@ -209,11 +212,26 @@ impl Auth {
             }
             Grant::Refused { error, .. } => return Err(error),
         };
-        // Microsoft usually sends a new refresh token, but needn't.
+        // Microsoft usually sends a new refresh token, but needn't. Once it
+        // has, the old one may be spent, so the new one mustn't be lost if
+        // a later step fails.
+        let rotated = tokens
+            .refresh_token
+            .clone()
+            .filter(|token| token != refresh_token);
         tokens
             .refresh_token
             .get_or_insert_with(|| refresh_token.clone());
-        self.finish(tokens).await
+        self.finish(tokens).await.map_err(|error| match rotated {
+            Some(token) => Error::Renewed {
+                account: Box::new(Account {
+                    msa_refresh_token: Some(token),
+                    ..account.clone()
+                }),
+                error: Box::new(error),
+            },
+            None => error,
+        })
     }
 
     /// The account's Minecraft profile, which also checks its token.
@@ -249,9 +267,15 @@ impl Auth {
             .map(Session::Refreshed)
     }
 
+    /// The client for every request here: one that never follows a
+    /// redirect, since a 307 or 308 would send the tokens in its body on.
+    fn client(&self) -> &reqwest::Client {
+        self.http.client_without_redirects()
+    }
+
     /// Asks the token endpoint for tokens, once.
     async fn grant(&self, form: &[(&str, &str)]) -> Result<Grant> {
-        let request = self.http.client().post(&self.endpoints.token).form(form);
+        let request = self.client().post(&self.endpoints.token).form(form);
         let reply = send(MICROSOFT, request).await?;
         if reply.status.is_client_error()
             && let Some(error_code) = reply.error_body().error
@@ -272,7 +296,6 @@ impl Auth {
     /// One Xbox Live step: each trades a token for a token and user hash.
     async fn xbox(&self, url: &str, body: &impl Serialize) -> Result<XboxToken> {
         let request = self
-            .http
             .client()
             .post(url)
             .header(ACCEPT, "application/json")
@@ -296,7 +319,6 @@ impl Auth {
 
     async fn fetch_profile(&self, access_token: &Secret) -> Result<Profile> {
         let request = self
-            .http
             .client()
             .get(&self.endpoints.minecraft_profile)
             .bearer_auth(access_token.expose());
@@ -398,6 +420,34 @@ pub enum Error {
         /// A short reason from its answer.
         reason: String,
     },
+    /// Microsoft renewed the sign-in, but a later step failed with `error`.
+    /// Microsoft may have retired the old refresh token by then, so save
+    /// `account`, which holds the new one, in place of the old account.
+    #[error("{error}")]
+    Renewed {
+        /// The account as it was, with the new refresh token.
+        account: Box<Account>,
+        /// What failed.
+        error: Box<Error>,
+    },
+}
+
+impl Error {
+    /// What went wrong, looking through [`Error::Renewed`].
+    pub fn cause(&self) -> &Error {
+        match self {
+            Error::Renewed { error, .. } => error.cause(),
+            other => other,
+        }
+    }
+
+    /// The account to save despite the failure: see [`Error::Renewed`].
+    pub fn renewed_account(&self) -> Option<&Account> {
+        match self {
+            Error::Renewed { account, .. } => Some(account),
+            _ => None,
+        }
+    }
 }
 
 /// Why Xbox Live refused an account, from its `XErr` code.

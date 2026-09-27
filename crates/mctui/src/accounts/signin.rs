@@ -289,6 +289,7 @@ fn explain(error: &auth::Error) -> (String, Option<String>) {
         E::NeedsSignIn | E::SessionExpired => {
             ("Minecraft didn't accept the sign-in.".into(), again())
         }
+        E::Renewed { error, .. } => explain(error),
     }
 }
 

@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use jiff::SignedDuration;
-use mctui_core::account::{AccountKind, SaveError};
+use mctui_core::account::{Account, AccountKind, Accounts, SaveError};
 use mctui_core::auth::{self, Session};
 
 use super::{Change, Msg, offline};
@@ -83,40 +83,34 @@ impl Checks {
         let active = data.accounts.active_id.clone();
         // A fresh sign-in needs no check.
         let check = !matches!(change, Change::SignedIn(_));
-        let accounts = &mut data.accounts;
-        let done = match change {
-            Change::Activate(id) => {
-                let name = accounts.accounts.iter().find(|a| a.id == id)?.name.clone();
-                accounts.set_active(&id);
-                format!("Now playing as {name}.")
-            }
+        let name_of = |id: &str| {
+            let account = data.accounts.accounts.iter().find(|a| a.id == id);
+            account.map(|a| a.name.clone())
+        };
+        let done = match &change {
+            Change::Activate(id) => format!("Now playing as {}.", name_of(id)?),
+            Change::Remove(id) => format!("Removed “{}”.", name_of(id)?),
+            Change::AddOffline(name) => format!("Added the offline profile “{name}”."),
+            Change::SignedIn(account) => format!("Signed in as {}.", account.name),
+        };
+        match &change {
             Change::Remove(id) => {
-                let removed = accounts.remove(&id)?;
-                self.running.remove(&id);
-                data.sessions.remove(&id);
-                if accounts.active_id.is_none()
-                    && let Some(next) = accounts.accounts.first()
-                {
-                    accounts.active_id = Some(next.id.clone());
-                }
-                format!("Removed “{}”.", removed.name)
-            }
-            Change::AddOffline(name) => {
-                accounts.upsert(offline::account(&name));
-                format!("Added the offline profile “{name}”.")
+                self.running.remove(id);
+                data.sessions.remove(id);
             }
             Change::SignedIn(account) => {
-                let (id, name) = (account.id.clone(), account.name.clone());
-                // A-3: signing in switches to that account.
-                accounts.upsert(*account);
-                accounts.set_active(&id);
                 // Any check of the old token is moot now.
-                self.running.remove(&id);
-                data.sessions.insert(id, SessionStatus::Valid);
-                format!("Signed in as {name}.")
+                self.running.remove(&account.id);
+                data.sessions
+                    .insert(account.id.clone(), SessionStatus::Valid);
             }
-        };
-        let saved = data.accounts.save(&data.dir);
+            Change::Activate(_) | Change::AddOffline(_) => {}
+        }
+        // Made to accounts.json as it is now, so nothing another window
+        // saved is lost.
+        let saved = data
+            .accounts
+            .update(&data.dir, |accounts| edit(accounts, change));
         if check && data.accounts.active_id != active {
             self.check_active(data, tasks, services);
         }
@@ -151,13 +145,7 @@ impl Checks {
         let status = match result {
             Ok(Session::Valid) => SessionStatus::Valid,
             Ok(Session::Refreshed(account)) if account.id == id => {
-                if let Some(saved) = data.accounts.accounts.iter_mut().find(|a| a.id == id) {
-                    *saved = account;
-                }
-                banner =
-                    data.accounts.save(&data.dir).err().map(|e| {
-                        Banner::warn(format!("Your sign-in was renewed. {}", not_saved(&e)))
-                    });
+                banner = keep_renewed(data, account);
                 SessionStatus::Valid
             }
             // The Microsoft account now plays as a different profile; leave
@@ -165,6 +153,11 @@ impl Checks {
             Ok(Session::Refreshed(_)) => SessionStatus::Unverified,
             Err(auth::Error::NeedsSignIn) => SessionStatus::Expired,
             Err(error) => {
+                // Failing after Microsoft renewed the sign-in leaves a new
+                // refresh token to keep: the old one may be spent.
+                if let Some(account) = error.renewed_account().filter(|a| a.id == id) {
+                    banner = keep_renewed(data, account.clone());
+                }
                 tracing::info!(%error, "couldn't check the Minecraft session");
                 SessionStatus::Unverified
             }
@@ -172,6 +165,44 @@ impl Checks {
         data.sessions.insert(id, status);
         banner
     }
+}
+
+/// Makes `change` to `accounts`.
+fn edit(accounts: &mut Accounts, change: Change) {
+    match change {
+        Change::Activate(id) => {
+            accounts.set_active(&id);
+        }
+        Change::Remove(id) => {
+            accounts.remove(&id);
+            if accounts.active_id.is_none()
+                && let Some(next) = accounts.accounts.first()
+            {
+                accounts.active_id = Some(next.id.clone());
+            }
+        }
+        Change::AddOffline(name) => accounts.upsert(offline::account(&name)),
+        Change::SignedIn(account) => {
+            let id = account.id.clone();
+            // A-3: signing in switches to that account.
+            accounts.upsert(*account);
+            accounts.set_active(&id);
+        }
+    }
+}
+
+/// Saves a renewed `account` in place of the saved one with its id, if
+/// that's still there. Returns a toast if saving failed.
+fn keep_renewed(data: &mut Data, account: Account) -> Option<Banner> {
+    let id = account.id.clone();
+    let saved = data.accounts.update(&data.dir, |accounts| {
+        if let Some(saved) = accounts.accounts.iter_mut().find(|a| a.id == id) {
+            *saved = account;
+        }
+    });
+    saved
+        .err()
+        .map(|e| Banner::warn(format!("Your sign-in was renewed. {}", not_saved(&e))))
 }
 
 /// The second half of a toast when `accounts.json` couldn't be written.

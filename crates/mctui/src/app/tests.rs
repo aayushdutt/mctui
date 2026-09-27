@@ -57,6 +57,10 @@ impl Harness {
     ) -> Self {
         let testing::Fixture { dir, mut data } = testing::fixture();
         edit(&mut data);
+        // The app's accounts are what it loaded: changes are made to the
+        // file as it is, so it has to hold the accounts set up here. (One
+        // that can't be written stays as the test left it.)
+        let _ = data.accounts.save(&data.dir);
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (tx, events) = tokio::sync::mpsc::unbounded_channel();
         let tasks = Tasks::new(tx, runtime.handle().clone());

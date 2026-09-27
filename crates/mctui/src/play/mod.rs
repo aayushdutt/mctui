@@ -156,6 +156,11 @@ impl Session {
                         identity
                     }
                     Err(e) => {
+                        // The old refresh token may be spent: keep the new one.
+                        if let Some(account) = e.renewed_account() {
+                            let account = Box::new(account.clone());
+                            mail.send(msg::Msg::Play(seq, Msg::Refreshed(account)));
+                        }
                         return mail.send(msg::Msg::Play(seq, Msg::Failed(sign_in_failure(&e))));
                     }
                 },
@@ -260,13 +265,11 @@ impl Session {
                 self.phase = Phase::Preparing(Some(step));
                 None
             }
-            Msg::Refreshed(account) => {
-                data.accounts.upsert(*account);
-                data.accounts
-                    .save(&data.dir)
-                    .err()
-                    .map(|e| Banner::warn(format!("Couldn't save your sign-in: {e}")))
-            }
+            Msg::Refreshed(account) => data
+                .accounts
+                .update(&data.dir, |accounts| accounts.upsert(*account))
+                .err()
+                .map(|e| Banner::warn(format!("Couldn't save your sign-in: {e}"))),
             Msg::Started(started) => {
                 let Started {
                     game,
@@ -328,22 +331,31 @@ impl Session {
         }
     }
 
-    /// Changes this session's instance and saves it. Returns a warning if
-    /// saving failed.
+    /// Changes this session's instance on disk, keeping whatever another
+    /// window saved meanwhile, and the app's copy to match. Returns a warning
+    /// if saving failed (the app's copy is changed anyway).
     fn save_instance(
         &self,
         data: &mut Data,
-        change: impl FnOnce(&mut mctui_core::instance::Instance),
+        change: impl Fn(&mut mctui_core::instance::Instance),
     ) -> Option<Banner> {
         let inst = data
             .instances
             .iter_mut()
             .find(|i| i.id == self.instance_id)?;
-        change(inst);
-        let saved = data.store.save(inst);
-        saved
-            .err()
-            .map(|e| Banner::warn(format!("Couldn't save {}: {e}", self.instance_name)))
+        match data.store.update(&self.instance_id, &change) {
+            Ok(saved) => {
+                *inst = saved;
+                None
+            }
+            Err(e) => {
+                change(inst);
+                Some(Banner::warn(format!(
+                    "Couldn't save {}: {e}",
+                    self.instance_name
+                )))
+            }
+        }
     }
 }
 
@@ -431,7 +443,7 @@ async fn pump(seq: u64, launched: Launched, mail: &Mailbox) {
 }
 
 fn sign_in_failure(e: &auth::Error) -> Failure {
-    match e {
+    match e.cause() {
         auth::Error::NeedsSignIn | auth::Error::SessionExpired => Failure::SignIn(
             "Your Microsoft sign-in has expired. Sign in again to play online.".into(),
         ),

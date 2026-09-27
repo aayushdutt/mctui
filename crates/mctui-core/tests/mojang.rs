@@ -388,22 +388,52 @@ async fn resolve_uses_the_cache_when_offline() {
     );
 }
 
+/// The Go app's copy of 1.16.5 as it really was: it lists log4j, which the
+/// trimmed fixtures leave out, and has lost the logging setup that keeps
+/// log4j from the 2021 exploit.
+fn go_cache_with_log4j() -> Vec<u8> {
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&fixture("1.16.5.go-cache.json")).unwrap();
+    let log4j = "org/apache/logging/log4j/log4j-core/2.8.1/log4j-core-2.8.1.jar";
+    json["libraries"].as_array_mut().unwrap().push(json!({
+        "name": "org.apache.logging.log4j:log4j-core:2.8.1",
+        "downloads": {"artifact": {
+            "path": log4j,
+            "sha1": "4ac28ff2f1ddf05dae3043a190451e8c46b73c31",
+            "size": 1_402_925,
+            "url": format!("https://libraries.minecraft.net/{log4j}"),
+        }},
+    }));
+    serde_json::to_vec(&json).unwrap()
+}
+
 #[tokio::test]
-async fn a_go_cache_is_used_offline_and_replaced_online() {
+async fn a_go_cache_is_used_offline_only_if_it_kept_what_matters() {
     let tmp = tempfile::tempdir().unwrap();
     let data = DataDir::new(tmp.path());
     let cached = data.cache_dir().join("versions/1.16.5.json");
     std::fs::create_dir_all(cached.parent().unwrap()).unwrap();
     std::fs::write(&cached, fixture("1.16.5.go-cache.json")).unwrap();
 
-    // Offline with no manifest ever fetched: the Go app's copy is all there is.
+    // Offline with no manifest ever fetched: the Go app's copy is all there
+    // is, and without log4j it lost nothing that matters.
     let dead = dead_server().await;
-    let got = client(&data, &format!("{}/manifest.json", dead.uri()))
-        .resolve("1.16.5")
-        .await
-        .unwrap();
+    let offline = client(&data, &format!("{}/manifest.json", dead.uri()));
+    let got = offline.resolve("1.16.5").await.unwrap();
     assert!(got.stale);
     assert_eq!(got.value, version("1.16.5.go-cache.json"));
+
+    // One that runs log4j without the logging setup would launch open to
+    // the exploit: it needs the internet once.
+    std::fs::write(&cached, go_cache_with_log4j()).unwrap();
+    let err = offline.resolve("1.16.5").await.unwrap_err();
+    assert!(
+        matches!(&err, Error::Outdated(id) if id == "1.16.5"),
+        "{err}"
+    );
+    assert!(err.to_string().contains("needs the internet"), "{err}");
+    let err = offline.cached_version("1.16.5").await.unwrap_err();
+    assert!(matches!(err, Error::Outdated(_)), "{err}");
 
     // Online, its checksum doesn't match the manifest, so the real JSON
     // replaces it, and with it what Go dropped.
@@ -415,6 +445,40 @@ async fn a_go_cache_is_used_offline_and_replaced_online() {
     assert!(!got.stale);
     assert!(got.value.logging.client.is_some());
     assert_eq!(std::fs::read(&cached).unwrap(), fixture("1.16.5.json"));
+}
+
+/// With a manifest cached, the cached JSON is checked against its checksum:
+/// the Go app's re-encoding never matches, log4j or not.
+#[tokio::test]
+async fn offline_a_cached_manifest_refuses_copies_mojang_did_not_serve() {
+    let server = Server::start().await;
+    let dead = dead_server().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let data = DataDir::new(tmp.path());
+    client(&data, &server.manifest_url)
+        .manifest()
+        .await
+        .unwrap();
+    // Mojang is unreachable from now on.
+    let manifest = data.cache_dir().join("version_manifest_v2.json");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, text.replace(&server.mock.uri(), &dead.uri())).unwrap();
+    let cached = data.cache_dir().join("versions/1.16.5.json");
+    std::fs::create_dir_all(cached.parent().unwrap()).unwrap();
+    std::fs::write(&cached, fixture("1.16.5.go-cache.json")).unwrap();
+
+    let offline = client(&data, &format!("{}/manifest.json", dead.uri()));
+    let err = offline.resolve("1.16.5").await.unwrap_err();
+    assert!(
+        matches!(&err, Error::Outdated(id) if id == "1.16.5"),
+        "{err}"
+    );
+
+    // Mojang's own copy is used as ever.
+    std::fs::write(&cached, fixture("1.16.5.json")).unwrap();
+    let got = offline.resolve("1.16.5").await.unwrap();
+    assert!(got.stale);
+    assert_eq!(got.value, version("1.16.5.json"));
 }
 
 #[tokio::test]
@@ -475,7 +539,7 @@ async fn errors_say_what_is_missing() {
 }
 
 #[tokio::test]
-async fn a_version_json_mojang_cant_serve_falls_back_to_the_cache() {
+async fn a_version_json_mojang_cant_serve_is_only_replaced_by_the_one_it_lists() {
     let server = Server::start().await;
     let tmp = tempfile::tempdir().unwrap();
     let data = DataDir::new(tmp.path());
@@ -495,14 +559,21 @@ async fn a_version_json_mojang_cant_serve_falls_back_to_the_cache() {
     );
 
     // Cached once, then Mojang republishes with a new checksum and fails:
-    // the old copy is better than nothing.
+    // the old copy isn't what Mojang lists, which may be a fix, so it's
+    // refused rather than launched.
     mojang.version(entry).await.unwrap();
     let republished = VersionEntry {
         sha1: "1111111111111111111111111111111111111111".into(),
-        ..gone
+        ..gone.clone()
     };
-    let got = mojang.version(&republished).await.unwrap();
-    assert!(got.stale);
+    let err = mojang.version(&republished).await.unwrap_err();
+    assert!(
+        matches!(&err, Error::Outdated(id) if id == "1.8.9"),
+        "{err}"
+    );
+
+    // The copy it does list needs no download at all.
+    let got = mojang.version(&gone).await.unwrap();
     assert_eq!(got.value, version("1.8.9.json"));
 }
 

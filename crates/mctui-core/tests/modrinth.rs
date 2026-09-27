@@ -16,7 +16,7 @@ use mctui_core::net::{Http, Progress};
 use mctui_core::paths::DataDir;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use wiremock::matchers::{method, path, query_param, query_param_is_missing};
+use wiremock::matchers::{method, path, path_regex, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn fixture<T: DeserializeOwned>(name: &str) -> T {
@@ -595,13 +595,16 @@ async fn jars_the_catalog_does_not_vouch_for_are_identified_by_hash() {
         1,
         &[],
     );
-    modrinth
-        .get(
-            &format!("/version_file/{}", sha1_hex(b"fapi")),
-            ResponseTemplate::new(200).set_body_json(fabric_api),
+    // One request for both; handmade.jar isn't on Modrinth, so it's left
+    // out of the answer.
+    Mock::given(method("POST"))
+        .and(path("/version_files"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ sha1_hex(b"fapi"): fabric_api })),
         )
+        .expect(1)
+        .mount(&modrinth.server)
         .await;
-    // handmade.jar isn't on Modrinth: the mock answers 404.
     modrinth
         .versions(
             "modmenu",
@@ -648,6 +651,67 @@ async fn jars_the_catalog_does_not_vouch_for_are_identified_by_hash() {
             ),
             entry("mOgUt4GM", "modmenu", "modmenu-13.0.4.jar", "Mod Menu"),
         ]
+    );
+    let requests = modrinth.server.received_requests().await.unwrap();
+    let lookup = requests
+        .iter()
+        .find(|r| r.url.path() == "/version_files")
+        .unwrap();
+    let asked: Value = serde_json::from_slice(&lookup.body).unwrap();
+    assert_eq!(asked["algorithm"], "sha1");
+    let mut hashes: Vec<&str> = asked["hashes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h.as_str().unwrap())
+        .collect();
+    hashes.sort_unstable();
+    let mut want = [sha1_hex(b"fapi"), sha1_hex(b"handmade")];
+    want.sort();
+    assert_eq!(hashes, want);
+}
+
+/// Identifying jars mctui didn't install is a nicety: Modrinth failing to
+/// doesn't stop the install.
+#[tokio::test]
+async fn a_failed_hash_lookup_does_not_stop_the_install() {
+    let modrinth = Modrinth::start().await;
+    let (_dir, inst) = fabric_instance();
+    let mods = mods_dir(&inst);
+    std::fs::create_dir_all(&mods).unwrap();
+    std::fs::write(mods.join("handmade.jar"), "handmade").unwrap();
+    // Modrinth can't look up hashes today, one at a time or together.
+    Mock::given(method("POST"))
+        .and(path("/version_files"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&modrinth.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex("^/version_file/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&modrinth.server)
+        .await;
+    modrinth
+        .versions(
+            "modmenu",
+            vec![version("mOgUt4GM", "mm-1", "modmenu-13.0.4.jar", 1, &[])],
+        )
+        .await;
+    modrinth
+        .projects(&[("mOgUt4GM", "modmenu", "Mod Menu")])
+        .await;
+
+    modrinth.install(&inst, "modmenu").await.unwrap();
+
+    assert_eq!(jars(&inst), ["handmade.jar", "modmenu-13.0.4.jar"]);
+    assert_eq!(
+        catalog(&inst),
+        [entry(
+            "mOgUt4GM",
+            "modmenu",
+            "modmenu-13.0.4.jar",
+            "Mod Menu"
+        )]
     );
 }
 

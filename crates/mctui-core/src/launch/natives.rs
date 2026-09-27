@@ -8,8 +8,8 @@ use std::io;
 use std::path::Path;
 
 use super::plan::{NativeJar, Plan};
-use super::{Error, Result, blocking};
-use crate::fsutil;
+use super::{Error, Result};
+use crate::fsutil::{self, blocking};
 
 /// Records what the natives folder was unpacked for.
 const MARKER: &str = ".mctui-natives";

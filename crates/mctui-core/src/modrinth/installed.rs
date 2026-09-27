@@ -2,8 +2,9 @@
 
 use super::catalog::Catalog;
 use super::model::is_jar_file_name;
-use super::{Error, Result, blocking, mods_dir, remove_if_present};
+use super::{Error, Result, mods_dir, remove_if_present};
 use crate::facets;
+use crate::fsutil::blocking;
 use crate::instance::Instance;
 
 /// A jar in an instance's mods folder.
@@ -53,7 +54,7 @@ pub async fn installed(inst: &Instance) -> Vec<InstalledMod> {
             })
             .collect();
         mods.sort_by_cached_key(|m| (m.title.to_lowercase(), m.file.clone()));
-        Ok(mods)
+        Ok::<_, std::io::Error>(mods)
     });
     listed.await.unwrap_or_default()
 }

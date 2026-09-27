@@ -20,7 +20,7 @@ mod model;
 mod resolve;
 mod starter;
 
-pub use client::{API_URL, Client};
+pub use client::{API_URL, Client, project_page};
 pub use install::{AddedMod, InstallReport};
 pub use installed::{InstalledMod, installed, remove};
 pub use model::{
@@ -72,17 +72,5 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     match std::fs::remove_file(path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
-    }
-}
-
-/// Runs blocking filesystem work on tokio's blocking pool. Its panics are
-/// passed on; it's only cancelled when the runtime is shutting down.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> io::Result<T> + Send + 'static,
-) -> io::Result<T> {
-    match tokio::task::spawn_blocking(work).await {
-        Ok(result) => result,
-        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
-        Err(e) => Err(io::Error::other(e)),
     }
 }

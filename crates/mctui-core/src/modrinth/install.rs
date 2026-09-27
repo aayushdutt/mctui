@@ -1,8 +1,7 @@
 //! Installing a mod, with its required dependencies, into an instance.
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::{self, Read as _};
+use std::io;
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
@@ -12,8 +11,9 @@ use super::catalog::{Catalog, Entry};
 use super::client::{Client, found};
 use super::model::{Project, Version, choose_version};
 use super::resolve::{Answers, Lookup, Pick, Plan, SkippedDep, Target, UnresolvedDep, resolve};
-use super::{Error, Result, blocking, mods_dir, remove_if_present};
+use super::{Error, Result, mods_dir, remove_if_present};
 use crate::facets;
+use crate::fsutil::{self, blocking};
 use crate::instance::{Instance, Loader};
 use crate::net::{Download, Hash, Progress};
 
@@ -178,24 +178,29 @@ impl Client {
     }
 
     /// Which projects the instance has: from the catalog, and from Modrinth by
-    /// SHA-1 for jars the catalog doesn't vouch for.
+    /// SHA-1 for jars the catalog doesn't vouch for. Those are looked up in
+    /// one request, as a best effort: when Modrinth can't say, they stay
+    /// unidentified rather than stopping the install.
     async fn local_mods(&self, inst: &Instance) -> Result<LocalMods> {
         let dir = mods_dir(inst);
         let scan_inst = inst.clone();
-        let (mut local, unknown) = blocking(move || Ok(LocalMods::scan(&scan_inst)))
+        let (mut local, unknown) =
+            blocking(move || Ok::<_, io::Error>(LocalMods::scan(&scan_inst)))
+                .await
+                .map_err(Error::io(&dir))?;
+        let hashes: Vec<&str> = unknown.iter().map(|(_, sha1)| sha1.as_str()).collect();
+        let found = self
+            .versions_from_sha1s(&hashes)
             .await
-            .map_err(Error::io(&dir))?;
-        let identified: Vec<_> = stream::iter(unknown)
-            .map(|(file, sha1)| async move {
-                Ok::<_, Error>((file, self.version_from_sha1(&sha1).await?))
-            })
-            .buffer_unordered(CONCURRENCY)
-            .try_collect()
-            .await?;
-        for (file, version) in identified {
-            if let Some(version) = version {
-                local.add(version.project_id.clone(), file.clone());
-                local.identified.push((version.project_id, file));
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "couldn't identify the mods mctui didn't install");
+                HashMap::new()
+            });
+        for (file, sha1) in unknown {
+            if let Some(version) = found.get(&sha1) {
+                let project_id = version.project_id.clone();
+                local.add(project_id.clone(), file.clone());
+                local.identified.push((project_id, file));
             }
         }
         Ok(local)
@@ -263,7 +268,7 @@ impl LocalMods {
             let file = jar.file_name;
             match catalog.entry_for(&file) {
                 Some(entry) if entry.has_real_id() => local.add(entry.project_id.clone(), file),
-                _ => match sha1_of(&dir.join(&file)) {
+                _ => match fsutil::hash_file::<sha1::Sha1>(&dir.join(&file)) {
                     Ok(sha1) => unknown.push((file, sha1)),
                     Err(e) => tracing::warn!(file, error = %e, "couldn't read mod jar"),
                 },
@@ -391,41 +396,4 @@ fn target(inst: &Instance) -> Result<Target<'_>> {
         game_version: &inst.version,
         loader: inst.loader.as_str(),
     })
-}
-
-/// The SHA-1 of the file at `path`, as lowercase hex.
-fn sha1_of(path: &Path) -> io::Result<String> {
-    use sha1::Digest as _;
-    use std::fmt::Write as _;
-
-    let mut file = fs::File::open(path)?;
-    let mut hasher = sha1::Sha1::default();
-    let mut buf = vec![0; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hasher.finalize().iter().fold(String::new(), |mut hex, b| {
-        let _ = write!(hex, "{b:02x}");
-        hex
-    }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sha1_of_a_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("hello.jar");
-        fs::write(&path, "hello").unwrap();
-        assert_eq!(
-            sha1_of(&path).unwrap(),
-            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-        );
-    }
 }

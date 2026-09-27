@@ -1,5 +1,7 @@
 //! The running game: its output, stopping it, and how it ended.
 
+use std::borrow::Cow;
+use std::fmt;
 use std::io;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
@@ -15,10 +17,22 @@ use tokio::task::JoinHandle;
 
 use super::log::{LogLine, Parser, Stream};
 use super::{Error, Result};
+use crate::account::Secret;
 use crate::instance::Instance;
 
-/// How long a stopped game gets to save and quit before it's killed.
-pub const DEFAULT_STOP_GRACE: Duration = Duration::from_secs(15);
+/// How long a stopped game gets to save and quit before it's killed. Saving
+/// a big world can take a while.
+pub const DEFAULT_STOP_GRACE: Duration = Duration::from_secs(30);
+
+/// `CreateProcess` flags for the game: a process group of its own, so Ctrl-C
+/// in mctui's console doesn't reach it, and a console of its own that isn't
+/// shown, so closing mctui's doesn't end it.
+#[cfg(windows)]
+const DETACHED: u32 = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// How long output is still read after the game exits. A process the game
 /// started may hold its output open for good; the Go app waited for it.
@@ -80,20 +94,73 @@ pub enum Exit {
 /// How [`Game::stop`] stopped the game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stopped {
-    /// It was interrupted (as by Ctrl-C), and quit, saving on the way.
+    /// It was asked to quit (interrupted as by Ctrl-C, or on Windows its
+    /// window closed), and did, saving on the way.
     Interrupted,
-    /// It was killed: it didn't quit within the grace period, or (on
-    /// Windows) couldn't be interrupted.
+    /// It was killed, with everything it started: it didn't quit within the
+    /// grace period, or couldn't be asked to.
     Killed,
+}
+
+/// The command that starts the game, for [`Game::spawn`]: from
+/// [`Plan::command`](super::Plan::command), or any command. The access
+/// token on its command line is hidden from its `Debug` output, and from
+/// the game's output once it runs.
+pub struct GameCommand {
+    command: Command,
+    secret: Option<Secret>,
+}
+
+impl GameCommand {
+    /// `command`, with `secret` to hide wherever it shows.
+    pub(super) fn new(command: Command, secret: Option<Secret>) -> Self {
+        Self { command, secret }
+    }
+}
+
+/// A command with no token to hide.
+impl From<Command> for GameCommand {
+    fn from(command: Command) -> Self {
+        Self::new(command, None)
+    }
+}
+
+impl fmt::Debug for GameCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let command = self.command.as_std();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| redact(&arg.to_string_lossy(), self.secret.as_ref()).into_owned())
+            .collect();
+        f.debug_struct("GameCommand")
+            .field("program", &command.get_program())
+            .field("args", &args)
+            .field("current_dir", &command.get_current_dir())
+            .finish_non_exhaustive()
+    }
+}
+
+/// `text` with `secret` replaced by `<redacted>` wherever it appears.
+pub(super) fn redact<'a>(text: &'a str, secret: Option<&Secret>) -> Cow<'a, str> {
+    match secret.map(Secret::expose) {
+        Some(token) if !token.is_empty() && text.contains(token) => {
+            Cow::Owned(text.replace(token, "<redacted>"))
+        }
+        _ => Cow::Borrowed(text),
+    }
 }
 
 impl Game {
     /// Starts `command` as the game, with its output piped to [`Logs`] and no
-    /// input. On Unix it gets a process group of its own, so it outlives
-    /// mctui's terminal. [`Game::stop`] interrupts it, then kills it if it's
-    /// still running after `stop_grace`. Must be called within a tokio
-    /// runtime.
-    pub fn spawn(mut command: Command, stop_grace: Duration) -> Result<(Game, Logs)> {
+    /// input. It gets a process group of its own (and on Windows a hidden
+    /// console of its own), so it outlives mctui's terminal. [`Game::stop`]
+    /// asks it to quit, then kills it and whatever it started if it's still
+    /// running after `stop_grace`. Must be called within a tokio runtime.
+    pub fn spawn(command: impl Into<GameCommand>, stop_grace: Duration) -> Result<(Game, Logs)> {
+        let GameCommand {
+            mut command,
+            secret,
+        } = command.into();
         command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -101,6 +168,8 @@ impl Game {
             .kill_on_drop(false);
         #[cfg(unix)]
         command.process_group(0);
+        #[cfg(windows)]
+        command.creation_flags(DETACHED);
         let mut child = command.spawn().map_err(|source| Error::Spawn {
             java: PathBuf::from(command.as_std().get_program()),
             source,
@@ -111,16 +180,22 @@ impl Game {
         let time_zone = TimeZone::system();
         let mut readers = Vec::with_capacity(2);
         if let Some(stdout) = child.stdout.take() {
-            let reader = read_output(stdout, Stream::Stdout, lines.clone(), time_zone.clone());
-            readers.push(tokio::spawn(reader));
+            let output = Output {
+                stream: Stream::Stdout,
+                lines: lines.clone(),
+                time_zone: time_zone.clone(),
+                secret: secret.clone(),
+            };
+            readers.push(tokio::spawn(read_output(stdout, output)));
         }
         if let Some(stderr) = child.stderr.take() {
-            readers.push(tokio::spawn(read_output(
-                stderr,
-                Stream::Stderr,
+            let output = Output {
+                stream: Stream::Stderr,
                 lines,
                 time_zone,
-            )));
+                secret,
+            };
+            readers.push(tokio::spawn(read_output(stderr, output)));
         }
 
         let pid = child.id();
@@ -161,9 +236,10 @@ impl Game {
         self.started_at
     }
 
-    /// Asks the game to stop: interrupts it, as Ctrl-C would, so it saves
-    /// and quits, and kills it if it's still running after the grace period
-    /// (at once on Windows). Returns straight away; [`Game::wait`] for it.
+    /// Asks the game to stop: interrupts it, as Ctrl-C would (on Windows,
+    /// closes its window), so it saves and quits, and kills it and whatever
+    /// it started if it's still running after the grace period. Returns
+    /// straight away; [`Game::wait`] for it.
     pub fn stop(&self) {
         self.stop.send_replace(true);
     }
@@ -261,34 +337,94 @@ async fn supervise(
     if let Some(status) = exited {
         return (status.into(), None);
     }
-    if interrupt(child).is_ok()
-        && let Ok(status) = tokio::time::timeout(grace, child.wait()).await
-    {
+    if let Some(status) = ask_to_quit(child, grace).await {
         return (status.into(), Some(Stopped::Interrupted));
     }
-    if let Err(error) = child.start_kill() {
-        tracing::warn!(%error, "couldn't kill the game");
+    // Everything the game started goes too, or it could hold the world open.
+    #[cfg(unix)]
+    let killed = kill_group(child);
+    #[cfg(windows)]
+    let killed = taskkill(child.id(), true).await;
+    #[cfg(not(any(unix, windows)))]
+    let killed: io::Result<()> = Err(io::ErrorKind::Unsupported.into());
+    if let Err(error) = killed {
+        tracing::debug!(%error, "couldn't kill what the game started");
+        if let Err(error) = child.start_kill() {
+            tracing::warn!(%error, "couldn't kill the game");
+        }
     }
     (child.wait().await.into(), Some(Stopped::Killed))
 }
 
-/// Sends the game SIGINT. It hasn't been waited for yet, so its pid can't
-/// have been reused.
-#[cfg(unix)]
-fn interrupt(child: &Child) -> io::Result<()> {
-    use rustix::process::{Pid, Signal, kill_process};
-    let pid = child
-        .id()
-        .and_then(|id| i32::try_from(id).ok())
-        .and_then(Pid::from_raw)
-        .ok_or_else(|| io::Error::other("the game has already exited"))?;
-    kill_process(pid, Signal::INT).map_err(io::Error::from)
+/// Asks the game to quit, as Ctrl-C would (on Windows, as closing its
+/// window would), and waits up to `grace` for it to. `None` if it couldn't
+/// be asked, or is still running.
+async fn ask_to_quit(child: &mut Child, grace: Duration) -> Option<io::Result<ExitStatus>> {
+    #[cfg(unix)]
+    let asked = interrupt(child);
+    #[cfg(windows)]
+    let asked = taskkill(child.id(), false).await;
+    #[cfg(not(any(unix, windows)))]
+    let asked: io::Result<()> = Err(io::ErrorKind::Unsupported.into());
+    if let Err(error) = asked {
+        tracing::debug!(%error, "couldn't ask the game to quit");
+        return None;
+    }
+    tokio::time::timeout(grace, child.wait()).await.ok()
 }
 
-/// Windows can't interrupt another process.
-#[cfg(not(unix))]
-fn interrupt(_child: &Child) -> io::Result<()> {
-    Err(io::ErrorKind::Unsupported.into())
+/// The game's pid. It hasn't been waited for yet, so the pid can't have
+/// been reused.
+#[cfg(unix)]
+fn pid(child: &Child) -> io::Result<rustix::process::Pid> {
+    child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .and_then(rustix::process::Pid::from_raw)
+        .ok_or_else(|| io::Error::other("the game has already exited"))
+}
+
+/// Sends the game SIGINT.
+#[cfg(unix)]
+fn interrupt(child: &Child) -> io::Result<()> {
+    use rustix::process::{Signal, kill_process};
+    kill_process(pid(child)?, Signal::INT).map_err(io::Error::from)
+}
+
+/// Kills the game's process group: the game, which leads it, and whatever
+/// it started.
+#[cfg(unix)]
+fn kill_group(child: &Child) -> io::Result<()> {
+    use rustix::process::{Signal, kill_process_group};
+    kill_process_group(pid(child)?, Signal::KILL).map_err(io::Error::from)
+}
+
+/// Runs `taskkill` on the game (`pid`, from [`Child::id`]) and whatever it
+/// started: asking them to close (their windows get a close request, as
+/// from the title bar), or with `force`, ending them. The game's process
+/// handle is still open, so its pid can't have been reused.
+#[cfg(windows)]
+async fn taskkill(pid: Option<u32>, force: bool) -> io::Result<()> {
+    let pid = pid
+        .ok_or_else(|| io::Error::other("the game has already exited"))?
+        .to_string();
+    let mut taskkill = Command::new("taskkill");
+    taskkill.args(["/PID", pid.as_str(), "/T"]);
+    if force {
+        taskkill.arg("/F");
+    }
+    let status = taskkill
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .await?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!("taskkill failed ({status})")))
+    }
 }
 
 /// Waits a little for the output readers to reach the end, then stops them.
@@ -306,15 +442,26 @@ async fn finish_reading(mut readers: Vec<JoinHandle<()>>) {
     }
 }
 
-/// Reads one of the game's outputs to the end, sending each line to `lines`.
-/// Keeps reading whether anyone listens or not, so the game never blocks on
-/// a full pipe.
-async fn read_output(
-    output: impl AsyncRead + Unpin,
+/// Where one of the game's outputs goes.
+struct Output {
     stream: Stream,
     lines: broadcast::Sender<LogLine>,
     time_zone: TimeZone,
-) {
+    /// The access token, which old versions print ("Session ID is
+    /// token:…"): it's hidden before a line goes anywhere.
+    secret: Option<Secret>,
+}
+
+/// Reads one of the game's outputs to the end, sending each line on.
+/// Keeps reading whether anyone listens or not, so the game never blocks on
+/// a full pipe.
+async fn read_output(output: impl AsyncRead + Unpin, to: Output) {
+    let Output {
+        stream,
+        lines,
+        time_zone,
+        secret,
+    } = to;
     let mut output = BufReader::with_capacity(64 * 1024, output);
     let mut parser = Parser::new(time_zone);
     let mut raw = Vec::new();
@@ -327,7 +474,8 @@ async fn read_output(
                 break;
             }
         }
-        parser.push(&text(&raw), |text, level| {
+        let line = text(&raw);
+        parser.push(&redact(&line, secret.as_ref()), |text, level| {
             // No one listening is fine.
             let _ = lines.send(LogLine {
                 text,
@@ -400,6 +548,40 @@ mod tests {
         assert_eq!(got.len(), 4);
         assert_eq!(got[0], long[..MAX_LINE]);
         assert_eq!(got[1..], [b"next".to_vec(), Vec::new(), b"last".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn the_access_token_never_reaches_the_logs() {
+        let (lines, mut logs) = broadcast::channel(16);
+        let output = Output {
+            stream: Stream::Stdout,
+            lines,
+            time_zone: TimeZone::UTC,
+            secret: Some(Secret::new("tok-123")),
+        };
+        // What 1.7.x prints.
+        let printed = b"(Session ID is token:tok-123:069a79f4)\nSetting user: Steve\n";
+        read_output(&printed[..], output).await;
+        let first = logs.recv().await.unwrap();
+        assert_eq!(first.text, "(Session ID is token:<redacted>:069a79f4)");
+        assert_eq!(logs.recv().await.unwrap().text, "Setting user: Steve");
+    }
+
+    #[test]
+    fn game_commands_hide_the_token_from_debug() {
+        let mut command = Command::new("java");
+        command.args(["--accessToken", "tok-123", "--session", "token:tok-123:u"]);
+        let secret = Some(Secret::new("tok-123"));
+        let debug = format!("{:?}", GameCommand::new(command, secret));
+        assert!(!debug.contains("tok-123"), "{debug}");
+        assert!(debug.contains("token:<redacted>:u"), "{debug}");
+
+        assert_eq!(
+            redact("a tok b", Some(&Secret::new("tok"))),
+            "a <redacted> b"
+        );
+        assert_eq!(redact("same", Some(&Secret::new(""))), "same");
+        assert_eq!(redact("same", None), "same");
     }
 
     #[test]

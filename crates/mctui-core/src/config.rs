@@ -86,7 +86,7 @@ impl Config {
         };
         match serde_json::from_slice::<ConfigFile>(&data) {
             Ok(file) => {
-                let moved = moved_data_dir_notice(&file.data_dir, dir);
+                let moved = moved_dirs_notice(&file, dir);
                 let mut loaded = Loaded::clean(Config::from(file));
                 if let Some(notice) = moved {
                     loaded.add_notice(notice);
@@ -100,30 +100,67 @@ impl Config {
         }
     }
 
-    /// Writes `config.json` atomically (mode 0644).
+    /// Writes `config.json` atomically (mode 0644). What mctui doesn't use
+    /// is kept as the file has it: the Go app's folder paths, and keys this
+    /// version doesn't know.
     pub fn save(&self, dir: &DataDir) -> io::Result<()> {
         fs::create_dir_all(dir.root())?;
-        let data = serde_json::to_vec_pretty(&ConfigFile::new(self, dir))?;
-        fsutil::write_atomic(&dir.config_file(), &data, 0o644)
+        let path = dir.config_file();
+        let on_disk = crate::read_optional(&path)
+            .ok()
+            .flatten()
+            .and_then(|data| serde_json::from_slice::<ConfigFile>(&data).ok());
+        let data = serde_json::to_vec_pretty(&ConfigFile::new(self, dir, on_disk))?;
+        fsutil::write_atomic(&path, &data, 0o644)
     }
 }
 
-/// Says so when `config.json` names a data dir other than the one in use.
-fn moved_data_dir_notice(configured: &str, dir: &DataDir) -> Option<String> {
-    let (configured, root) = (Path::new(configured), dir.root());
-    if configured.as_os_str().is_empty() || configured == root || same_dir(configured, root) {
+/// Says so when `config.json` names folders other than the ones in use. The
+/// Go app took its data dir from there, and its instances, assets, and
+/// libraries folders; mctui takes them all from the data dir in use.
+fn moved_dirs_notice(file: &ConfigFile, dir: &DataDir) -> Option<String> {
+    let root = dir.root();
+    let configured_root = Some(Path::new(&file.data_dir)).filter(|p| !p.as_os_str().is_empty());
+    let mut notices = Vec::new();
+    if let Some(configured) = configured_root
+        && !same_dir(configured, root)
+    {
+        notices.push(format!(
+            "config.json points to {}; mctui now uses {}.",
+            configured.display(),
+            root.display()
+        ));
+    }
+    for (key, configured, name) in [
+        ("instancesDir", &file.instances_dir, "instances"),
+        ("assetsDir", &file.assets_dir, "assets"),
+        ("librariesDir", &file.libraries_dir, "libraries"),
+    ] {
+        let configured = Path::new(configured);
+        let in_use = root.join(name);
+        // Go put each in its data dir unless told otherwise: one that's
+        // there is covered by the data dir's notice.
+        let beside_data_dir = configured_root.is_some_and(|d| same_dir(configured, &d.join(name)));
+        if configured.as_os_str().is_empty() || same_dir(configured, &in_use) || beside_data_dir {
+            continue;
+        }
+        notices.push(format!(
+            "config.json sets {key} to {}; mctui uses {}.",
+            configured.display(),
+            in_use.display()
+        ));
+    }
+    if notices.is_empty() {
         return None;
     }
-    Some(format!(
-        "config.json points to {}; mctui now uses {}. Set MCTUI_DATA_DIR to use another folder.",
-        configured.display(),
-        root.display()
-    ))
+    notices.push("Set MCTUI_DATA_DIR to use another folder.".to_owned());
+    Some(notices.join(" "))
 }
 
-/// Whether two paths name the same existing folder, through symlinks and `..`.
+/// Whether two paths name the same folder: equal, or the same existing
+/// folder through symlinks and `..`.
 fn same_dir(a: &Path, b: &Path) -> bool {
-    matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+    a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 
 /// `config.json` as Go wrote it, keys in Go's order.
@@ -131,18 +168,19 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 #[serde(rename_all = "camelCase", default)]
 struct ConfigFile {
     // Go loaded these over its defaults and used them: `dataDir` for the
-    // config, accounts, and instances, the others for their own folders. mctui
-    // takes every path from the resolved [`DataDir`] instead, so `dataDir` is
-    // read only to warn when it points elsewhere and the rest are ignored. All
-    // four are still written, from the resolved dir, so an older Go build
-    // reading this file finds its data.
+    // config, accounts, and instances, and the others for their own folders
+    // (instances aside, which Go kept in the data dir anyway). mctui takes
+    // every path from the resolved [`DataDir`] instead, so these are read
+    // only to warn when they point elsewhere. Saving keeps what the file
+    // has, so a Go build reading it still finds its data, and writes the
+    // resolved folders where it has none.
     #[serde(deserialize_with = "string_or_empty")]
     data_dir: String,
-    #[serde(skip_deserializing)]
+    #[serde(deserialize_with = "string_or_empty")]
     instances_dir: String,
-    #[serde(skip_deserializing)]
+    #[serde(deserialize_with = "string_or_empty")]
     assets_dir: String,
-    #[serde(skip_deserializing)]
+    #[serde(deserialize_with = "string_or_empty")]
     libraries_dir: String,
     java_path: String,
     jvm_args: Option<Vec<String>>,
@@ -151,6 +189,9 @@ struct ConfigFile {
     #[serde(rename = "msaClientID")]
     msa_client_id: String,
     launch_log_verbosity: LogVerbosity,
+    /// Keys this version doesn't know (a newer one's, say), kept as they are.
+    #[serde(flatten)]
+    other: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A string, or `""` for any other value: a key we only warn about must not
@@ -163,19 +204,25 @@ fn string_or_empty<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> 
 }
 
 impl ConfigFile {
-    fn new(config: &Config, dir: &DataDir) -> Self {
+    /// The file for `config`, keeping from `on_disk` what mctui doesn't use.
+    fn new(config: &Config, dir: &DataDir, on_disk: Option<ConfigFile>) -> Self {
         let path = |p: &Path| p.to_string_lossy().into_owned();
+        let kept = on_disk.unwrap_or_default();
+        let or_in_use = |kept: String, in_use: &Path| {
+            if kept.is_empty() { path(in_use) } else { kept }
+        };
         Self {
-            data_dir: path(dir.root()),
-            instances_dir: path(&dir.instances_dir()),
-            assets_dir: path(&dir.assets_dir()),
-            libraries_dir: path(&dir.libraries_dir()),
+            data_dir: or_in_use(kept.data_dir, dir.root()),
+            instances_dir: or_in_use(kept.instances_dir, &dir.instances_dir()),
+            assets_dir: or_in_use(kept.assets_dir, &dir.assets_dir()),
+            libraries_dir: or_in_use(kept.libraries_dir, &dir.libraries_dir()),
             java_path: config.java_path.as_deref().map(path).unwrap_or_default(),
             jvm_args: Some(config.jvm_args.clone()),
             theme: config.theme.clone(),
             show_snapshots: config.show_snapshots,
             msa_client_id: config.msa_client_id.clone(),
             launch_log_verbosity: config.launch_log_verbosity,
+            other: kept.other,
         }
     }
 }
@@ -244,19 +291,92 @@ mod tests {
         let loaded = Config::load(&data);
         assert_eq!(loaded.value.theme, "nord");
         assert_eq!(
-            loaded.notice.unwrap(),
+            loaded.notice.as_deref(),
+            Some(
+                format!(
+                    "config.json points to /elsewhere; mctui now uses {}. Set MCTUI_DATA_DIR to use another folder.",
+                    dir.path().display()
+                )
+                .as_str()
+            )
+        );
+
+        // ...and kept on save, so a Go build reading the file still finds its
+        // data there; a folder it gave as something else gets the real one.
+        loaded.value.save(&data).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(data.config_file()).unwrap()).unwrap();
+        assert_eq!(saved["dataDir"], "/elsewhere");
+        let instances = dir.path().join("instances");
+        assert_eq!(saved["instancesDir"], instances.to_string_lossy().as_ref());
+        assert_eq!(Config::load(&data).notice, loaded.notice);
+    }
+
+    #[test]
+    fn go_folder_paths_and_unknown_keys_are_kept_and_warned_about() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = DataDir::new(dir.path());
+        let root = dir.path().to_string_lossy().into_owned();
+        let json = serde_json::json!({
+            "dataDir": root,
+            "instancesDir": format!("{root}/instances"),
+            "assetsDir": "/Volumes/Games/assets",
+            "librariesDir": "/Volumes/Games/libraries",
+            "theme": "nord",
+            "someday": {"a": [1, 2]},
+        });
+        fs::write(data.config_file(), json.to_string()).unwrap();
+
+        let loaded = Config::load(&data);
+        assert_eq!(
+            loaded.notice.as_deref(),
+            Some(
+                format!(
+                    "config.json sets assetsDir to /Volumes/Games/assets; mctui uses {root}/assets. \
+                     config.json sets librariesDir to /Volumes/Games/libraries; mctui uses \
+                     {root}/libraries. Set MCTUI_DATA_DIR to use another folder."
+                )
+                .as_str()
+            )
+        );
+
+        let mut config = loaded.value;
+        config.theme = "dark".to_owned();
+        config.save(&data).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(data.config_file()).unwrap()).unwrap();
+        for key in [
+            "dataDir",
+            "instancesDir",
+            "assetsDir",
+            "librariesDir",
+            "someday",
+        ] {
+            assert_eq!(saved[key], json[key], "{key}");
+        }
+        assert_eq!(saved["theme"], "dark");
+        assert_eq!(Config::load(&data).notice, loaded.notice, "still true");
+    }
+
+    #[test]
+    fn folders_in_the_configured_data_dir_share_its_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = DataDir::new(dir.path());
+        let json = serde_json::json!({
+            "dataDir": "/elsewhere",
+            "instancesDir": "/elsewhere/instances",
+            "assetsDir": "/elsewhere/assets",
+            "librariesDir": "/elsewhere/libraries",
+        });
+        fs::write(data.config_file(), json.to_string()).unwrap();
+        let notice = Config::load(&data).notice.unwrap();
+        assert_eq!(
+            notice,
             format!(
                 "config.json points to /elsewhere; mctui now uses {}. Set MCTUI_DATA_DIR to use another folder.",
                 dir.path().display()
             )
         );
-
-        // ...and rewritten from the real data dir on save, which settles it.
-        loaded.value.save(&data).unwrap();
-        let saved: serde_json::Value =
-            serde_json::from_slice(&fs::read(data.config_file()).unwrap()).unwrap();
-        assert_eq!(saved["dataDir"], dir.path().to_string_lossy().as_ref());
-        assert!(Config::load(&data).notice.is_none());
     }
 
     #[test]

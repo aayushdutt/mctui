@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use super::plan::{Assets, Plan, join_relative};
-use super::{Error, Result, Step, blocking, natives};
+use super::{Error, Result, Step, natives};
+use crate::fsutil::blocking;
 use crate::net::{Download, Hash, Http, Progress};
 
 /// Where asset objects are downloaded from.
@@ -35,8 +36,10 @@ pub struct Prepared {
 ///
 /// An instance already fully downloaded ([`Plan::downloaded`]) skips the
 /// network: its files are only checked to be there at the right size, and
-/// if any is missing everything is fetched and verified after all (the Go
-/// app trusted the mark blindly: L-11).
+/// the asset index against its checksum too, since Mojang republishes an
+/// index under the same id. If anything is missing or out of date,
+/// everything is fetched and verified after all (the Go app trusted the
+/// mark blindly: L-11).
 ///
 /// Reports [`Step::Libraries`], [`Step::Assets`], then [`Step::Natives`].
 /// Dropping the future stops the downloads and leaves no partial file.
@@ -118,21 +121,25 @@ async fn download(
 }
 
 /// The asset index, if every file of `plan` is on disk at its expected
-/// size; `None` if something's missing.
+/// size and the index is the one the version lists; `None` if something's
+/// missing or out of date.
 async fn all_there(plan: &Plan) -> Result<Option<AssetIndex>> {
     let plan = plan.clone();
-    let found = blocking(move || Ok(find_missing(&plan))).await?;
+    let found = blocking(move || Ok::<_, Error>(find_missing(&plan))).await?;
     match found {
         Ok(index) => Ok(Some(index)),
         Err(missing) => {
-            tracing::info!(missing = %missing.display(), "a game file is missing; downloading again");
+            tracing::info!(
+                missing = %missing.display(),
+                "a game file is missing or out of date; downloading again"
+            );
             Ok(None)
         }
     }
 }
 
-/// The asset index, if every file is there; else the first one missing.
-/// Blocking.
+/// The asset index, if every file is there; else the first one missing or
+/// out of date. Blocking.
 fn find_missing(plan: &Plan) -> Result<AssetIndex, PathBuf> {
     let there = |path: &Path, size: Option<u64>| {
         fs::metadata(path).is_ok_and(|m| m.is_file() && size.is_none_or(|size| m.len() == size))
@@ -146,6 +153,7 @@ fn find_missing(plan: &Plan) -> Result<AssetIndex, PathBuf> {
     let path = &assets.index.dest;
     let index = fs::read(path)
         .ok()
+        .filter(|bytes| is_current(&assets.index, bytes))
         .and_then(|bytes| AssetIndex::parse(path, &bytes).ok())
         .ok_or_else(|| path.clone())?;
     for object in index.objects.values() {
@@ -155,6 +163,13 @@ fn find_missing(plan: &Plan) -> Result<AssetIndex, PathBuf> {
         }
     }
     Ok(index)
+}
+
+/// Whether `bytes` are the file `file` describes: its size and checksum,
+/// where it gives them.
+fn is_current(file: &Download, bytes: &[u8]) -> bool {
+    file.size.is_none_or(|size| size == bytes.len() as u64)
+        && file.hash.as_ref().is_none_or(|hash| hash.matches(bytes))
 }
 
 /// Reports the file steps done, for an instance whose files were all there.

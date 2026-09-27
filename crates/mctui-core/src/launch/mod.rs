@@ -28,7 +28,7 @@ mod user_args;
 use std::io;
 use std::path::PathBuf;
 
-pub use game::{DEFAULT_STOP_GRACE, Exit, ExitReport, Game, Logs, Stopped};
+pub use game::{DEFAULT_STOP_GRACE, Exit, ExitReport, Game, GameCommand, Logs, Stopped};
 pub use identity::{Identity, offline_uuid};
 pub use launcher::{InstanceChanges, Launched, Launcher};
 pub use log::{Level, LogLine, Stream, classify};
@@ -39,7 +39,7 @@ use crate::java::{self, InstallProgress};
 use crate::modrinth::StarterProgress;
 use crate::mojang::maven::InvalidCoordinate;
 use crate::net::{self, Progress};
-use crate::{fabric, mojang};
+use crate::{fabric, fsutil, mojang};
 
 /// Why a launch failed.
 #[derive(Debug, thiserror::Error)]
@@ -183,16 +183,9 @@ impl Step {
     }
 }
 
-/// Runs blocking filesystem work on tokio's blocking pool. Its panics are
-/// passed on. Dropping the future doesn't stop the work: it runs to the end,
-/// so it must leave things whole whenever it stops.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T> + Send + 'static,
-) -> Result<T> {
-    match tokio::task::spawn_blocking(work).await {
-        Ok(result) => result,
-        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
-        // Only when the runtime is shutting down.
-        Err(_) => Err(Error::Cancelled),
+/// Blocking work that never ran was cancelled with the app.
+impl From<fsutil::ShuttingDown> for Error {
+    fn from(_: fsutil::ShuttingDown) -> Self {
+        Error::Cancelled
     }
 }

@@ -628,6 +628,10 @@ fn debug_output_hides_the_token() {
     let debug = format!("{plan:?}");
     assert!(!debug.contains("token123"), "{debug}");
     assert!(debug.contains("<redacted>"));
+    // Nor does the command that starts the game.
+    let debug = format!("{:?}", plan.command());
+    assert!(!debug.contains("token123"), "{debug}");
+    assert!(debug.contains("<redacted>"), "{debug}");
     let args: Vec<&str> = plan.args().collect();
     assert_eq!(args.len(), plan.jvm_args.len() + 1 + plan.game_args.len());
     assert_eq!(args[plan.jvm_args.len()], plan.main_class);
@@ -761,7 +765,7 @@ mod prepare {
                 "id": "test-1",
                 "type": "release",
                 "mainClass": "net.minecraft.client.main.Main",
-                "minecraftArguments": "--username ${auth_player_name} --assetsDir ${game_assets}",
+                "minecraftArguments": "--username ${auth_player_name} --accessToken ${auth_access_token} --assetsDir ${game_assets}",
                 "assets": index_id,
                 "assetIndex": {
                     "id": index_id, "sha1": sha1(index.as_bytes()), "size": index.len(),
@@ -976,6 +980,56 @@ mod prepare {
                 .unwrap()
                 .verified
         );
+    }
+
+    /// Mojang republishes asset indexes under the same id: a downloaded
+    /// instance with the old one fetches the new one and its objects.
+    #[tokio::test]
+    async fn a_downloaded_instance_notices_a_republished_asset_index() {
+        const MUSIC: &[u8] = b"new music";
+        let game = Game::start("test").await;
+        let tmp = tempfile::tempdir().unwrap();
+        let (data, mut instance) = temp_instance(tmp.path());
+        let http = Http::new().unwrap();
+        launch::prepare(&http, &game.plan(&data, &instance), |_| {})
+            .await
+            .unwrap();
+        instance.is_fully_downloaded = true;
+        instance.download_cache_key = instance.download_key();
+
+        let index = json!({"objects": {
+            "minecraft/sounds/a.ogg": {"hash": sha1(SOUND), "size": SOUND.len()},
+            "minecraft/music/new.ogg": {"hash": sha1(MUSIC), "size": MUSIC.len()},
+        }})
+        .to_string();
+        for (route, body) in [
+            ("/index-v2.json".to_owned(), index.as_bytes()),
+            (object_route(MUSIC), MUSIC),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
+                .mount(&game.server)
+                .await;
+        }
+        let mut plan = game.plan(&data, &instance);
+        assert!(plan.downloaded);
+        let assets = plan.assets.as_mut().unwrap();
+        assets.index.url = format!("{}/index-v2.json", game.server.uri());
+        assets.index.hash = Some(Hash::Sha1(sha1(index.as_bytes())));
+        assets.index.size = Some(index.len() as u64);
+
+        let prepared = launch::prepare(&http, &plan, |_| {}).await.unwrap();
+        assert!(prepared.verified, "checked and fetched again");
+        let indexes = data.assets_dir().join("indexes/test.json");
+        assert_eq!(std::fs::read_to_string(indexes).unwrap(), index);
+        let music = sha1(MUSIC);
+        let object = data
+            .assets_dir()
+            .join("objects")
+            .join(&music[..2])
+            .join(&music);
+        assert_eq!(std::fs::read(object).unwrap(), MUSIC);
     }
 
     #[tokio::test]
@@ -1299,6 +1353,99 @@ for arg in "$@"; do echo "arg: $arg"; done
             "the key includes the picked loader"
         );
         assert!(instance.install_starter_fabric_mods);
+    }
+
+    /// The game can print its token (1.7.x logs its session id): it's
+    /// hidden before a line reaches the logs.
+    #[tokio::test]
+    async fn the_access_token_never_reaches_the_logs() {
+        let game = Game::start("test").await;
+        let tmp = tempfile::tempdir().unwrap();
+        let (data, mut instance) = temp_instance(tmp.path());
+        instance.version = "test-1".into();
+        let launcher = launcher(&game, &data).await;
+        let config = Config {
+            java_path: Some(fake_java(tmp.path())),
+            ..Config::default()
+        };
+        let player = Identity::online(
+            "Steve",
+            "069a79f444e94726a5befca90e38aaf5",
+            Secret::new("secret-token-123"),
+            None,
+        );
+        let mut started = launcher
+            .launch(&instance, &config, &player, |_| {})
+            .await
+            .unwrap();
+        let lines = all_lines(&mut started.logs).await;
+        started.game.wait().await;
+        assert!(lines.iter().any(|l| l.contains("<redacted>")), "{lines:?}");
+        assert!(
+            lines.iter().all(|l| !l.contains("secret-token-123")),
+            "{lines:?}"
+        );
+    }
+
+    /// Offline, Modrinth is out of reach too: rather than wait out every
+    /// starter mod's timeouts on each launch, they wait for an online one.
+    #[tokio::test]
+    async fn offline_launches_leave_the_starter_mods_for_later() {
+        let game = Game::start("test").await;
+        let tmp = tempfile::tempdir().unwrap();
+        let (data, mut instance) = temp_instance(tmp.path());
+        instance.loader = Loader::Fabric;
+        instance.loader_version = "0.19.5".into();
+        let profile = json!({
+            "id": "fabric-loader-0.19.5-test-1", "inheritsFrom": "test-1", "type": "release",
+            "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+        });
+        Mock::given(method("GET"))
+            .and(path(
+                "/fabric/v2/versions/loader/test-1/0.19.5/profile/json",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(profile))
+            .mount(&game.server)
+            .await;
+        let config = Config {
+            java_path: Some(fake_java(tmp.path())),
+            ..Config::default()
+        };
+        // Online once, which caches the metadata.
+        let online = launcher(&game, &data).await;
+        let first = online
+            .launch(&instance, &config, &Identity::offline("Alex"), |_| {})
+            .await
+            .unwrap();
+        first.game.wait().await;
+
+        // Then offline, with the starter mods still to install.
+        instance.install_starter_fabric_mods = true;
+        let dead = wiremock::MockServer::start().await;
+        let mut offline = online.clone();
+        let (http, uri) = (offline.http.clone(), dead.uri());
+        offline.mojang =
+            Mojang::with_manifest_url(http.clone(), &data, format!("{uri}/manifest.json"));
+        offline.fabric =
+            fabric::Fabric::with_meta_url(http.clone(), &data, format!("{uri}/fabric"));
+        offline.modrinth = modrinth::Client::with_base_url(http, format!("{uri}/modrinth"));
+        let steps = Steps::default();
+        let started = offline
+            .launch(&instance, &config, &Identity::offline("Alex"), |s| {
+                steps.push(s);
+            })
+            .await
+            .unwrap();
+        assert!(started.stale);
+        assert!(started.starter_mods.is_none());
+        assert!(!steps.stages().contains(&Stage::StarterMods));
+        assert!(!started.changes.starter_mods_installed, "still to do");
+        let asked = dead.received_requests().await.unwrap_or_default();
+        assert!(
+            asked.iter().all(|r| !r.url.path().starts_with("/modrinth")),
+            "{asked:?}"
+        );
+        started.game.wait().await;
     }
 
     #[tokio::test]

@@ -95,9 +95,10 @@ impl PlayScreen {
     fn stop() -> Handled {
         Handled::Action(Action::Confirm(Box::new(Question {
             title: "Stop Minecraft?".into(),
-            message:
-                "The game saves your world and quits. If it doesn't within 15 seconds, it's closed."
-                    .into(),
+            message: format!(
+                "The game saves your world and quits. If it doesn't within {} seconds, it's closed.",
+                mctui_core::launch::DEFAULT_STOP_GRACE.as_secs()
+            ),
             yes: "Stop",
             danger: None,
             on_yes: Action::StopGame,

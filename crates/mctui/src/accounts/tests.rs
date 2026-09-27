@@ -531,7 +531,9 @@ fn a_player_who_cant_sign_in_can_play_offline() {
 fn saving_problems_are_shown() {
     let mut h = Harness::with(80, 24, three_accounts);
     // A folder where accounts.json goes: writing it fails.
-    std::fs::create_dir_all(h.data().dir.accounts_file()).expect("mkdir");
+    let file = h.data().dir.accounts_file();
+    std::fs::remove_file(&file).expect("rm");
+    std::fs::create_dir_all(&file).expect("mkdir");
     h.press(KeyCode::Char('a'));
     h.press(KeyCode::Down);
     h.press(KeyCode::Enter);

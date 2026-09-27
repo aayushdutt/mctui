@@ -1,14 +1,22 @@
 //! The Modrinth v2 API endpoints mctui uses.
 
+use std::collections::HashMap;
+
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 
 use super::model::{Project, SearchResults, Version};
 use super::{Error, Result};
-use crate::net::Http;
+use crate::net::{self, Http};
 
 /// The production Modrinth API.
 pub const API_URL: &str = "https://api.modrinth.com/v2";
+
+/// A mod's page on modrinth.com, for opening in a browser. The id or slug
+/// comes from Modrinth, so it's escaped into one path segment there.
+pub fn project_page(id_or_slug: &str) -> String {
+    endpoint("https://modrinth.com", &["mod", id_or_slug], &[])
+}
 
 /// A Modrinth API client. Cheap to clone.
 #[derive(Debug, Clone)]
@@ -109,6 +117,34 @@ impl Client {
         found(version)
     }
 
+    /// The versions files belong to, found by their SHA-1s in one request, by
+    /// hash. Files that aren't on Modrinth are left out.
+    pub async fn versions_from_sha1s(&self, sha1s: &[&str]) -> Result<HashMap<String, Version>> {
+        if sha1s.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let url = endpoint(&self.base_url, &["version_files"], &[]);
+        let body = serde_json::json!({ "hashes": sha1s, "algorithm": "sha1" });
+        let failed = |source| net::Error::Request {
+            url: url.clone(),
+            source,
+        };
+        let response = self
+            .http
+            .client()
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(failed)?;
+        let status = response.status();
+        let bytes = response.bytes().await.map_err(failed)?;
+        if !status.is_success() {
+            return Err(net::Error::Status { url, status }.into());
+        }
+        serde_json::from_slice(&bytes).map_err(|source| net::Error::Decode { url, source }.into())
+    }
+
     async fn get<T: DeserializeOwned>(&self, path: &[&str], query: &[(&str, &str)]) -> Result<T> {
         let url = endpoint(&self.base_url, path, query);
         Ok(self.http.get_json(&url).await?)
@@ -172,6 +208,19 @@ mod tests {
             ("not a url", &["search"], &[], "not a url"),
         ] {
             assert_eq!(endpoint(base, path, query), want, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn project_pages_stay_on_modrinth() {
+        assert_eq!(project_page("sodium"), "https://modrinth.com/mod/sodium");
+        assert_eq!(
+            project_page("//evil.example/x?y#z"),
+            "https://modrinth.com/mod/%2F%2Fevil.example%2Fx%3Fy%23z"
+        );
+        for id in ["..", "@evil.example", "a b\"&|"] {
+            let page = reqwest::Url::parse(&project_page(id)).unwrap();
+            assert_eq!(page.host_str(), Some("modrinth.com"), "{id:?}");
         }
     }
 

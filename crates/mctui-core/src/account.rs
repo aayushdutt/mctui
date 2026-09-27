@@ -12,6 +12,9 @@ use crate::{Loaded, fsutil};
 /// `accounts.json` holds a long-lived Microsoft refresh token: owner-only.
 const ACCOUNTS_MODE: u32 = 0o600;
 
+/// Taken by every mctui changing `accounts.json`, beside it.
+const LOCK_FILE: &str = ".accounts.json.lock";
+
 /// Refresh tokens this long before they expire.
 const EXPIRY_BUFFER: SignedDuration = SignedDuration::from_mins(5);
 
@@ -181,11 +184,7 @@ impl Accounts {
         match serde_json::from_slice::<AccountsFile>(&data) {
             Ok(file) => {
                 restrict(&path);
-                Loaded::clean(Accounts {
-                    accounts: file.accounts,
-                    active_id: Some(file.active_id).filter(|id| !id.is_empty()),
-                    save_blocked: None,
-                })
+                Loaded::clean(Accounts::from(file))
             }
             Err(e) => {
                 let (notice, moved) = crate::quarantine_malformed(&path, &e, CONSEQUENCE);
@@ -205,7 +204,36 @@ impl Accounts {
         }
     }
 
-    /// Writes `accounts.json` atomically, readable only by the owner.
+    /// Changes `accounts.json` without losing what another mctui (or a
+    /// second window) saved since this one loaded it: under a lock every
+    /// mctui takes to change the file, reads it again, applies `change`,
+    /// writes it back as [`save`](Self::save) does, and makes `self` what was
+    /// written. When the file can't be read or written, `change` is still
+    /// made to `self`, for this session, and the error returned.
+    pub fn update(
+        &mut self,
+        dir: &DataDir,
+        change: impl FnOnce(&mut Accounts),
+    ) -> Result<(), SaveError> {
+        let current = lock(dir)
+            .map_err(SaveError::from)
+            .and_then(|lock| Ok((lock, read_current(dir)?)));
+        let (_lock, mut current) = match current {
+            Ok(locked) => locked,
+            Err(e) => {
+                change(self);
+                return Err(e);
+            }
+        };
+        change(&mut current);
+        let saved = current.save(dir);
+        *self = current;
+        saved
+    }
+
+    /// Writes `accounts.json` atomically, readable only by the owner. What
+    /// another mctui saved since this one loaded it is lost: prefer
+    /// [`update`](Self::update).
     pub fn save(&self, dir: &DataDir) -> Result<(), SaveError> {
         if let Some(reason) = &self.save_blocked {
             return Err(SaveError::Blocked(reason.clone()));
@@ -273,6 +301,36 @@ struct AccountsFile {
     accounts: Vec<Account>,
     #[serde(default)]
     active_id: String,
+}
+
+impl From<AccountsFile> for Accounts {
+    fn from(file: AccountsFile) -> Self {
+        Accounts {
+            accounts: file.accounts,
+            active_id: Some(file.active_id).filter(|id| !id.is_empty()),
+            save_blocked: None,
+        }
+    }
+}
+
+/// Takes the lock for changing `accounts.json`, waiting for another mctui
+/// to finish with it.
+fn lock(dir: &DataDir) -> io::Result<fsutil::FileLock> {
+    fs::create_dir_all(dir.root())?;
+    fsutil::FileLock::acquire(&dir.root().join(LOCK_FILE))
+}
+
+/// `accounts.json` as it is now, for [`Accounts::update`]: none when it's
+/// missing. One that can't be read or is damaged isn't written over.
+fn read_current(dir: &DataDir) -> Result<Accounts, SaveError> {
+    let blocked = |e: &dyn std::fmt::Display| SaveError::Blocked(e.to_string());
+    match crate::read_optional(&dir.accounts_file()) {
+        Ok(Some(data)) => serde_json::from_slice::<AccountsFile>(&data)
+            .map(Accounts::from)
+            .map_err(|e| blocked(&e)),
+        Ok(None) => Ok(Accounts::default()),
+        Err(e) => Err(blocked(&e)),
+    }
 }
 
 /// Narrows a file holding tokens to owner-only (0644 becomes 0600; 0400 stays).
@@ -359,6 +417,60 @@ mod tests {
         assert_eq!(accounts.remove("b").map(|a| a.id), Some("b".to_owned()));
         assert_eq!(accounts.active_id, None);
         assert!(accounts.remove("b").is_none());
+    }
+
+    fn ids(accounts: &Accounts) -> Vec<&str> {
+        accounts.accounts.iter().map(|a| a.id.as_str()).collect()
+    }
+
+    #[test]
+    fn updates_keep_what_another_window_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = DataDir::new(dir.path());
+        // Two windows load the same (missing) file.
+        let mut first = Accounts::load(&data).value;
+        let mut second = Accounts::load(&data).value;
+        first.update(&data, |a| a.upsert(msa("a"))).unwrap();
+        second.update(&data, |a| a.upsert(msa("b"))).unwrap();
+        assert_eq!(ids(&second), ["a", "b"], "the second sees the first's too");
+        assert_eq!(second.active_id.as_deref(), Some("a"));
+        assert_eq!(ids(&Accounts::load(&data).value), ["a", "b"]);
+    }
+
+    #[test]
+    fn concurrent_updates_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = DataDir::new(dir.path());
+        std::thread::scope(|s| {
+            for i in 0..8 {
+                let data = &data;
+                s.spawn(move || {
+                    let mut accounts = Accounts::default();
+                    accounts
+                        .update(data, |a| a.upsert(msa(&i.to_string())))
+                        .unwrap();
+                });
+            }
+        });
+        let mut saved = Accounts::load(&data).value;
+        saved.accounts.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(ids(&saved), ["0", "1", "2", "3", "4", "5", "6", "7"]);
+    }
+
+    #[test]
+    fn an_update_that_cannot_read_the_file_changes_only_this_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = DataDir::new(dir.path());
+        fs::write(data.accounts_file(), "{\"accounts\": [").unwrap();
+        let mut accounts = Accounts::default();
+        let err = accounts.update(&data, |a| a.upsert(msa("a"))).unwrap_err();
+        assert!(matches!(err, SaveError::Blocked(_)), "{err}");
+        assert_eq!(ids(&accounts), ["a"]);
+        assert_eq!(
+            fs::read_to_string(data.accounts_file()).unwrap(),
+            "{\"accounts\": [",
+            "left as it was"
+        );
     }
 
     #[test]
@@ -455,6 +567,21 @@ mod tests {
             let mut accounts = Accounts::default();
             accounts.upsert(msa("a"));
             accounts.save(&data).unwrap();
+            let mode = fs::metadata(data.accounts_file())
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        #[test]
+        fn updated_file_is_owner_only() {
+            let dir = tempfile::tempdir().unwrap();
+            let data = DataDir::new(dir.path());
+            fs::write(data.accounts_file(), r#"{"accounts":[],"activeId":""}"#).unwrap();
+            fs::set_permissions(data.accounts_file(), fs::Permissions::from_mode(0o644)).unwrap();
+            let mut accounts = Accounts::default();
+            accounts.update(&data, |a| a.upsert(msa("a"))).unwrap();
             let mode = fs::metadata(data.accounts_file())
                 .unwrap()
                 .permissions()

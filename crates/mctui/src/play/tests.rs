@@ -207,6 +207,31 @@ fn messages_advance_the_session_and_save_the_instance() {
     assert_eq!(h.banner(), Some("Played Survival 1.21 for 1h 2m."));
 }
 
+/// Another mctui window renamed the instance while this one played: the
+/// play time is added to the instance as it is on disk, keeping the rename.
+#[test]
+fn play_time_is_saved_without_losing_another_windows_change() {
+    let mut h = Harness::new(100, 30);
+    h.app.sessions_for_tests(1);
+    h.app.data_mut().game = Some(session(1, Phase::Preparing(None)));
+    let before = h.data().instance(ID).unwrap().play_time_secs;
+    h.data()
+        .store
+        .update(ID, |inst| inst.name = "Renamed elsewhere".into())
+        .expect("the other window saves");
+
+    h.app.handle(crate::task::Event::Msg(
+        u64::MAX,
+        crate::msg::Msg::Play(1, Msg::Exited(exit(0))),
+    ));
+
+    let saved = h.data().store.scan().unwrap().instances;
+    let on_disk = saved.iter().find(|i| i.id == ID).unwrap();
+    assert_eq!(on_disk.name, "Renamed elsewhere");
+    assert_eq!(on_disk.play_time_secs, before + 62 * 60);
+    assert_eq!(h.data().instance(ID), Some(on_disk), "the app's copy too");
+}
+
 #[test]
 fn esc_while_preparing_cancels() {
     let mut h = on_play_screen(Phase::Preparing(Some(Step::Version)));

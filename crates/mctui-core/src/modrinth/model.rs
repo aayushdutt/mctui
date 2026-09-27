@@ -4,6 +4,8 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Deserializer};
 
+use crate::fsutil;
+
 /// A page of search results.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SearchResults {
@@ -205,7 +207,7 @@ pub(crate) fn is_jar_file_name(name: &str) -> bool {
     });
     stem.is_some_and(|stem| !stem.is_empty())
         && !name.starts_with('.')
-        && !name.contains(|c: char| matches!(c, '/' | '\\' | ':') || c.is_control())
+        && fsutil::is_plain_name(name)
 }
 
 /// Modrinth sends `""` for "no icon" in some places and `null` in others.

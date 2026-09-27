@@ -65,8 +65,7 @@ where
     F: FnOnce(&Path) -> io::Result<T> + Send + 'static,
 {
     let target = path.clone();
-    tokio::task::spawn_blocking(move || work(&target))
+    crate::fsutil::blocking(move || work(&target))
         .await
-        .unwrap_or_else(|join| Err(io::Error::other(join)))
         .map_err(|source| Error::Io { path, source })
 }

@@ -167,17 +167,22 @@ impl Launcher {
         let (java, stale_java) = self.java(&version, instance, config, &on_step).await?;
         changes.stale_java = stale_java;
 
-        let starter_mods =
-            if instance.loader == Loader::Fabric && instance.install_starter_fabric_mods {
-                let report = self
-                    .modrinth
-                    .install_starter(instance, |p| on_step(Step::StarterMods(p)))
-                    .await;
-                changes.starter_mods_installed = report.all_ok();
-                Some(report)
-            } else {
-                None
-            };
+        // Offline (the metadata came from the cache), Modrinth is out of
+        // reach too: the mods wait for a launch that's online, rather than
+        // this one waiting out every request's timeouts.
+        let starter_mods = if !stale
+            && instance.loader == Loader::Fabric
+            && instance.install_starter_fabric_mods
+        {
+            let report = self
+                .modrinth
+                .install_starter(instance, |p| on_step(Step::StarterMods(p)))
+                .await;
+            changes.starter_mods_installed = report.all_ok();
+            Some(report)
+        } else {
+            None
+        };
 
         let mut plan = plan(&PlanInputs {
             version: &version,

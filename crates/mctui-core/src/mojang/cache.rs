@@ -37,7 +37,7 @@ pub enum CacheError {
 
 /// `<dir>/<name>.json`, or `None` when `name` would reach outside `dir`.
 pub(crate) fn file(dir: &Path, name: &str) -> Option<PathBuf> {
-    let safe = !name.is_empty() && !name.contains(['/', '\\', '\0']);
+    let safe = fsutil::is_plain_name(name);
     safe.then(|| dir.join(format!("{name}.json")))
 }
 
@@ -86,17 +86,15 @@ pub(crate) async fn fallback<T: DeserializeOwned>(path: &Path) -> Option<T> {
 /// either way, so a failure is only logged. Finishes even if the caller's
 /// future is dropped.
 pub(crate) async fn save(path: PathBuf, bytes: bytes::Bytes) {
-    let write = tokio::task::spawn_blocking(move || {
-        let result = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| fsutil::write_atomic(&path, &bytes, 0o644));
-        if let Err(error) = result {
-            tracing::warn!(path = %path.display(), %error, "couldn't cache");
+    let target = path.clone();
+    let written = fsutil::blocking(move || {
+        if let Some(dir) = target.parent() {
+            std::fs::create_dir_all(dir)?;
         }
+        fsutil::write_atomic(&target, &bytes, 0o644)
     });
-    if let Err(error) = write.await {
-        tracing::warn!(%error, "caching failed");
+    if let Err(error) = written.await {
+        tracing::warn!(path = %path.display(), %error, "couldn't cache");
     }
 }
 
@@ -111,8 +109,7 @@ mod tests {
             file(dir, "1.14 Pre-Release 5"),
             Some(dir.join("1.14 Pre-Release 5.json"))
         );
-        assert_eq!(file(dir, ".."), Some(dir.join("...json")));
-        for bad in ["", "../escape", "a/b", "a\\b", "nul\0"] {
+        for bad in ["", "..", "../escape", "a/b", "a\\b", "C:x", "nul\0"] {
             assert_eq!(file(dir, bad), None, "{bad:?}");
         }
     }

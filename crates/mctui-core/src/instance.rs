@@ -14,6 +14,8 @@ use crate::fsutil;
 use crate::paths::DataDir;
 
 const INSTANCE_FILE: &str = "instance.json";
+/// Taken by every mctui changing an instance's `instance.json`, beside it.
+const LOCK_FILE: &str = ".instance.json.lock";
 
 /// The mod loader an instance runs.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -254,32 +256,64 @@ impl InstanceStore {
         Ok(inst)
     }
 
-    /// Writes `<path>/instance.json` atomically (mode 0644).
+    /// Writes `<path>/instance.json` atomically (mode 0644). Refuses
+    /// ([`io::ErrorKind::InvalidInput`]) unless `inst.path` is directly
+    /// inside the instances dir. What another mctui saved since `inst` was
+    /// read is lost: prefer [`update`](Self::update) for changes.
     pub fn save(&self, inst: &Instance) -> io::Result<()> {
+        self.check_folder(&inst.path, "save")?;
         let data = serde_json::to_vec_pretty(&InstanceFile::from(inst))?;
         fsutil::write_atomic(&inst.path.join(INSTANCE_FILE), &data, 0o644)
+    }
+
+    /// Changes instance `id` without losing what another mctui (or a second
+    /// window) saved meanwhile: under a lock every mctui takes to change the
+    /// instance, reads its `instance.json` again, applies `change`, and
+    /// saves it. Returns the instance as saved. Fails with
+    /// [`io::ErrorKind::NotFound`] once the instance is gone.
+    pub fn update(&self, id: &str, change: impl FnOnce(&mut Instance)) -> io::Result<Instance> {
+        let dir = self.dir.join(id);
+        self.check_folder(&dir, "update")?;
+        let _lock = fsutil::FileLock::acquire(&dir.join(LOCK_FILE))?;
+        let mut inst = match read_instance(&dir) {
+            Ok(Some(inst)) => inst,
+            Ok(None) => {
+                let gone = format!("{} has no {INSTANCE_FILE}", dir.display());
+                return Err(io::Error::new(io::ErrorKind::NotFound, gone));
+            }
+            Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidData, error)),
+        };
+        change(&mut inst);
+        self.save(&inst)?;
+        Ok(inst)
     }
 
     /// Deletes the instance folder and everything in it. Refuses
     /// ([`io::ErrorKind::InvalidInput`]) unless `inst.path` is directly inside
     /// the instances dir.
     pub fn delete(&self, inst: &Instance) -> io::Result<()> {
-        let is_child =
-            inst.path.parent() == Some(self.dir.as_path()) && inst.path.file_name().is_some();
-        if !is_child {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "refusing to delete {}: it isn't an instance folder in {}",
-                    inst.path.display(),
-                    self.dir.display()
-                ),
-            ));
-        }
+        self.check_folder(&inst.path, "delete")?;
         match fs::remove_dir_all(&inst.path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
             result => result,
         }
+    }
+
+    /// Refuses, for `doing` to `path`, anything but a folder directly inside
+    /// the instances dir. (A name that could reach elsewhere, such as `..`,
+    /// `a/b` or an absolute path, joins onto the dir as something else.)
+    fn check_folder(&self, path: &Path, doing: &str) -> io::Result<()> {
+        if path.parent() == Some(self.dir.as_path()) && path.file_name().is_some() {
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "refusing to {doing} {}: it isn't an instance folder in {}",
+                path.display(),
+                self.dir.display()
+            ),
+        ))
     }
 
     /// Creates a fresh folder for `name`, returning its id and path.
@@ -534,6 +568,77 @@ mod tests {
         assert!(!inst.path.exists());
         // Already gone is fine.
         store.delete(&inst).unwrap();
+    }
+
+    #[test]
+    fn save_only_writes_instance_folders() {
+        let (dir, store) = store();
+        let inst = store.create(draft("kept")).unwrap();
+        for path in [
+            dir.path().to_owned(),
+            dir.path().join("elsewhere"),
+            dir.path().join("instances"),
+            dir.path().join("instances").join(".."),
+            inst.path.join(".minecraft"),
+        ] {
+            let err = store
+                .save(&Instance {
+                    path: path.clone(),
+                    ..inst.clone()
+                })
+                .unwrap_err();
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::InvalidInput,
+                "{}",
+                path.display()
+            );
+            assert!(!path.join(INSTANCE_FILE).exists(), "{}", path.display());
+        }
+    }
+
+    #[test]
+    fn updates_keep_what_another_window_saved() {
+        let (_dir, store) = store();
+        let inst = store.create(draft("shared")).unwrap();
+        // Another window, holding an older copy, records a session...
+        let played = store.update(&inst.id, |i| i.play_time_secs += 60).unwrap();
+        assert_eq!(played.play_time_secs, 60);
+        // ...and this one, holding its own, renames the instance.
+        let renamed = store
+            .update(&inst.id, |i| i.name = "Renamed".into())
+            .unwrap();
+        assert_eq!(
+            (renamed.name.as_str(), renamed.play_time_secs),
+            ("Renamed", 60)
+        );
+        let scanned = store.scan().unwrap().instances.remove(0);
+        assert_eq!(scanned, renamed);
+    }
+
+    #[test]
+    fn concurrent_updates_are_all_kept() {
+        let (_dir, store) = store();
+        let inst = store.create(draft("busy")).unwrap();
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| store.update(&inst.id, |i| i.play_time_secs += 1).unwrap());
+            }
+        });
+        assert_eq!(store.scan().unwrap().instances[0].play_time_secs, 8);
+    }
+
+    #[test]
+    fn updating_a_missing_or_unsafe_instance_fails() {
+        let (dir, store) = store();
+        store.create(draft("here")).unwrap();
+        let err = store.update("gone", |_| {}).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound, "{err}");
+        assert!(!dir.path().join("instances/gone").exists());
+        for id in ["", "..", "../here", "a/b"] {
+            let err = store.update(id, |_| {}).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{id:?}");
+        }
     }
 
     #[test]

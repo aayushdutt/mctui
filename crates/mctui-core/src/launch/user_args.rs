@@ -1,14 +1,31 @@
 //! The player's own JVM arguments: the app-wide ones from Settings, with an
 //! instance's on top.
 
+/// The garbage collectors a `-XX:+Use…GC` flag picks. Java refuses to start
+/// with two picked.
+const COLLECTORS: [&str; 9] = [
+    "UseSerialGC",
+    "UseParallelGC",
+    "UseParallelOldGC",
+    "UseParNewGC",
+    "UseConcMarkSweepGC",
+    "UseG1GC",
+    "UseZGC",
+    "UseShenandoahGC",
+    "UseEpsilonGC",
+];
+
 /// The app-wide `global` arguments, minus any flag `instance` sets too, then
 /// `instance`'s. So an instance's memory setting (`-Xmx6G`) replaces the
-/// app-wide `-Xmx`, and keeps every other app-wide argument (the Go app
-/// dropped them all: L-10). An initial heap (`-Xms`) left larger than the
-/// maximum is dropped, since Java refuses to start with it.
+/// app-wide `-Xmx`, and its garbage collector (`-XX:+UseZGC`) the app-wide
+/// one, and every other app-wide argument is kept (the Go app dropped them
+/// all: L-10). An initial heap (`-Xms`) left larger than the maximum is
+/// dropped, since Java refuses to start with it.
 pub(super) fn merge(global: &[String], instance: &[String]) -> Vec<String> {
+    let instance_picks_collector = instance.iter().any(|arg| picks_collector(arg));
     let overridden = |arg: &String| {
-        flag(arg).is_some_and(|sets| instance.iter().any(|mine| flag(mine) == Some(sets)))
+        (instance_picks_collector && picks_collector(arg))
+            || flag(arg).is_some_and(|sets| instance.iter().any(|mine| flag(mine) == Some(sets)))
     };
     let mut args: Vec<String> = global
         .iter()
@@ -50,6 +67,12 @@ fn flag(arg: &str) -> Option<Flag<'_>> {
         .into_iter()
         .find(|size| arg.starts_with(size))
         .map(Flag::Size)
+}
+
+/// Whether `arg` turns a garbage collector on: `-XX:+UseG1GC`.
+fn picks_collector(arg: &str) -> bool {
+    arg.strip_prefix("-XX:+")
+        .is_some_and(|option| COLLECTORS.contains(&option))
 }
 
 fn drop_initial_heap_over_max(args: &mut Vec<String>) {
@@ -152,6 +175,28 @@ mod tests {
                     "java.base/java.lang=ALL-UNNAMED",
                     "-javaagent:b.jar",
                     "-Xlog:gc",
+                ],
+            ),
+            (
+                "the instance's garbage collector replaces the app's",
+                &["-Xmx2G", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=50"],
+                &["-XX:+UseZGC"],
+                &["-Xmx2G", "-XX:MaxGCPauseMillis=50", "-XX:+UseZGC"],
+            ),
+            (
+                "whichever collector each picks",
+                &["-XX:+UseZGC", "-XX:+ZGenerational", "-XX:+UseShenandoahGC"],
+                &["-XX:+UseG1GC"],
+                &["-XX:+ZGenerational", "-XX:+UseG1GC"],
+            ),
+            (
+                "options that merely end in GC aren't collectors",
+                &["-XX:+UseMaximumCompactionOnSystemGC", "-XX:+UseG1GC"],
+                &["-XX:+DisableExplicitGC"],
+                &[
+                    "-XX:+UseMaximumCompactionOnSystemGC",
+                    "-XX:+UseG1GC",
+                    "-XX:+DisableExplicitGC",
                 ],
             ),
             (

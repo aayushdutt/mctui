@@ -16,13 +16,13 @@ pub(super) fn banner(banner: Banner) -> Handled {
 
 /// A search result's page on Modrinth.
 pub(super) fn hit_page(hit: &SearchHit) -> String {
-    format!("https://modrinth.com/mod/{}", hit.slug)
+    modrinth::project_page(&hit.slug)
 }
 
 /// An installed mod's page on Modrinth, when mctui knows its project.
 pub(super) fn mod_page(m: &InstalledMod) -> Option<String> {
     let project = m.slug.as_deref().or(m.project_id.as_deref())?;
-    Some(format!("https://modrinth.com/mod/{project}"))
+    Some(modrinth::project_page(project))
 }
 
 /// Opens a mod's page in the browser, and says so (if the browser won't

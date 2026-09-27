@@ -355,7 +355,7 @@ async fn apply_builds_downloads_and_enables_the_pack() {
         scratch.options(),
         format!("version:4189\n{enabled}\nlang:en_us\n")
     );
-    assert!(vanilla_tweaks::is_enabled(&game).await);
+    assert!(vanilla_tweaks::is_enabled(&game, catalog.version).await);
 
     assert!(!cart.has_unbuilt_changes());
     assert_eq!(cart.version, "1.21");
@@ -396,7 +396,7 @@ async fn unapply_takes_the_pack_out_and_keeps_the_picks() {
         scratch.options(),
         "resourcePacks:[\"vanilla\",\"file/Top.zip\"]\n"
     );
-    assert!(!vanilla_tweaks::is_enabled(&game).await);
+    assert!(!vanilla_tweaks::is_enabled(&game, version("1.21")).await);
     assert_eq!(cart.len(), picks);
     assert!(
         cart.entries()

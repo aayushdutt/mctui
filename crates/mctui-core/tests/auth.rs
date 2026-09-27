@@ -503,6 +503,97 @@ async fn refresh_keeps_a_refresh_token_that_was_not_rotated() {
     );
 }
 
+/// Microsoft may retire the old refresh token as soon as it hands out a new
+/// one, so a failure after that still hands back the new one to save.
+#[tokio::test]
+async fn a_refresh_failing_after_rotation_keeps_the_new_refresh_token() {
+    let (server, auth) = services().await;
+    Mock::given(method("POST"))
+        .and(path("/xsts/authorize"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    given_refresh(&server, reply(200, fixture("token.json"))).await;
+    given_chain(&server).await;
+
+    let old = saved(SignedDuration::ZERO);
+    let err = auth.refresh(&old, CLIENT_ID).await.unwrap_err();
+    assert!(
+        matches!(
+            err.cause(),
+            Error::Service {
+                service: "Xbox Live",
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(
+        err.to_string().starts_with("Xbox Live answered 503"),
+        "{err}"
+    );
+    let renewed = err.renewed_account().expect("the new refresh token");
+    assert_eq!(
+        renewed.msa_refresh_token.as_ref().map(Secret::expose),
+        Some("ms-refresh-token")
+    );
+    assert_eq!(
+        Account {
+            msa_refresh_token: old.msa_refresh_token.clone(),
+            ..renewed.clone()
+        },
+        old,
+        "nothing else changed"
+    );
+
+    // Nothing to keep when Microsoft didn't rotate it.
+    let (server, auth) = services().await;
+    let mut body = fixture("token.json");
+    body["refresh_token"] = json!("old-refresh-token");
+    given_refresh(&server, reply(200, body)).await;
+    let err = auth.refresh(&old, CLIENT_ID).await.unwrap_err();
+    assert!(err.renewed_account().is_none(), "{err:?}");
+}
+
+/// Token requests don't follow redirects: a 307 or 308 would send the
+/// tokens in the body on, maybe to another host.
+#[tokio::test]
+async fn token_requests_never_follow_redirects() {
+    let (server, auth) = services().await;
+    let elsewhere = MockServer::start().await;
+    given_refresh(
+        &server,
+        ResponseTemplate::new(307).insert_header("location", format!("{}/steal", elsewhere.uri())),
+    )
+    .await;
+    let err = auth
+        .refresh(&saved(SignedDuration::ZERO), CLIENT_ID)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Service { status, .. } if status == StatusCode::TEMPORARY_REDIRECT),
+        "{err:?}"
+    );
+    assert!(elsewhere.received_requests().await.unwrap().is_empty());
+}
+
+/// The UI opens the verification link in a browser: only a web link will do.
+#[tokio::test]
+async fn a_verification_link_that_is_not_a_web_page_is_replaced() {
+    for link in ["file:///etc/passwd", "javascript:alert(1)", "calc.exe"] {
+        let (server, auth) = services().await;
+        let mut body = fixture("devicecode.json");
+        body["verification_uri"] = json!(link);
+        given_device_code(&server, body).await;
+        let code = auth.start(CLIENT_ID).await.unwrap();
+        assert_eq!(
+            code.verification_uri, "https://www.microsoft.com/link",
+            "{link}"
+        );
+    }
+}
+
 /// A-6: only a dead refresh token means signing in again.
 #[tokio::test]
 async fn refresh_asks_for_sign_in_only_when_the_grant_is_gone() {

@@ -474,7 +474,7 @@ fn load(inst: &Inst, services: &Services, tasks: &Tasks) -> State {
         let (catalog, cart, enabled) = tokio::join!(
             site.catalog(version),
             Cart::load(&game),
-            vanilla_tweaks::is_enabled(&game),
+            vanilla_tweaks::is_enabled(&game, version),
         );
         Load {
             catalog,

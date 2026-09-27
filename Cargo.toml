@@ -27,8 +27,9 @@ open = "5"
 ratatui = "0.30"
 regex-lite = "0.1"
 reqwest = { version = "0.13", features = ["json", "stream", "gzip", "form", "query"] }
-# Signals the running game (SIGINT to stop it) without `unsafe`.
-rustix = { version = "1.1", features = ["process"] }
+# Signals the running game (SIGINT to stop it) and fsyncs state files (a
+# plain fsync, not macOS's full flush) without `unsafe`.
+rustix = { version = "1.1", features = ["process", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.11"

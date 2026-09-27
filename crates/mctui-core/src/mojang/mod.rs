@@ -3,7 +3,10 @@
 //!
 //! Everything fetched is cached under `<data>/cache` exactly as served, so a
 //! version that launched once launches again without Mojang: when fetching
-//! fails, the cached copy is used and marked [`Fetched::stale`].
+//! fails, the cached copy is used and marked [`Fetched::stale`]. A cached
+//! version JSON is only used if it's the one Mojang lists; the Go app cached
+//! its own re-encoding, which lost the logging setup that keeps log4j from
+//! the 2021 exploit, so such a copy needs one more trip online.
 
 pub(crate) mod cache;
 mod manifest;
@@ -45,6 +48,13 @@ pub enum Error {
     /// Offline, and the version was never fetched.
     #[error("Minecraft {0} hasn't been downloaded yet; connect to the internet to set it up")]
     NotCached(String),
+    /// Offline, and the cached copy of the version's JSON can't be trusted:
+    /// it isn't the one Mojang lists, or it lost its logging setup.
+    #[error(
+        "Minecraft {0} needs the internet once more to update its setup; \
+         connect and launch it again"
+    )]
+    Outdated(String),
     /// A cached file exists but can't be used.
     #[error(transparent)]
     Cache(#[from] CacheError),
@@ -120,30 +130,56 @@ impl Mojang {
 
     /// The JSON for `entry`, checked against the manifest's SHA-1 and cached
     /// as `cache/versions/<id>.json`. A cached copy with that checksum is
-    /// used without going online; when the download fails, whatever copy is
-    /// cached is returned instead.
+    /// used without going online. When the download fails, the cached copy
+    /// is returned instead only if it has that checksum too: any other is
+    /// out of date, or one the Go app re-encoded ([`Error::Outdated`]).
     pub async fn version(&self, entry: &VersionEntry) -> Result<Fetched<VersionJson>> {
         let path = self.version_file(&entry.id)?;
+        let hash = Hash::Sha1(entry.sha1.clone());
         let job = Download {
             url: entry.url.clone(),
             dest: path.clone(),
-            hash: Some(Hash::Sha1(entry.sha1.clone())),
+            hash: Some(hash.clone()),
             size: None,
         };
         // Downloads into the cache, or finds the cached copy already current.
-        if let Err(error) = self.http.download(&job, |_| {}).await {
-            tracing::warn!(id = entry.id, %error, "couldn't fetch the version JSON; trying the cache");
-            let cached = cache::fallback(&path).await;
-            return cached.map(Fetched::stale).ok_or_else(|| Error::Version {
-                id: entry.id.clone(),
-                source: error,
-            });
+        let Err(error) = self.http.download(&job, |_| {}).await else {
+            return self.read_version(&entry.id).await.map(Fetched::fresh);
+        };
+        tracing::warn!(id = entry.id, %error, "couldn't fetch the version JSON; trying the cache");
+        let unfetched = |source| Error::Version {
+            id: entry.id.clone(),
+            source,
+        };
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return Err(unfetched(error));
         }
-        self.cached_version(&entry.id).await.map(Fetched::fresh)
+        if !hash.matches_file(&path).await {
+            tracing::warn!(
+                id = entry.id,
+                "the cached version JSON isn't the one Mojang lists"
+            );
+            return Err(Error::Outdated(entry.id.clone()));
+        }
+        let cached = cache::fallback(&path).await;
+        cached.map(Fetched::stale).ok_or_else(|| unfetched(error))
     }
 
-    /// The cached JSON for version `id`, without going online.
+    /// The cached JSON for version `id`, without going online. With no
+    /// checksum to check it against, a copy that runs log4j without Mojang's
+    /// logging setup is taken for one the Go app re-encoded, and refused
+    /// ([`Error::Outdated`]): launching it would leave the 2021 exploit open.
     pub async fn cached_version(&self, id: &str) -> Result<VersionJson> {
+        let version = self.read_version(id).await?;
+        if lacks_logging(&version) {
+            tracing::warn!(id, "the cached version JSON has no logging setup");
+            return Err(Error::Outdated(id.to_owned()));
+        }
+        Ok(version)
+    }
+
+    /// The cached JSON for version `id`, as it is.
+    async fn read_version(&self, id: &str) -> Result<VersionJson> {
         let path = self.version_file(id)?;
         cache::read(&path)
             .await?
@@ -176,4 +212,11 @@ impl Mojang {
     fn version_file(&self, id: &str) -> Result<PathBuf> {
         cache::file(&self.versions_dir, id).ok_or_else(|| Error::UnknownVersion(id.to_owned()))
     }
+}
+
+/// Whether `version` runs log4j 2 without a logging setup. Mojang gives
+/// every such version one; a copy without it lost it.
+fn lacks_logging(version: &VersionJson) -> bool {
+    const LOG4J: &str = "org.apache.logging.log4j:log4j-core:";
+    version.logging.client.is_none() && version.libraries.iter().any(|l| l.name.starts_with(LOG4J))
 }

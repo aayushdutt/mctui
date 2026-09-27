@@ -40,6 +40,12 @@ impl CatalogVersion {
     pub fn as_str(self) -> &'static str {
         self.0
     }
+
+    /// Whether the game's `options.txt` names resource packs by bare file
+    /// name (`"Pack.zip"`), as before 1.13, rather than `"file/Pack.zip"`.
+    pub(super) fn names_packs_by_file(self) -> bool {
+        release(self.0).is_some_and(|version| version < (1, 13))
+    }
 }
 
 impl fmt::Display for CatalogVersion {
@@ -136,6 +142,21 @@ mod tests {
         ] {
             let got = CatalogVersion::for_minecraft(minecraft).map(CatalogVersion::as_str);
             assert_eq!(got, want, "{minecraft:?}");
+        }
+    }
+
+    #[test]
+    fn packs_are_named_by_file_before_1_13() {
+        for (minecraft, by_file) in [
+            ("1.8.9", true),
+            ("1.10.2", true),
+            ("1.12.2", true),
+            ("1.13", false),
+            ("1.21.4", false),
+            ("26.1", false),
+        ] {
+            let version = CatalogVersion::for_minecraft(minecraft).unwrap();
+            assert_eq!(version.names_packs_by_file(), by_file, "{minecraft}");
         }
     }
 

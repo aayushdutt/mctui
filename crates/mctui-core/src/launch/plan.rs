@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
 
+use super::game::{GameCommand, redact};
 use super::identity::Identity;
 use super::prepare::RESOURCES_URL;
 use super::{Error, Result, user_args};
 use crate::account::Secret;
 use crate::config::Config;
+use crate::fsutil;
 use crate::instance::Instance;
 use crate::mojang::rules::{Env, Os};
 use crate::mojang::{Argument, Artifact, AssetIndexRef, LoggingConfig, VersionJson};
@@ -252,21 +254,18 @@ impl Plan {
             .chain(self.game_args.iter().map(String::as_str))
     }
 
-    /// The command that starts the game, in its working folder.
-    pub fn command(&self) -> Command {
+    /// The command that starts the game, in its working folder. Its `Debug`
+    /// output hides the access token, and so does the game's output.
+    pub fn command(&self) -> GameCommand {
         let mut command = Command::new(&self.java);
         command.args(self.args()).current_dir(&self.working_dir);
-        command
+        GameCommand::new(command, self.secret.clone())
     }
 
     fn redacted(&self, args: &[String]) -> Vec<String> {
-        match self.secret.as_ref().map(Secret::expose) {
-            Some(token) if !token.is_empty() => args
-                .iter()
-                .map(|arg| arg.replace(token, "<redacted>"))
-                .collect(),
-            _ => args.to_vec(),
-        }
+        args.iter()
+            .map(|arg| redact(arg, self.secret.as_ref()).into_owned())
+            .collect()
     }
 }
 
@@ -534,10 +533,7 @@ fn utf8(path: &Path) -> Result<&str> {
 /// `None` when `rel` could reach outside `base`: empty, absolute, with `..`,
 /// a drive letter, or a backslash.
 pub(super) fn join_relative(base: &Path, rel: &str) -> Option<PathBuf> {
-    let safe = |part: &str| {
-        !part.is_empty() && part != "." && part != ".." && !part.contains(['\\', ':', '\0'])
-    };
-    rel.split('/').all(safe).then(|| {
+    rel.split('/').all(fsutil::is_plain_name).then(|| {
         rel.split('/')
             .fold(base.to_owned(), |path, part| path.join(part))
     })
@@ -545,10 +541,11 @@ pub(super) fn join_relative(base: &Path, rel: &str) -> Option<PathBuf> {
 
 /// `dir` joined with `name`, a single file or folder name from metadata.
 fn file_in(dir: &Path, name: &str) -> Result<PathBuf> {
-    (!name.contains('/'))
-        .then(|| join_relative(dir, name))
-        .flatten()
-        .ok_or_else(|| Error::UnsafePath(name.to_owned()))
+    if fsutil::is_plain_name(name) {
+        Ok(dir.join(name))
+    } else {
+        Err(Error::UnsafePath(name.to_owned()))
+    }
 }
 
 #[cfg(test)]

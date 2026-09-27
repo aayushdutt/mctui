@@ -153,6 +153,49 @@ async fn a_game_ignoring_the_interrupt_is_killed_after_the_grace_period() {
 }
 
 #[tokio::test]
+async fn a_killed_game_takes_what_it_started_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let child_pid = tmp.path().join("child.pid");
+    let (game, mut logs) = spawn(
+        tmp.path(),
+        &format!(
+            "trap '' INT\n\
+             sh -c \"trap '' INT; while true; do sleep 0.05; done\" &\n\
+             echo $! > \"{}\"\n\
+             echo running\n\
+             while true; do sleep 0.05; done",
+            child_pid.display()
+        ),
+        Duration::from_millis(200),
+    );
+    assert_eq!(logs.recv().await.unwrap().text, "running");
+    let pid = std::fs::read_to_string(&child_pid)
+        .unwrap()
+        .trim()
+        .to_owned();
+    let alive = || {
+        std::process::Command::new("kill")
+            .args(["-0", &pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(alive(), "the game's child is running");
+
+    game.stop();
+    assert_eq!(wait(&game).await.stopped, Some(Stopped::Killed));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !alive(),
+        "process {pid}, started by the game, was killed too"
+    );
+}
+
+#[tokio::test]
 async fn a_child_holding_the_output_open_does_not_hold_the_game() {
     let tmp = tempfile::tempdir().unwrap();
     let started = Instant::now();

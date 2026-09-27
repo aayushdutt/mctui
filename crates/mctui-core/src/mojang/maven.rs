@@ -3,6 +3,8 @@
 
 use std::fmt;
 
+use crate::fsutil;
+
 /// A parsed Maven coordinate, borrowing from the string it came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Coordinate<'a> {
@@ -41,9 +43,7 @@ impl<'a> Coordinate<'a> {
             .into_iter()
             .chain(classifier)
             .chain(group.split('.'))
-            .all(|part| {
-                !part.is_empty() && part != "." && part != ".." && !part.contains(['/', '\\'])
-            });
+            .all(fsutil::is_plain_name);
         if !safe || parts.next().is_some() {
             return Err(invalid());
         }

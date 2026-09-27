@@ -91,13 +91,26 @@ impl VanillaTweaks {
     }
 
     /// A link to the pack's preview on the site (animated when there is one),
-    /// for opening in a browser.
+    /// for opening in a browser. The pack's id and extension come from the
+    /// site, so they're escaped into one path segment on it.
     pub fn preview_url(&self, version: CatalogVersion, pack: &Pack) -> String {
-        let extension = pack.preview_extension.as_deref().unwrap_or("png");
-        format!(
-            "{}/assets/resources/previews/resourcepacks/{version}/{}.{extension}",
-            self.base, pack.name
-        )
+        let extension = pack
+            .preview_extension
+            .as_deref()
+            .filter(|ext| !ext.is_empty() && ext.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .unwrap_or("png");
+        let file = format!("{}.{extension}", pack.name);
+        let path = ["assets", "resources", "previews", "resourcepacks"];
+        let Ok(mut url) = reqwest::Url::parse(&self.base) else {
+            return format!("{}/{}/{version}/{file}", self.base, path.join("/"));
+        };
+        if let Ok(mut segments) = url.path_segments_mut() {
+            segments
+                .pop_if_empty()
+                .extend(path)
+                .extend([version.as_str(), &file]);
+        }
+        url.into()
     }
 
     /// Makes the instance match the cart: has the site merge the picked packs
@@ -142,7 +155,7 @@ impl VanillaTweaks {
         };
         self.http.download(&zip, |_| {}).await?;
 
-        options::enable(game_dir).await?;
+        options::enable(game_dir, version).await?;
         let mut applied = cart.clone();
         applied.mark_applied(version);
         applied.save(game_dir).await?;
@@ -209,9 +222,9 @@ impl VanillaTweaks {
     }
 }
 
-/// Removes the merged pack from the instance: disables it in `options.txt`,
-/// deletes the zip, and marks the cart unapplied. The picks stay in the cart
-/// for a later apply.
+/// Removes the merged pack from the instance: disables it in `options.txt`
+/// (named as any game version names it), deletes the zip, and marks the
+/// cart unapplied. The picks stay in the cart for a later apply.
 pub async fn unapply(game_dir: &Path, cart: &mut Cart) -> Result<(), Error> {
     options::disable(game_dir).await?;
     let zip = super::pack_path(game_dir);
@@ -227,14 +240,15 @@ pub async fn unapply(game_dir: &Path, cart: &mut Cart) -> Result<(), Error> {
     Ok(())
 }
 
-/// Whether the merged pack is in the instance and enabled in `options.txt`.
-/// False once the player turns it off in Minecraft or deletes it, whatever
-/// the cart says.
-pub async fn is_enabled(game_dir: &Path) -> bool {
+/// Whether the merged pack is in the instance and enabled in `options.txt`,
+/// named as the game version (using `version`'s catalog) reads it. False
+/// once the player turns it off in Minecraft or deletes it, whatever the
+/// cart says.
+pub async fn is_enabled(game_dir: &Path, version: CatalogVersion) -> bool {
     let installed = tokio::fs::try_exists(super::pack_path(game_dir))
         .await
         .unwrap_or(false);
-    installed && options::is_enabled(game_dir).await
+    installed && options::is_enabled(game_dir, version).await
 }
 
 /// Keeps a fetched catalog at `path` for offline use. Failing to is logged,

@@ -1,10 +1,9 @@
 //! Who the game runs as.
 
-use std::fmt::Write as _;
-
 use md5::{Digest as _, Md5};
 
 use crate::account::{Account, AccountKind, Secret};
+use crate::fsutil;
 
 /// The name an offline player gets when none is given.
 const DEFAULT_NAME: &str = "Player";
@@ -112,10 +111,7 @@ pub fn offline_uuid(name: &str) -> String {
     let mut bytes: [u8; 16] = Md5::digest(format!("OfflinePlayer:{name}")).into();
     bytes[6] = (bytes[6] & 0x0f) | 0x30; // version 3
     bytes[8] = (bytes[8] & 0x3f) | 0x80; // IETF variant
-    bytes.iter().fold(String::with_capacity(32), |mut hex, b| {
-        let _ = write!(hex, "{b:02x}");
-        hex
-    })
+    fsutil::hex(&bytes)
 }
 
 #[cfg(test)]

@@ -1,11 +1,12 @@
 //! The resource-pack catalog (`rpcategories.json`): a tree of categories that
 //! hold packs.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use super::CatalogVersion;
+use crate::net;
 
 /// The packs Vanilla Tweaks offers for one Minecraft version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +15,9 @@ pub struct Catalog {
     pub version: CatalogVersion,
     /// Top-level categories, in the site's order.
     pub categories: Vec<Category>,
+    /// Each pack id's incompatible ids, both ways round, worked out once:
+    /// the UI asks for every row it shows.
+    incompatible: HashMap<String, BTreeSet<String>>,
 }
 
 /// A category of packs, possibly with subcategories.
@@ -56,8 +60,9 @@ pub struct Pack {
     /// The file extension of an animated preview ("gif"), when there is one.
     #[serde(default)]
     pub preview_extension: Option<String>,
-    /// A link to a video or the pack's creator.
-    #[serde(default)]
+    /// A link to a video or the pack's creator. Only a web link is kept,
+    /// since the UI opens it in a browser.
+    #[serde(default, deserialize_with = "web_link")]
     pub video: Option<String>,
     /// The label for [`Pack::video`], e.g. "Credit: Ninni".
     #[serde(default)]
@@ -77,6 +82,13 @@ pub struct Warning {
     pub color: String,
 }
 
+/// A link the site sent, kept only as an `http(s)` URL: anything else
+/// (`file:`, `javascript:`, a program's path) mustn't reach the browser.
+fn web_link<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let link = Option::<String>::deserialize(d)?;
+    Ok(link.and_then(|link| net::web_url(&link)))
+}
+
 impl Catalog {
     /// Decodes an `rpcategories.json`.
     pub(super) fn from_json(version: CatalogVersion, json: &[u8]) -> serde_json::Result<Self> {
@@ -85,10 +97,30 @@ impl Catalog {
             categories: Vec<Category>,
         }
         let file: File = serde_json::from_slice(json)?;
-        Ok(Self {
+        Ok(Self::new(version, file.categories))
+    }
+
+    fn new(version: CatalogVersion, categories: Vec<Category>) -> Self {
+        let mut catalog = Self {
             version,
-            categories: file.categories,
-        })
+            categories,
+            incompatible: HashMap::new(),
+        };
+        let mut incompatible: HashMap<String, BTreeSet<String>> = HashMap::new();
+        for (_, pack) in catalog.packs() {
+            for other in pack.incompatible.iter().filter(|id| **id != pack.name) {
+                let mut link = |a: &str, b: &str| {
+                    incompatible
+                        .entry(a.to_owned())
+                        .or_default()
+                        .insert(b.to_owned());
+                };
+                link(&pack.name, other);
+                link(other, &pack.name);
+            }
+        }
+        catalog.incompatible = incompatible;
+        catalog
     }
 
     /// Every category, subcategories included, depth first in the site's
@@ -116,16 +148,10 @@ impl Catalog {
     /// Ids of the packs that can't be combined with `name`: the ones it lists
     /// and the ones that list it.
     pub fn incompatible_with(&self, name: &str) -> BTreeSet<&str> {
-        let mut ids = BTreeSet::new();
-        for (_, pack) in self.packs() {
-            if pack.name == name {
-                ids.extend(pack.incompatible.iter().map(String::as_str));
-            } else if pack.incompatible.iter().any(|id| id == name) {
-                ids.insert(pack.name.as_str());
-            }
-        }
-        ids.remove(name);
-        ids
+        self.incompatible
+            .get(name)
+            .map(|ids| ids.iter().map(String::as_str).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -212,9 +238,9 @@ mod tests {
     }
 
     fn catalog() -> Catalog {
-        Catalog {
-            version: CatalogVersion::for_minecraft("1.21").unwrap(),
-            categories: vec![
+        Catalog::new(
+            CatalogVersion::for_minecraft("1.21").unwrap(),
+            vec![
                 category(
                     "GUI",
                     vec![pack("A", &["B"])],
@@ -226,6 +252,32 @@ mod tests {
                 ),
                 category("Fun", vec![pack("E", &["Gone"])], vec![]),
             ],
+        )
+    }
+
+    #[test]
+    fn only_web_links_are_kept() {
+        let video = |link: &str| {
+            let json = serde_json::json!({ "name": "P", "video": link });
+            serde_json::from_value::<Pack>(json).unwrap().video
+        };
+        assert_eq!(
+            video("https://youtu.be/abc").as_deref(),
+            Some("https://youtu.be/abc")
+        );
+        assert_eq!(
+            video("http://example.com/a b").as_deref(),
+            Some("http://example.com/a%20b")
+        );
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "/Applications/Calculator.app",
+            "C:\\Windows\\System32\\calc.exe",
+            "smb://host/share",
+            "",
+        ] {
+            assert_eq!(video(bad), None, "{bad:?}");
         }
     }
 
