@@ -40,6 +40,7 @@ fn real_responses_decode() {
         ),
         ("AANobbMI", "sodium", "Sodium")
     );
+    assert_eq!(sodium.author, "jellysquid3");
     assert_eq!(
         (sodium.client_side, sodium.server_side),
         (Side::Required, Side::Unsupported)

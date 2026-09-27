@@ -84,6 +84,11 @@ impl Harness {
         self.runtime.block_on(mock.mount(server));
     }
 
+    /// The mock server's address, for answers that link back to it.
+    pub fn uri(&self) -> String {
+        self.server.as_ref().expect("an online harness").uri()
+    }
+
     /// How many requests the mock server has had for `path`.
     pub fn requests(&self, path: &str) -> usize {
         let server = self.server.as_ref().expect("an online harness");

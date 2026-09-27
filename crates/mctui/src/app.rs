@@ -20,6 +20,7 @@ use crate::data::Data;
 use crate::edit::EditInstance;
 use crate::format;
 use crate::home::Home;
+use crate::mods::{self, Mods};
 use crate::msg::Msg;
 use crate::overlay::{Confirm, Help, Menu, MenuItem, Outcome, Overlay, Palette, PaletteItem};
 use crate::screen::{Ctx, Handled, Mouse, Screen, ScreenId};
@@ -86,6 +87,8 @@ pub enum Action {
     /// Put text on the clipboard.
     Copy(String),
     OpenUrl(String),
+    /// Hand a choice from a menu, dialog or the palette back to the mods screen.
+    Mods(mods::Command),
 }
 
 impl Action {
@@ -386,8 +389,8 @@ impl App {
                 }
                 true
             }
-            // The wizard's work reports to the wizard, never to the app.
-            Msg::Wizard(_) => false,
+            // Screens' own work reports to them, never to the app.
+            Msg::Wizard(_) | Msg::Mods(_) => false,
             #[cfg(test)]
             Msg::Test(_) => false,
         }
@@ -621,6 +624,14 @@ impl App {
                     )));
                 }
             }
+            Action::Mods(command) => {
+                let msg = Msg::Mods(mods::Msg::Chose(command));
+                if let Some(handled) =
+                    self.with_screen(self.active_id(), |s, cx| s.handle_msg(msg, cx))
+                {
+                    self.apply(handled);
+                }
+            }
         }
     }
 
@@ -652,7 +663,14 @@ impl App {
                 return self.open(&Route::SignIn { then });
             }
             Route::Launch { .. } => return self.show(not_yet("Launching")),
-            Route::Mods(_) => return self.show(not_yet("The mods browser")),
+            Route::Mods(id) => match self.data.instance(id) {
+                Some(inst) => Box::new(Mods::new(
+                    inst,
+                    self.tasks.for_screen(self.next_id),
+                    self.services.modrinth.clone(),
+                )),
+                None => return,
+            },
             Route::ResourcePacks(_) => return self.show(not_yet("Resource packs")),
         };
         let id = self.next_id;

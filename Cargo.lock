@@ -1520,6 +1520,8 @@ dependencies = [
  "nucleo-matcher",
  "open",
  "ratatui",
+ "serde_json",
+ "sha1",
  "tempfile",
  "terminal-colorsaurus",
  "tokio",

@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/mods/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Survival 1.21  ›  Mods                                                         ● Steve
+
+    INSTALLED   3                     DISCOVER   3 of 34
+
+    Minecraft 1.21.4  ·  Fabric       / Search Modrinth
+
+    Fabric API           0.110.0      Sodium                                         ✓ Installed
+
+    Lithium               0.14.3      Sodium Extra                                         98.1M
+
+    Sodium                 0.6.0      Reese's Sodium Options                               82.0M
+
+                                      Sodium
+                                      by jellysquid3  ·  Optimization  ·  Client-side
+                                      A high-performance rendering engine replacement for
+                                      Minecraft, which greatly improves frame rates and reduces…
+                                      231.7M downloads  ·  Updated 6d ago
+
+                                        Update  ↵      Modrinth page  o
+
+
+
+
+
+
+
+
+   d  remove    o  page    →  discover    esc  back    ?  help

@@ -18,6 +18,9 @@ pub struct SearchHit {
     pub project_id: String,
     pub slug: String,
     pub title: String,
+    /// The owner's username.
+    #[serde(default)]
+    pub author: String,
     /// The one-line summary.
     #[serde(default)]
     pub description: String,

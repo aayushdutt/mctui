@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/mods/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Survival 1.21  ›  Mods                                                         ● Steve
+
+    INSTALLED   3                     DISCOVER
+
+    Minecraft 1.21.4  ·  Fabric       / Search Modrinth
+
+    Fabric API           0.110.0      Modrinth isn't answering right now — press r to try again.
+
+    Lithium               0.14.3
+
+    Sodium                 0.6.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   r  retry    /  search    esc  back    ?  help

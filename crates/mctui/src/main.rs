@@ -10,6 +10,7 @@ mod edit;
 mod format;
 mod fuzzy;
 mod home;
+mod mods;
 mod msg;
 mod overlay;
 mod screen;

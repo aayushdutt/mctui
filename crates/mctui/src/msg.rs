@@ -7,6 +7,7 @@ pub enum Msg {
     Accounts(crate::accounts::Msg),
     /// The new-instance wizard's version and loader lists.
     Wizard(crate::wizard::WizardMsg),
+    Mods(crate::mods::Msg),
     #[cfg(test)]
     Test(u32),
 }

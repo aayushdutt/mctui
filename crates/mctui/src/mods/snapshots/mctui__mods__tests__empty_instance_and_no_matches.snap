@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/mods/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Snapshot Test  ›  Mods                                                         ● Steve
+
+    INSTALLED   0                     DISCOVER
+
+    Minecraft 25w14a  ·  Fabric       / zzz
+
+    No mods yet — search              Nothing matches “zzz” for Minecraft 25w14a.
+    Modrinth on the right.            Try other words, or clear the search to see popular mods.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   /  search    esc  back    ?  help

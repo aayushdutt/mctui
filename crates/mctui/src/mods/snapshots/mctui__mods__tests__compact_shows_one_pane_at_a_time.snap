@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/mods/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Survival 1.21  ›  Mods                           ● Steve
+
+    DISCOVER   3 of 34                               ← Installed 3
+
+    / Search Modrinth
+
+    Sodium                                             ✓ Installed
+
+    Sodium Extra                                             98.1M
+
+    Reese's Sodium Options                                   82.0M
+
+    Sodium
+    by jellysquid3  ·  Optimization  ·  Client-side
+    A high-performance rendering engine replacement for Minecraft…
+
+      Update  ↵      Modrinth page  o
+
+
+
+
+   ↵  update    o  page    /  search    esc  back    ?  help

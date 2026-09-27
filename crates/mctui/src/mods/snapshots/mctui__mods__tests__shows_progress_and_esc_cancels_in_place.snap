@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/mods/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Survival 1.21  ›  Mods                                                         ● Steve
+
+    INSTALLED   3                     DISCOVER   1
+
+    Minecraft 1.21.4  ·  Fabric       / Search Modrinth
+
+    Fabric API           0.110.0      ⠋  Installing Mod Menu      0.3 of 3.3 MB  ·  1 of 3 files
+                                      ━━━━━──────────────────────────────────────────────     9%
+    Lithium               0.14.3
+                                      Mod Menu                                      ⠋ Installing
+    Sodium                 0.6.0
+                                      Mod Menu
+                                      by Prospector  ·  Library  ·  Utility  ·  Client-side
+                                      Adds a mod menu to view the list of mods you have
+                                      installed.
+                                      104.5M downloads  ·  Updated 6d ago
+
+                                        Installing…      Modrinth page  o
+
+
+
+
+
+
+
+
+
+   o  page    /  search    esc  cancel install    ?  help
