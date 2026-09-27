@@ -1,0 +1,8 @@
+{
+  "IssueInstant": "2026-09-27T12:00:01.0000000Z",
+  "NotAfter": "2026-09-28T04:00:01.0000000Z",
+  "Token": "xsts-token",
+  "DisplayClaims": {
+    "xui": [{ "uhs": "4312876543219876543" }]
+  }
+}

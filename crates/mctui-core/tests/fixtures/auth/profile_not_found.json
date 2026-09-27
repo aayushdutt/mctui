@@ -1,0 +1,7 @@
+{
+  "path": "/minecraft/profile",
+  "errorType": "NOT_FOUND",
+  "error": "NOT_FOUND",
+  "errorMessage": "The server has not found anything matching the request URI",
+  "developerMessage": "The server has not found anything matching the request URI"
+}

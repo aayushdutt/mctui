@@ -1,0 +1,8 @@
+{
+  "user_code": "F7K9ZQ2X",
+  "device_code": "device-code-secret",
+  "verification_uri": "https://www.microsoft.com/link",
+  "expires_in": 900,
+  "interval": 5,
+  "message": "To sign in, use a web browser to open the page https://www.microsoft.com/link and enter the code F7K9ZQ2X to authenticate."
+}

@@ -8,6 +8,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod account;
+pub mod auth;
 pub mod config;
 pub mod facets;
 pub mod fsutil;
