@@ -17,6 +17,7 @@ pub mod java;
 pub mod modrinth;
 pub mod net;
 pub mod paths;
+pub mod vanilla_tweaks;
 
 mod gotime;
 

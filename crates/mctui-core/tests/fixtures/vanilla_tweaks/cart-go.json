@@ -1,0 +1,21 @@
+{
+  "version": "1.21",
+  "packs": {
+    "Aesthetic": [
+      "BlackNetherBricks",
+      "AllayElytra"
+    ],
+    "Hearts": [
+      "ColoredHeartsWhite"
+    ]
+  },
+  "applied": {
+    "Aesthetic": [
+      "BlackNetherBricks",
+      "AllayElytra"
+    ],
+    "Terrain": [
+      "GoldenSavanna"
+    ]
+  }
+}

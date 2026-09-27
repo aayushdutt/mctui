@@ -1,0 +1,97 @@
+{
+  "categories": [
+    {
+      "category": "Aesthetic",
+      "packs": [
+        {
+          "name": "AlternateBlockDestruction",
+          "display": "Alternate Block Destruction",
+          "previewExtension": "gif",
+          "description": "Changes the breaking texture of blocks to a messy ring around the outside.",
+          "incompatible": [
+            "MineProgressBar"
+          ]
+        },
+        {
+          "name": "BlackNetherBricks",
+          "display": "Black Nether Bricks",
+          "description": "Changes the texture of Nether Bricks to make them black.",
+          "incompatible": [
+            "BrighterNether"
+          ]
+        },
+        {
+          "name": "GlassDoors",
+          "display": "Glass Doors",
+          "description": "Adds uniquely shaped glass windows into every door type.",
+          "incompatible": [
+            "3DDoors&Trapdoors",
+            "CrimsonerCrimson"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "Connected Textures",
+      "packs": [
+        {
+          "name": "ConnectedBookshelves",
+          "display": "Connected Bookshelves",
+          "description": "Creates a seamless connection between bookshelves.",
+          "incompatible": [
+            "VariatedBookshelves",
+            "VariatedBookshelves+ConnectedBookshelves"
+          ]
+        },
+        {
+          "name": "VariatedBookshelves+ConnectedBookshelves",
+          "display": "Variated Connected Bookshelves",
+          "description": "Creates a seamless connection between bookshelves + random textures.",
+          "incompatible": [
+            "VariatedBookshelves",
+            "ConnectedBookshelves"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "3D",
+      "packs": [
+        {
+          "name": "3DDoors&Trapdoors",
+          "display": "3D Doors and Trapdoors",
+          "description": "Remodels all door and trapdoor types to appear in 3D.",
+          "incompatible": [
+            "GlassDoors",
+            "CrimsonerCrimson"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "Retro",
+      "packs": [
+        {
+          "name": "1.11ShulkerBoxes",
+          "display": "1.11 Shulker Boxes",
+          "description": "Reverts the textures of Shulkers and Shulker Boxes to their pre-1.12 variants.",
+          "incompatible": []
+        }
+      ]
+    },
+    {
+      "category": "Fun",
+      "packs": [
+        {
+          "name": "BaconBeam",
+          "display": "Bacon Beam",
+          "description": "Adds the almighty Bacon Beam to beacons! All hail the Bacon Beam!",
+          "incompatible": [
+            "NoBeaconBeam"
+          ],
+          "video": "https://www.youtube.com/watch?v=DJqWlmGZ60g"
+        }
+      ]
+    }
+  ]
+}

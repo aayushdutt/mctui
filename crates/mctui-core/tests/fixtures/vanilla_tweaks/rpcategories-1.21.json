@@ -1,0 +1,464 @@
+{
+  "categories": [
+    {
+      "category": "Aesthetic",
+      "categories": [
+        {
+          "category": "More Zombies",
+          "warning": {
+            "color": "rgba(79, 214, 79, 0.8)",
+            "text": "Although marked as incompatible, selecting <b>all</b> Zombie skins enables randomized variants when using mods such as <i>OptiFine</i>, <i>Entity Model Features</i>, or other alternatives that enable <b>both <u>random entity textures</u> and <u>custom entity models</u></b>. This only works when selecting <b><u>ALL</b></u> packs in this category."
+          },
+          "packs": [
+            {
+              "name": "MZSteve",
+              "display": "Steve Zombies",
+              "description": "Retextures Zombies to look even more like Steve.</span><br><span style='color: #4fd64f'>Using mods like OptiFine enables secondary skin layers, and slim-armed variants!</span>",
+              "incompatible": [
+                "MZAlex",
+                "MZAri",
+                "MZEfe",
+                "MZKai",
+                "MZMakena",
+                "MZNoor",
+                "MZSunny",
+                "MZZuri"
+              ]
+            },
+            {
+              "name": "MZAlex",
+              "display": "Alex Zombies",
+              "description": "Retextures Zombies to look like Alex rather than Steve.</span><br><span style='color: #4fd64f'>Using mods like OptiFine enables secondary skin layers, and slim-armed variants!</span>",
+              "incompatible": [
+                "MZAri",
+                "MZEfe",
+                "MZKai",
+                "MZMakena",
+                "MZNoor",
+                "MZSunny",
+                "MZSteve",
+                "MZZuri"
+              ]
+            }
+          ]
+        }
+      ],
+      "packs": [
+        {
+          "name": "AlternateBlockDestruction",
+          "display": "Alternate Block Destruction",
+          "description": "Changes the breaking texture of blocks to a messy ring around the outside.",
+          "previewExtension": "gif",
+          "incompatible": [
+            "MineProgressBar"
+          ]
+        },
+        {
+          "name": "BlackNetherBricks",
+          "display": "Black Nether Bricks",
+          "description": "Changes the texture of Nether Bricks to make them black.",
+          "incompatible": [
+            "BrighterNether"
+          ]
+        },
+        {
+          "name": "PalerPaleOak",
+          "display": "Paler Pale Oak",
+          "description": "Desaturates the color of Pale Oak wood.",
+          "previewExtension": "gif",
+          "experiment": true,
+          "priority": 1,
+          "incompatible": []
+        },
+        {
+          "name": "AllayElytra",
+          "display": "Allay Elytra",
+          "description": "Changes Elytra to look like Allay wings.<br><br><span style='color: #bdbdbd'>Credit: Ninni</span>",
+          "video": "https://x.com/Ninnih_",
+          "videoText": "Credit: Ninni",
+          "incompatible": [
+            "ConcorpWings",
+            "PhantomElytra",
+            "EnderDragonElytra",
+            "ColoredElytraWhite",
+            "ColoredElytraGray",
+            "ColoredElytraBlack",
+            "ColoredElytraBrown",
+            "ColoredElytraRed",
+            "ColoredElytraOrange",
+            "ColoredElytraYellow",
+            "ColoredElytraLime",
+            "ColoredElytraGreen",
+            "ColoredElytraCyan",
+            "ColoredElytraLightBlue",
+            "ColoredElytraBlue",
+            "ColoredElytraPurple",
+            "ColoredElytraMagenta",
+            "ColoredElytraPink"
+          ]
+        },
+        {
+          "name": "ConcorpWings",
+          "display": "Vex Elytra",
+          "description": "Changes Elytra to look like Vex wings.<br><br><span style='color: #bdbdbd'>Credit: The_Khuzdul1</span>",
+          "video": "https://www.planetminecraft.com/member/the_khuzdul1/",
+          "videoText": "Credit: The_Khuzdul1",
+          "incompatible": [
+            "AllayElytra",
+            "PhantomElytra",
+            "EnderDragonElytra",
+            "ColoredElytraWhite",
+            "ColoredElytraGray",
+            "ColoredElytraBlack",
+            "ColoredElytraBrown",
+            "ColoredElytraRed",
+            "ColoredElytraOrange",
+            "ColoredElytraYellow",
+            "ColoredElytraLime",
+            "ColoredElytraGreen",
+            "ColoredElytraCyan",
+            "ColoredElytraLightBlue",
+            "ColoredElytraBlue",
+            "ColoredElytraPurple",
+            "ColoredElytraMagenta",
+            "ColoredElytraPink"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "Terrain",
+      "categories": [
+        {
+          "category": "Lower and Full Sides",
+          "packs": [
+            {
+              "name": "LowerGrass",
+              "display": "Lower Grass Sides",
+              "description": "Lowers the sides of Grass Blocks to provide a smoother and greener landscape.",
+              "incompatible": [
+                "AlphaFoilage",
+                "GrassSides",
+                "DungeonsDirt"
+              ]
+            },
+            {
+              "name": "GrassSides",
+              "display": "Full Grass Sides",
+              "description": "Completely covers the sides of Grass Blocks to provide a smoother and greener landscape.",
+              "incompatible": [
+                "AlphaFoilage",
+                "LowerGrass"
+              ]
+            }
+          ]
+        }
+      ],
+      "packs": [
+        {
+          "name": "BushyLeaves",
+          "display": "Bushy Leaves",
+          "description": "Remodels leaves to be bushier and less cube-like.<br><span style='color: #ff0000'>Must be using Fancy or Fabulous graphics.",
+          "incompatible": [
+            "NicerFastLeaves"
+          ],
+          "priority": 1
+        },
+        {
+          "name": "GoldenSavanna",
+          "display": "Golden Savanna",
+          "description": "Recolors Savanna biomes to have beautiful golden grass.",
+          "incompatible": [
+            "AlphaFoilage"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "Connected Textures",
+      "warning": {
+        "text": "These packs use a different method of connecting textures than in mods you might be used to such as OptiFine. They use a cullfacing method which means the connecting textures will connect to all blocks, not just themselves. This isn't a bug; it's an unintended and unresolvable side effect of this vanilla method.",
+        "color": "rgba(235, 136, 32, 0.8)"
+      },
+      "packs": [
+        {
+          "name": "ConnectedBookshelves",
+          "display": "Connected Bookshelves",
+          "description": "Creates a seamless connection between bookshelves.",
+          "incompatible": [
+            "3DBookshelves"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "GUI",
+      "categories": [
+        {
+          "category": "Hearts",
+          "categories": [
+            {
+              "category": "LGBTQ+ Pride",
+              "packs": [
+                {
+                  "name": "PrideHearts",
+                  "display": "Pride",
+                  "description": "",
+                  "incompatible": [
+                    "ColoredHeartsBlack",
+                    "ColoredHeartsBlue",
+                    "ColoredHeartsBrown",
+                    "ColoredHeartsCyan",
+                    "ColoredHeartsGray",
+                    "ColoredHeartsGreen",
+                    "ColoredHeartsLightBlue",
+                    "ColoredHeartsLightGray",
+                    "ColoredHeartsLime",
+                    "ColoredHeartsMagenta",
+                    "ColoredHeartsOrange",
+                    "ColoredHeartsPink",
+                    "ColoredHeartsPurple",
+                    "ColoredHeartsWhite",
+                    "ColoredHeartsYellow",
+                    "PrideHeartsAce",
+                    "PrideHeartsAgender",
+                    "PrideHeartsAlly",
+                    "PrideHeartsAromantic",
+                    "PrideHeartsBisexual",
+                    "PrideHeartsDemiromantic",
+                    "PrideHeartsDemisexual",
+                    "PrideHeartsEnby",
+                    "PrideHeartsGayMLM",
+                    "PrideHeartsGenderfluid",
+                    "PrideHeartsGenderqueer",
+                    "PrideHeartsIntersex",
+                    "PrideHeartsLesbian",
+                    "PrideHeartsPansexual",
+                    "PrideHeartsPolyam",
+                    "PrideHeartsPolysexual",
+                    "PrideHeartsProgress",
+                    "PrideHeartsQueer",
+                    "PrideHeartsTrans",
+                    "PrideHeartsOmnisexual",
+                    "PrideHeartsPolyam2",
+                    "PrideHeartsAroAce",
+                    "PrideHeartsAroAce2",
+                    "PrideHeartsBigender",
+                    "PrideHeartsBigender2",
+                    "PrideHeartsDisability"
+                  ]
+                },
+                {
+                  "name": "PrideHeartsTrans",
+                  "display": "Transgender",
+                  "description": "",
+                  "incompatible": [
+                    "ColoredHeartsBlack",
+                    "ColoredHeartsBlue",
+                    "ColoredHeartsBrown",
+                    "ColoredHeartsCyan",
+                    "ColoredHeartsGray",
+                    "ColoredHeartsGreen",
+                    "ColoredHeartsLightBlue",
+                    "ColoredHeartsLightGray",
+                    "ColoredHeartsLime",
+                    "ColoredHeartsMagenta",
+                    "ColoredHeartsOrange",
+                    "ColoredHeartsPink",
+                    "ColoredHeartsPurple",
+                    "ColoredHeartsWhite",
+                    "ColoredHeartsYellow",
+                    "PrideHearts",
+                    "PrideHeartsAce",
+                    "PrideHeartsAgender",
+                    "PrideHeartsAlly",
+                    "PrideHeartsAromantic",
+                    "PrideHeartsBisexual",
+                    "PrideHeartsDemiromantic",
+                    "PrideHeartsDemisexual",
+                    "PrideHeartsEnby",
+                    "PrideHeartsGayMLM",
+                    "PrideHeartsGenderfluid",
+                    "PrideHeartsGenderqueer",
+                    "PrideHeartsIntersex",
+                    "PrideHeartsLesbian",
+                    "PrideHeartsPansexual",
+                    "PrideHeartsPolyam",
+                    "PrideHeartsPolysexual",
+                    "PrideHeartsProgress",
+                    "PrideHeartsQueer",
+                    "PrideHeartsOmnisexual",
+                    "PrideHeartsPolyam2",
+                    "PrideHeartsAroAce",
+                    "PrideHeartsAroAce2",
+                    "PrideHeartsBigender",
+                    "PrideHeartsBigender2",
+                    "PrideHeartsDisability"
+                  ]
+                }
+              ]
+            }
+          ],
+          "packs": [
+            {
+              "name": "ColoredHeartsWhite",
+              "display": "White Hearts",
+              "description": "",
+              "incompatible": [
+                "ColoredHeartsBlack",
+                "ColoredHeartsBlue",
+                "ColoredHeartsBrown",
+                "ColoredHeartsCyan",
+                "ColoredHeartsGray",
+                "ColoredHeartsGreen",
+                "ColoredHeartsLightBlue",
+                "ColoredHeartsLightGray",
+                "ColoredHeartsLime",
+                "ColoredHeartsMagenta",
+                "ColoredHeartsOrange",
+                "ColoredHeartsPink",
+                "ColoredHeartsPurple",
+                "ColoredHeartsYellow",
+                "PrideHearts",
+                "PrideHeartsAce",
+                "PrideHeartsAgender",
+                "PrideHeartsAlly",
+                "PrideHeartsAromantic",
+                "PrideHeartsBisexual",
+                "PrideHeartsDemiromantic",
+                "PrideHeartsDemisexual",
+                "PrideHeartsEnby",
+                "PrideHeartsGayMLM",
+                "PrideHeartsGenderfluid",
+                "PrideHeartsGenderqueer",
+                "PrideHeartsIntersex",
+                "PrideHeartsLesbian",
+                "PrideHeartsPansexual",
+                "PrideHeartsPolyam",
+                "PrideHeartsPolysexual",
+                "PrideHeartsProgress",
+                "PrideHeartsQueer",
+                "PrideHeartsTrans",
+                "PrideHeartsOmnisexual",
+                "PrideHeartsPolyam2",
+                "PrideHeartsAroAce",
+                "PrideHeartsAroAce2",
+                "PrideHeartsBigender",
+                "PrideHeartsBigender2"
+              ]
+            },
+            {
+              "name": "ColoredHeartsBlack",
+              "display": "Black Hearts",
+              "description": "",
+              "incompatible": [
+                "ColoredHeartsBlue",
+                "ColoredHeartsBrown",
+                "ColoredHeartsCyan",
+                "ColoredHeartsGray",
+                "ColoredHeartsGreen",
+                "ColoredHeartsLightBlue",
+                "ColoredHeartsLightGray",
+                "ColoredHeartsLime",
+                "ColoredHeartsMagenta",
+                "ColoredHeartsOrange",
+                "ColoredHeartsPink",
+                "ColoredHeartsPurple",
+                "ColoredHeartsWhite",
+                "ColoredHeartsYellow",
+                "PrideHearts",
+                "PrideHeartsAce",
+                "PrideHeartsAgender",
+                "PrideHeartsAlly",
+                "PrideHeartsAromantic",
+                "PrideHeartsBisexual",
+                "PrideHeartsDemiromantic",
+                "PrideHeartsDemisexual",
+                "PrideHeartsEnby",
+                "PrideHeartsGayMLM",
+                "PrideHeartsGenderfluid",
+                "PrideHeartsGenderqueer",
+                "PrideHeartsIntersex",
+                "PrideHeartsLesbian",
+                "PrideHeartsPansexual",
+                "PrideHeartsPolyam",
+                "PrideHeartsPolysexual",
+                "PrideHeartsProgress",
+                "PrideHeartsQueer",
+                "PrideHeartsTrans",
+                "PrideHeartsOmnisexual",
+                "PrideHeartsPolyam2",
+                "PrideHeartsAroAce",
+                "PrideHeartsAroAce2",
+                "PrideHeartsBigender",
+                "PrideHeartsBigender2"
+              ]
+            }
+          ]
+        }
+      ],
+      "packs": [
+        {
+          "name": "DarkUI",
+          "display": "Dark UI",
+          "description": "Changes all inventories and UIs to be darker.",
+          "incompatible": [
+            "TransparentUI"
+          ],
+          "priority": 1
+        },
+        {
+          "name": "TransparentUI",
+          "display": "Transparent UI",
+          "description": "Changes all inventories and UIs to be transparent.",
+          "incompatible": [
+            "DarkUI"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "Retro",
+      "packs": [
+        {
+          "name": "AlphaFoilage",
+          "display": "Alpha Foliage",
+          "description": "Changes the foliage textures to those of Alpha Minecraft.",
+          "incompatible": [
+            "GrassSides",
+            "LowerGrass",
+            "SmoothDirt",
+            "3DVines",
+            "VariatedGrass",
+            "NicerFastLeaves",
+            "WavyLeaves",
+            "UniversalLushGrass"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "Fun",
+      "packs": [
+        {
+          "name": "Beeralis",
+          "display": "Beeralis",
+          "description": "Look into my eyes, and nothing but my eyes!<br><br><span style='color: #bdbdbd'>Credit: RubikOwl</span>",
+          "video": "https://twitter.com/RubikOwl",
+          "videoText": "Credit: RubikOwl",
+          "incompatible": []
+        },
+        {
+          "name": "BaconBeam",
+          "display": "Bacon Beam",
+          "description": "Adds the almighty Bacon Beam to beacons! All hail the Bacon Beam!",
+          "incompatible": [
+            "PixelConsistentBeaconBeam",
+            "NoBeaconBeam"
+          ],
+          "video": "https://www.youtube.com/watch?v=DJqWlmGZ60g"
+        }
+      ]
+    }
+  ]
+}

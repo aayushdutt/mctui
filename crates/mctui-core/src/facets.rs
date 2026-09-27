@@ -10,11 +10,7 @@ use jiff::Timestamp;
 use serde::Deserialize;
 
 use crate::instance::Instance;
-
-/// The merged pack the in-app Vanilla Tweaks browser writes.
-const MERGED_PACK: &str = "VanillaTweaks.zip";
-/// The Vanilla Tweaks cart, next to the merged pack.
-const CART_FILE: &str = ".mctui-vanillatweaks.json";
+use crate::vanilla_tweaks::{CART_FILE, PACK_FILE as MERGED_PACK};
 
 /// A save folder under `.minecraft/saves`.
 #[derive(Debug, Clone, PartialEq, Eq)]
