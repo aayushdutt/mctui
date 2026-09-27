@@ -27,7 +27,7 @@ def cells(ch):
 def parse(text):
     rows = []
     for line in text.split("\n"):
-        st = dict(fg=None, bg=None, b=False, f=False, i=False, u=False, r=False)
+        st = dict(fg=None, bg=None, b=False, f=False, i=False, u=False, r=False, s=False)
         row = []
         for tok in re.split(r"(\x1b\[[0-9;]*[A-Za-z])", line):
             m = re.fullmatch(r"\x1b\[([0-9;]*)([A-Za-z])", tok)
@@ -38,12 +38,13 @@ def parse(text):
                 k = 0
                 while k < len(ps):
                     p = ps[k]
-                    if p == 0: st = dict(fg=None, bg=None, b=False, f=False, i=False, u=False, r=False)
+                    if p == 0: st = dict(fg=None, bg=None, b=False, f=False, i=False, u=False, r=False, s=False)
                     elif p == 1: st["b"] = True
                     elif p == 2: st["f"] = True
                     elif p == 3: st["i"] = True
                     elif p == 4: st["u"] = True
                     elif p == 7: st["r"] = True
+                    elif p == 9: st["s"] = True
                     elif p == 22: st["b"] = st["f"] = False
                     elif p == 23: st["i"] = False
                     elif p == 24: st["u"] = False
@@ -96,6 +97,8 @@ def render(rows, out):
                     d.text((px, py + 3), ch, font=f, fill=fg)
             if st["u"]:
                 d.line([px, py + CH - 3, px + w * CW, py + CH - 3], fill=fg)
+            if st["s"]:
+                d.line([px, py + CH // 2 + 1, px + w * CW, py + CH // 2 + 1], fill=fg)
             x += w
     img.save(out)
 

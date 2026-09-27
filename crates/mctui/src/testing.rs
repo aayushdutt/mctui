@@ -194,6 +194,7 @@ pub fn ansi(buf: &Buffer) -> String {
                     (Modifier::DIM, "2"),
                     (Modifier::ITALIC, "3"),
                     (Modifier::UNDERLINED, "4"),
+                    (Modifier::CROSSED_OUT, "9"),
                 ] {
                     if cell.modifier.contains(m) {
                         out.push(';');

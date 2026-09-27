@@ -16,7 +16,7 @@ use mctui_core::instance::{Instance, InstanceStore, NewInstance};
 use mctui_core::net::Http;
 use mctui_core::paths::DataDir;
 use mctui_core::vanilla_tweaks::{
-    self, Cart, CatalogVersion, Error, PackRef, PackState, Toggled, VanillaTweaks,
+    self, Cart, CatalogVersion, Error, PackRef, PackState, Stage, Toggled, VanillaTweaks,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -328,8 +328,14 @@ async fn apply_builds_downloads_and_enables_the_pack() {
     cart.toggle(&catalog, "Terrain", "GoldenSavanna");
     assert!(cart.has_unbuilt_changes());
 
-    vt.apply(&game, catalog.version, &mut cart).await.unwrap();
+    let mut stages = Vec::new();
+    vt.apply_with(&game, catalog.version, &mut cart, |stage| {
+        stages.push(stage);
+    })
+    .await
+    .unwrap();
 
+    assert_eq!(stages, [Stage::Building, Stage::Downloading]);
     assert_eq!(
         build_request(&site).await,
         [

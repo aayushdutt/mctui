@@ -1,0 +1,31 @@
+---
+source: crates/mctui/src/resource_packs/tests.rs
+expression: text
+---
+
+  mctui  ›  Survival 1.21  ›  Resource packs                 ● Steve
+
+    Categories   Aesthetic 5   Your pack 3       ● unbuilt changes
+
+    Alternate Block Destruction
+
+    Black Nether Bricks                                    ● built
+
+    Paler Pale Oak
+
+    Allay Elytra                                           ● built
+
+    Vex Elytra                             ⇄ replaces Allay Elytra
+
+
+
+
+    Alternate Block Destruction
+    Changes the breaking texture of blocks to a messy ring around
+    the outside.
+
+
+
+      Preview  o
+
+   space  add    /  search    b  build & apply    esc  back

@@ -23,6 +23,7 @@ use crate::home::Home;
 use crate::mods::{self, Mods};
 use crate::msg::Msg;
 use crate::overlay::{Confirm, Help, Menu, MenuItem, Outcome, Overlay, Palette, PaletteItem};
+use crate::resource_packs::ResourcePacks;
 use crate::screen::{Ctx, Handled, Mouse, Screen, ScreenId};
 use crate::services::Services;
 use crate::settings::Settings;
@@ -76,6 +77,8 @@ pub enum Action {
         id: String,
         anchor: Option<Position>,
     },
+    /// Run the active screen's command `name` (see [`Screen::command`]).
+    Command(&'static str),
     /// A small menu of actions, at the pointer when `anchor` is given.
     Menu {
         title: String,
@@ -390,7 +393,7 @@ impl App {
                 true
             }
             // Screens' own work reports to them, never to the app.
-            Msg::Wizard(_) | Msg::Mods(_) => false,
+            Msg::Wizard(_) | Msg::Mods(_) | Msg::ResourcePacks(_) => false,
             #[cfg(test)]
             Msg::Test(_) => false,
         }
@@ -599,6 +602,9 @@ impl App {
                     self.overlay = Some(Overlay::Menu(menu));
                 }
             }
+            Action::Command(name) => {
+                self.on_active(|s, cx| s.command(name, cx));
+            }
             Action::Menu {
                 title,
                 items,
@@ -671,7 +677,13 @@ impl App {
                 )),
                 None => return,
             },
-            Route::ResourcePacks(_) => return self.show(not_yet("Resource packs")),
+            Route::ResourcePacks(id) => match self.data.instance(id) {
+                Some(inst) => {
+                    let tasks = self.tasks.for_screen(self.next_id);
+                    Box::new(ResourcePacks::new(inst, &self.services, &tasks))
+                }
+                None => return,
+            },
         };
         let id = self.next_id;
         self.next_id += 1;

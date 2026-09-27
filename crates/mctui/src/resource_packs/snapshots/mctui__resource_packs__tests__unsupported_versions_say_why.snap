@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/resource_packs/tests.rs
+expression: text
+---
+
+  mctui  ›  Snapshot Test  ›  Resource packs                                               ● Steve
+
+
+
+
+
+
+
+
+                     No packs for Minecraft 25w14a
+                     ──────────────────────────────────────────────────────────
+
+                     Vanilla Tweaks doesn't make packs for snapshots or
+                     pre-releases.
+
+                     Resource packs work on instances running a release, 1.8 or
+                     newer.
+
+                     ──────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+   esc  back

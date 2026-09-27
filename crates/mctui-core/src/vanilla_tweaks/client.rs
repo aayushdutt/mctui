@@ -22,6 +22,15 @@ pub struct VanillaTweaks {
     cache_dir: PathBuf,
 }
 
+/// How far [`VanillaTweaks::apply_with`] has got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// The site is merging the picked packs into one zip.
+    Building,
+    /// The merged zip is downloading.
+    Downloading,
+}
+
 /// The build endpoint's answer. Its status is in the body, whatever the HTTP
 /// status: 200 with a link, or 400 with a message for packs it doesn't know.
 #[derive(Deserialize)]
@@ -107,10 +116,24 @@ impl VanillaTweaks {
         version: CatalogVersion,
         cart: &mut Cart,
     ) -> Result<(), Error> {
+        self.apply_with(game_dir, version, cart, |_| {}).await
+    }
+
+    /// [`apply`](Self::apply), telling `on_stage` as each network stage
+    /// starts, for progress.
+    pub async fn apply_with(
+        &self,
+        game_dir: &Path,
+        version: CatalogVersion,
+        cart: &mut Cart,
+        mut on_stage: impl FnMut(Stage),
+    ) -> Result<(), Error> {
         if cart.is_empty() {
             return unapply(game_dir, cart).await;
         }
+        on_stage(Stage::Building);
         let url = self.build(version, cart).await?;
+        on_stage(Stage::Downloading);
         let zip = Download {
             url,
             dest: super::pack_path(game_dir),

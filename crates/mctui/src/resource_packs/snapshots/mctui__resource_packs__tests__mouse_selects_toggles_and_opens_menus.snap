@@ -1,0 +1,35 @@
+---
+source: crates/mctui/src/resource_packs/tests.rs
+expression: text
+---
+
+  mctui  ›  Survival 1.21  ›  Resource packs                                                                   ● Steve
+
+    CATEGORIES                 GUI   2                                             YOUR PACK   1   ● unbuilt changes
+
+    ▸ Aesthetic                Dark UI                               ● adding      GUI
+
+    ▸ Terrain                                                  places Dark UI      Dark UI                  ● adding
+                               Transparent UI
+      Connected Textures       ──────────────────────────────
+
+    ▾ GUI               1       Add to your pack       space
+                                Open preview               o
+      ▸ Hearts
+                               ──────────────────────────────
+      Retro
+
+      Fun
+
+
+
+
+                               Transparent UI
+                               Changes all inventories and UIs to be
+                               transparent.
+                               Not with Dark UI
+
+
+                                 Preview  o                                          Build & apply  b
+
+   space  add    /  search    b  build & apply    esc  back    ?  help

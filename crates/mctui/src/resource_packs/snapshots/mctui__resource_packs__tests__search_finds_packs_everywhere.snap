@@ -1,0 +1,35 @@
+---
+source: crates/mctui/src/resource_packs/tests.rs
+expression: text
+---
+
+  mctui  ›  Survival 1.21  ›  Resource packs                                                                   ● Steve
+
+    CATEGORIES                 / elytra                               2 packs      YOUR PACK                   empty
+
+    ▸ Aesthetic                Allay Elytra  Aesthetic                             Nothing picked yet.
+
+    ▸ Terrain                  Vex Elytra  Aesthetic                               Add packs with space, then build
+                                                                                   them into one with b.
+      Connected Textures
+
+    ▸ GUI
+
+      Retro
+
+      Fun
+
+
+
+
+
+
+                               Allay Elytra  ·  Aesthetic
+                               Changes Elytra to look like Allay wings.
+                               Credit: Ninni
+                               Not with Vex Elytra
+
+
+                                 Preview  o      Video  w
+
+   ↑↓  results    ↵  done    esc  cancel

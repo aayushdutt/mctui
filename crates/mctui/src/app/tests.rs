@@ -12,6 +12,12 @@ use crate::task::Tasks;
 use crate::testing;
 use crate::theme;
 
+thread_local! {
+    /// What the app opened in a file manager or browser, on this test's
+    /// thread.
+    static OPENED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Drives a whole app in tests: keys and clicks in, frames out.
 pub(crate) struct Harness {
     pub app: App,
@@ -65,7 +71,10 @@ impl Harness {
             Rect::new(0, 0, w, h),
         );
         app.set_splash("Blazingly monospaced!");
-        app.open = |_| Ok(());
+        app.open = |target| {
+            OPENED.with_borrow_mut(|opened| opened.push(target.to_string_lossy().into_owned()));
+            Ok(())
+        };
         let mut h = Self {
             app,
             _dir: dir,
@@ -87,6 +96,15 @@ impl Harness {
     /// The mock server's address, for answers that link back to it.
     pub fn uri(&self) -> String {
         self.server.as_ref().expect("an online harness").uri()
+    }
+
+    /// The folders and pages the app opened since the last call.
+    #[expect(
+        clippy::unused_self,
+        reason = "kept per thread, which is per harness; asked of the harness"
+    )]
+    pub fn opened(&self) -> Vec<String> {
+        OPENED.with_borrow_mut(std::mem::take)
     }
 
     /// How many requests the mock server has had for `path`.
@@ -553,6 +571,7 @@ fn screenshots() {
     let light = |h: &mut Harness| h.app.theme = crate::theme::Theme::new(&theme::LIGHT, None);
     crate::accounts::tests::screenshots(&save, &light);
     crate::wizard::tests::screenshots(&save);
+    crate::resource_packs::tests::screenshots(&save);
 }
 
 // Regressions from the phase-1 review.

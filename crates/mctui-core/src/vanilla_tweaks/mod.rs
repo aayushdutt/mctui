@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 pub(crate) use cart::CART_FILE;
 pub use cart::{Cart, PackRef, PackState, Toggled};
 pub use catalog::{Catalog, Category, Pack, Warning, plain_text};
-pub use client::{VanillaTweaks, is_enabled, unapply};
+pub use client::{Stage, VanillaTweaks, is_enabled, unapply};
 pub use version::{CatalogVersion, Unsupported};
 
 use crate::net;

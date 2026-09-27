@@ -13,6 +13,7 @@ mod home;
 mod mods;
 mod msg;
 mod overlay;
+mod resource_packs;
 mod screen;
 mod services;
 mod settings;

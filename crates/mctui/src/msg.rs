@@ -8,6 +8,8 @@ pub enum Msg {
     /// The new-instance wizard's version and loader lists.
     Wizard(crate::wizard::WizardMsg),
     Mods(crate::mods::Msg),
+    /// Loading, building and saving Vanilla Tweaks packs.
+    ResourcePacks(crate::resource_packs::Msg),
     #[cfg(test)]
     Test(u32),
 }

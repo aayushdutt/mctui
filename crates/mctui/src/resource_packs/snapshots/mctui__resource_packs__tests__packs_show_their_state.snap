@@ -1,0 +1,35 @@
+---
+source: crates/mctui/src/resource_packs/tests.rs
+expression: text
+---
+
+  mctui  ›  Survival 1.21  ›  Resource packs                                                                   ● Steve
+
+    CATEGORIES                 AESTHETIC   5                                       YOUR PACK   3   ● unbuilt changes
+
+    ▸ Aesthetic         2      Alternate Block Destruction                         Aesthetic
+
+    ▸ Terrain                  Black Nether Bricks                 ○ removing      Black Nether Bricks    ○ removing
+
+      Connected Textures       Paler Pale Oak                        ● adding      Paler Pale Oak           ● adding
+
+    ▾ GUI               1      Allay Elytra                           ● built      Allay Elytra              ● built
+
+      ▸ Hearts          1      Vex Elytra             ⇄ replaces Allay Elytra      Terrain
+
+      Retro                                                                        Golden Savanna         ○ removing
+
+      Fun                                                                          Hearts
+
+                                                                                   White Hearts             ● adding
+
+
+                               Vex Elytra
+                               Changes Elytra to look like Vex wings. Credit:
+                               The_Khuzdul1
+                               Not with Allay Elytra
+
+
+                                 Preview  o      Video  w                            Build & apply  b
+
+   space  add    /  search    b  build & apply    esc  back    ?  help

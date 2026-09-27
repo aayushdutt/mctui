@@ -1,0 +1,35 @@
+---
+source: crates/mctui/src/resource_packs/tests.rs
+expression: text
+---
+
+  mctui  ›  Survival 1.21  ›  Resource packs                                                                   ● Steve
+
+    CATEGORIES                 AESTHETIC   5                                       YOUR PACK                   empty
+
+    ▸ Aesthetic                Alternate Block Destruction                         Nothing picked yet.
+
+    ▸ Terrain                  Black Nether Bricks                                 Add packs with space, then build
+                                                                                   them into one with b.
+      Connected Textures       Paler Pale Oak
+
+    ▸ GUI                      Allay Elytra
+
+      Retro                    Vex Elytra
+
+      Fun
+
+
+
+
+
+
+
+
+
+
+
+
+    ▲  Couldn't reach Vanilla Tweaks — these are the packs from your last visit.
+
+   ↵  open    /  search    r  retry    esc  back    ?  help

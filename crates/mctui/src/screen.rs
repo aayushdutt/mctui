@@ -101,6 +101,12 @@ pub trait Screen: std::fmt::Debug {
         Handled::Ignored
     }
 
+    /// Runs one of this screen's commands by name: a confirmed question's
+    /// `on_yes`, a menu entry or a palette row ([`Action::Command`]).
+    fn command(&mut self, _name: &'static str, _cx: &mut Ctx<'_>) -> Handled {
+        Handled::Ignored
+    }
+
     /// A background task this screen started reported back.
     fn handle_msg(&mut self, _msg: Msg, _cx: &mut Ctx<'_>) -> Handled {
         Handled::Ignored
