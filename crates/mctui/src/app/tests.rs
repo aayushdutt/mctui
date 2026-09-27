@@ -1,33 +1,46 @@
 //! App-level tests: whole frames (snapshots) and input end to end.
 
-use crossterm::event::{KeyEvent, KeyModifiers, MouseEvent};
+use crossterm::event::{Event as TermEvent, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use tempfile::TempDir;
 
 use super::*;
+use crate::home;
+use crate::task::Tasks;
 use crate::testing;
 use crate::theme;
 
-struct Harness {
-    app: App,
+/// Drives a whole app in tests: keys and clicks in, frames out.
+pub(crate) struct Harness {
+    pub app: App,
     _dir: TempDir,
     size: (u16, u16),
+    runtime: tokio::runtime::Runtime,
+    events: tokio::sync::mpsc::UnboundedReceiver<Event>,
 }
 
 impl Harness {
-    fn new(w: u16, h: u16) -> Self {
+    pub fn new(w: u16, h: u16) -> Self {
         Self::with(w, h, |_| {})
     }
 
-    fn with(w: u16, h: u16, edit: impl FnOnce(&mut Data)) -> Self {
+    pub fn with(w: u16, h: u16, edit: impl FnOnce(&mut Data)) -> Self {
+        Self::with_notices(w, h, Vec::new(), edit)
+    }
+
+    fn with_notices(w: u16, h: u16, notices: Vec<String>, edit: impl FnOnce(&mut Data)) -> Self {
         let testing::Fixture { dir, mut data } = testing::fixture();
         edit(&mut data);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (tx, events) = tokio::sync::mpsc::unbounded_channel();
+        let tasks = Tasks::new(tx, runtime.handle().clone());
         let mut app = App::new(
             data,
-            Vec::new(),
-            Theme::new(&theme::DARK, None),
+            notices,
+            crate::theme::Terminal::default(),
+            tasks,
             Rect::new(0, 0, w, h),
         );
         app.set_splash("Blazingly monospaced!");
@@ -36,12 +49,41 @@ impl Harness {
             app,
             _dir: dir,
             size: (w, h),
+            runtime,
+            events,
         };
         h.draw();
         h
     }
 
-    fn draw(&mut self) -> Buffer {
+    pub fn data(&self) -> &Data {
+        &self.app.data
+    }
+
+    pub fn app_theme(&self) -> &'static str {
+        self.app.theme.name
+    }
+
+    /// Waits for background work to report back, then handles what arrived.
+    #[allow(dead_code)]
+    pub fn settle(&mut self) {
+        let Self {
+            runtime,
+            events,
+            app,
+            ..
+        } = self;
+        runtime.block_on(async {
+            while let Ok(Some(event)) =
+                tokio::time::timeout(std::time::Duration::from_millis(200), events.recv()).await
+            {
+                app.handle(event);
+            }
+        });
+        self.draw();
+    }
+
+    pub fn draw(&mut self) -> Buffer {
         let (w, h) = self.size;
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         let cx = self.app.cx(testing::now(), testing::tz());
@@ -53,23 +95,25 @@ impl Harness {
         terminal.backend().buffer().clone()
     }
 
-    fn text(&mut self) -> String {
+    pub fn text(&mut self) -> String {
         testing::text(&self.draw())
     }
 
-    fn press(&mut self, code: KeyCode) -> bool {
-        let redraw = self.app.handle(Event::Key(KeyEvent::from(code)));
+    pub fn press(&mut self, code: KeyCode) -> bool {
+        let redraw = self
+            .app
+            .handle(Event::Term(TermEvent::Key(KeyEvent::from(code))));
         self.draw();
         redraw
     }
 
     fn ctrl(&mut self, c: char) {
         let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
-        self.app.handle(Event::Key(key));
+        self.app.handle(Event::Term(TermEvent::Key(key)));
         self.draw();
     }
 
-    fn type_text(&mut self, s: &str) {
+    pub fn type_text(&mut self, s: &str) {
         for c in s.chars() {
             self.press(KeyCode::Char(c));
         }
@@ -82,7 +126,7 @@ impl Harness {
             row: at.y,
             modifiers: KeyModifiers::NONE,
         };
-        let redraw = self.app.handle(Event::Mouse(event));
+        let redraw = self.app.handle(Event::Term(TermEvent::Mouse(event)));
         self.draw();
         redraw
     }
@@ -120,7 +164,7 @@ impl Harness {
             .any(|h| h.label == label)
     }
 
-    fn banner(&self) -> Option<&str> {
+    pub fn banner(&self) -> Option<&str> {
         self.app.banner.as_ref().map(|(b, _)| b.text.as_str())
     }
 }
@@ -376,20 +420,8 @@ fn every_documented_key_does_something() {
 
 #[test]
 fn startup_notices_show_until_a_key() {
-    let testing::Fixture { dir, data } = testing::fixture();
     let notice = "Couldn't read the instance in “Broken”: bad JSON".to_owned();
-    let mut app = App::new(
-        data,
-        vec![notice],
-        Theme::new(&theme::DARK, None),
-        Rect::new(0, 0, 80, 24),
-    );
-    app.open = |_| Ok(());
-    let mut h = Harness {
-        app,
-        _dir: dir,
-        size: (80, 24),
-    };
+    let mut h = Harness::with_notices(80, 24, vec![notice], |_| {});
     assert!(h.text().contains("press any key to dismiss"));
     h.press(KeyCode::Down);
     assert!(!h.text().contains("press any key"));
@@ -469,8 +501,14 @@ fn screenshots() {
         &mut Harness::with(100, 30, |d| d.instances.clear()),
     );
     let mut light = Harness::new(100, 30);
-    light.app.theme = Theme::new(&theme::LIGHT, None);
+    light.app.theme = crate::theme::Theme::new(&theme::LIGHT, None);
     save("home-light", &mut light);
+
+    let mut settings = Harness::new(100, 30);
+    settings.press(KeyCode::Char('s'));
+    save("settings", &mut settings);
+    settings.press(KeyCode::Down);
+    save("settings-toggle", &mut settings);
 }
 
 // Regressions from the phase-1 review.
@@ -487,7 +525,7 @@ fn a_reload_keeps_the_selected_instance() {
         ..Default::default()
     };
     h.app.data.store.create(draft).unwrap();
-    h.app.handle(Event::FocusGained);
+    h.app.handle(Event::Term(TermEvent::FocusGained));
     assert_eq!(h.selected(), Some("Snapshot Test"));
 }
 
@@ -502,14 +540,14 @@ fn a_click_hits_what_was_on_screen_even_if_the_list_moved() {
     };
     h.app.data.store.create(draft).unwrap();
     // Focus and the click arrive together, before the next frame.
-    h.app.handle(Event::FocusGained);
+    h.app.handle(Event::Term(TermEvent::FocusGained));
     let click = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: at.x,
         row: at.y,
         modifiers: KeyModifiers::NONE,
     };
-    h.app.handle(Event::Mouse(click));
+    h.app.handle(Event::Term(TermEvent::Mouse(click)));
     assert_eq!(h.selected(), Some("Snapshot Test"));
 }
 

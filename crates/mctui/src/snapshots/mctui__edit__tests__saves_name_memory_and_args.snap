@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/edit.rs
+expression: h.text()
+---
+
+  mctui  ›  Survival 1.21  ›  Edit                                                         ● Steve
+
+    Name                   Survival 1.21
+
+
+    PERFORMANCE
+
+    Memory                 Default
+
+    Java                   Automatic
+
+    JVM arguments          None
+
+                           Only the name changes; the folder stays put.
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ↵  save    tab  next    esc  back

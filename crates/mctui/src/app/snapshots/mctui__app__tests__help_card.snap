@@ -19,9 +19,9 @@ expression: h.text()
      n             new instance           esc           clear filter · back
      e             edit instance          ?             help
      d             delete instance        q             quit
-     f             open folder            double-click  play                 o
+     f             open folder            double-click  play
                                           right-click   actions              o
-
+                                                                             o
       esc  close
 
      ──────────────────────────────────────────────────────────────────────

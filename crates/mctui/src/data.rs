@@ -7,6 +7,7 @@ use mctui_core::paths::DataDir;
 
 #[derive(Debug)]
 pub struct Data {
+    pub dir: DataDir,
     pub config: Config,
     pub accounts: Accounts,
     pub store: InstanceStore,
@@ -25,6 +26,7 @@ impl Data {
         let store = InstanceStore::new(dir);
         notices.extend(accounts.notice);
         let mut data = Self {
+            dir: dir.clone(),
             store,
             config: config.value,
             accounts: accounts.value,

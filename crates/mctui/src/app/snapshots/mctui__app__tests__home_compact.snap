@@ -3,9 +3,9 @@ source: crates/mctui/src/app/tests.rs
 expression: "Harness::new(60, 24).text()"
 ---
 
-  mctui  ›  Instances                              ● Steve
+  mctui                                            ● Steve
 
-    Instances                                          3
+    INSTANCES   3
 
     Survival 1.21                                 2h ago
 

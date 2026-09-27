@@ -3,12 +3,12 @@ source: crates/mctui/src/app/tests.rs
 expression: h.text()
 ---
 
-  mctui  ›  Instances                                                  ● Steve
+  mctui                                                                ● Steve
 
-    Instance  Command palette                                         ● Ready
+    INSTANCE  Command palette                                         ● Ready
               ────────────────────────────────────────────────────  .10
     Survival
-               : Jump to an instance or run a command…               o
+               : Jump to an instance or run a command…
     Snapshot
                  Play                                           ↵   cks 0
     Creative     Play offline                                   o
@@ -19,9 +19,9 @@ expression: h.text()
                  Open folder                                    f
                  New instance                                   n
 
-               ↑↓  move    ↵  run    esc  close                         2h ago
-                                                                        3d ago
-              ────────────────────────────────────────────────────
+               ↑↓  move    ↵  run    esc  close
+                                                                        2h ago
+              ────────────────────────────────────────────────────      3d ago
 
 
    ↵  play    o  offline    n  new    /  search    :  commands    ?  help

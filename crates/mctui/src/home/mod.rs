@@ -12,14 +12,15 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use mctui_core::facets::{self, ModJar, ResourcePack, World};
 use mctui_core::instance::Instance;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 
-use crate::app::{Action, Banner};
+use crate::app::{Action, Banner, Route};
 use crate::data::Data;
 use crate::fuzzy;
 use crate::overlay::{HelpGroup, MenuItem, PaletteItem};
-use crate::ui::Hint;
+use crate::screen::{Ctx, Handled, Mouse, Screen};
 use crate::ui::input::TextInput;
+use crate::ui::{self, Canvas, Hint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -77,22 +78,6 @@ pub enum Target {
     Preview,
     /// The empty screen's "create your first instance".
     Create,
-}
-
-/// A mouse gesture on one of home's targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mouse {
-    Click { double: bool },
-    RightClick(Position),
-    Scroll { down: bool },
-}
-
-/// How home dealt with an input.
-#[derive(Debug)]
-pub enum Handled {
-    Ignored,
-    Consumed,
-    Action(Action),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,10 +150,12 @@ pub struct Home {
     body: Rect,
     /// The instance whose game is running.
     playing: Option<String>,
+    /// The empty screen's wink, picked once per run.
+    splash: &'static str,
 }
 
 impl Home {
-    pub fn new(data: &Data) -> Self {
+    pub fn new(data: &Data, splash: &'static str) -> Self {
         let mut home = Self {
             rows: Vec::new(),
             selected: 0,
@@ -179,9 +166,15 @@ impl Home {
             facets: HashMap::new(),
             body: Rect::default(),
             playing: None,
+            splash,
         };
         home.refresh(data);
         home
+    }
+
+    #[cfg(test)]
+    pub fn set_splash(&mut self, splash: &'static str) {
+        self.splash = splash;
     }
 
     /// Instances changed on disk: drop cached facts and rebuild the list.
@@ -299,7 +292,7 @@ impl Home {
         isize::try_from(self.visible_rows()).unwrap_or(1)
     }
 
-    pub fn handle_paste(&mut self, text: &str, data: &Data) -> bool {
+    fn on_paste(&mut self, text: &str, data: &Data) -> bool {
         match &mut self.filter {
             Filter::Editing(input) => {
                 if input.insert(text) {
@@ -311,7 +304,7 @@ impl Home {
         }
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent, data: &Data) -> Handled {
+    fn on_key(&mut self, key: KeyEvent, data: &Data) -> Handled {
         if matches!(self.filter, Filter::Editing(_)) {
             return self.filter_key(key, data);
         }
@@ -347,11 +340,11 @@ impl Home {
         let action = match key.code {
             KeyCode::Enter => match self.selected_instance(data) {
                 Some(inst) => Action::launch(inst, false),
-                None => Action::NewInstance,
+                None => Action::Open(Route::NewInstance),
             },
-            KeyCode::Char('n') => Action::NewInstance,
-            KeyCode::Char('s') => Action::Settings,
-            KeyCode::Char('a') => Action::Accounts,
+            KeyCode::Char('n') => Action::Open(Route::NewInstance),
+            KeyCode::Char('s') => Action::Open(Route::Settings),
+            KeyCode::Char('a') => Action::Open(Route::Accounts),
             KeyCode::Char('q') => Action::Quit,
             KeyCode::Char('/') => {
                 if !data.instances.is_empty() {
@@ -454,7 +447,7 @@ impl Home {
         }
     }
 
-    pub fn handle_mouse(&mut self, target: &Target, mouse: Mouse, data: &Data) -> Handled {
+    fn on_mouse(&mut self, target: &Target, mouse: Mouse, data: &Data) -> Handled {
         if !matches!(mouse, Mouse::Scroll { .. }) {
             self.commit_filter(data);
         }
@@ -471,7 +464,7 @@ impl Home {
                 if double {
                     return match self.selected_instance(data) {
                         Some(inst) => Handled::Action(Action::launch(inst, false)),
-                        None => Handled::Action(Action::NewInstance),
+                        None => Handled::Action(Action::Open(Route::NewInstance)),
                     };
                 }
                 Handled::Consumed
@@ -506,7 +499,9 @@ impl Home {
             (Target::Play, Mouse::Click { .. }) => self.launch(data, false),
             (Target::PlayOffline, Mouse::Click { .. }) => self.launch(data, true),
             (Target::Preview, Mouse::Click { .. }) => self.activate_tab(data),
-            (Target::Create, Mouse::Click { .. }) => Handled::Action(Action::NewInstance),
+            (Target::Create, Mouse::Click { .. }) => {
+                Handled::Action(Action::Open(Route::NewInstance))
+            }
             _ => Handled::Ignored,
         }
     }
@@ -537,7 +532,7 @@ impl Home {
         Handled::Action(match self.tab {
             Tab::Overview => Action::launch(inst, false),
             Tab::Mods => mods(inst),
-            Tab::ResourcePacks => Action::ResourcePacks(inst.id.clone()),
+            Tab::ResourcePacks => Action::Open(Route::ResourcePacks(inst.id.clone())),
         })
     }
 
@@ -608,7 +603,7 @@ impl Home {
         }
     }
 
-    pub fn help() -> Vec<HelpGroup> {
+    fn help_groups() -> Vec<HelpGroup> {
         vec![
             HelpGroup {
                 title: "Navigate",
@@ -678,9 +673,13 @@ impl Home {
                 verb(
                     "Resource packs",
                     "p",
-                    Action::ResourcePacks(inst.id.clone()),
+                    Action::Open(Route::ResourcePacks(inst.id.clone())),
                 ),
-                verb("Edit instance", "e", Action::EditInstance(inst.id.clone())),
+                verb(
+                    "Edit instance",
+                    "e",
+                    Action::Open(Route::EditInstance(inst.id.clone())),
+                ),
                 verb(
                     "Delete instance",
                     "d",
@@ -690,9 +689,9 @@ impl Home {
             ]);
         }
         items.extend([
-            verb("New instance", "n", Action::NewInstance),
-            verb("Settings", "s", Action::Settings),
-            verb("Accounts", "a", Action::Accounts),
+            verb("New instance", "n", Action::Open(Route::NewInstance)),
+            verb("Settings", "s", Action::Open(Route::Settings)),
+            verb("Accounts", "a", Action::Open(Route::Accounts)),
         ]);
         items.extend(data.instances.iter().map(|inst| PaletteItem {
             label: inst.name.clone(),
@@ -732,15 +731,23 @@ impl Home {
             item("Play offline", 'o', Action::launch(inst, true)),
         ];
         if inst.loader.supports_mod_browser() {
-            items.push(item("Mods", 'm', Action::Mods(inst.id.clone())));
+            items.push(item(
+                "Mods",
+                'm',
+                Action::Open(Route::Mods(inst.id.clone())),
+            ));
         }
         items.extend([
             item(
                 "Resource packs",
                 'p',
-                Action::ResourcePacks(inst.id.clone()),
+                Action::Open(Route::ResourcePacks(inst.id.clone())),
             ),
-            item("Edit", 'e', Action::EditInstance(inst.id.clone())),
+            item(
+                "Edit",
+                'e',
+                Action::Open(Route::EditInstance(inst.id.clone())),
+            ),
             item("Open folder", 'f', Action::OpenFolder(inst.id.clone())),
             MenuItem {
                 danger: true,
@@ -751,13 +758,58 @@ impl Home {
     }
 }
 
+impl Screen for Home {
+    fn crumbs(&self, _data: &Data) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn hints(&self, data: &Data) -> Vec<Hint> {
+        Home::hints(self, data)
+    }
+
+    fn help(&self) -> (&'static str, Vec<HelpGroup>) {
+        ("Home", Self::help_groups())
+    }
+
+    fn palette(&self, data: &Data) -> Vec<PaletteItem> {
+        self.palette_items(data)
+    }
+
+    fn captures_text(&self) -> bool {
+        Home::captures_text(self)
+    }
+
+    fn set_body(&mut self, body: Rect) {
+        Home::set_body(self, body);
+    }
+
+    fn handle_key(&mut self, key: KeyEvent, cx: &mut Ctx<'_>) -> Handled {
+        self.on_key(key, cx.data)
+    }
+
+    fn handle_mouse(&mut self, target: &ui::Target, mouse: Mouse, cx: &mut Ctx<'_>) -> Handled {
+        match target {
+            ui::Target::Home(target) => self.on_mouse(target, mouse, cx.data),
+            _ => Handled::Ignored,
+        }
+    }
+
+    fn handle_paste(&mut self, text: &str, cx: &mut Ctx<'_>) -> Handled {
+        Handled::changed(self.on_paste(text, cx.data))
+    }
+
+    fn reload(&mut self, data: &Data) {
+        Home::reload(self, data);
+    }
+
+    fn render(&self, cv: &mut Canvas<'_>, data: &Data) {
+        self.draw(cv, data);
+    }
+}
+
 /// A movement key did something only if the selection moved.
 fn moved(changed: bool) -> Handled {
-    if changed {
-        Handled::Consumed
-    } else {
-        Handled::Ignored
-    }
+    Handled::changed(changed)
 }
 
 /// The letter keys that act on the selected instance.
@@ -766,8 +818,8 @@ fn instance_action(inst: &Instance, code: KeyCode) -> Option<Action> {
     Some(match code {
         KeyCode::Char('o') => Action::launch(inst, true),
         KeyCode::Char('m') => mods(inst),
-        KeyCode::Char('p') => Action::ResourcePacks(id()),
-        KeyCode::Char('e') => Action::EditInstance(id()),
+        KeyCode::Char('p') => Action::Open(Route::ResourcePacks(id())),
+        KeyCode::Char('e') => Action::Open(Route::EditInstance(id())),
         KeyCode::Char('d') | KeyCode::Delete => Action::ConfirmDelete(id()),
         KeyCode::Char('f') => Action::OpenFolder(id()),
         KeyCode::Char('x') => Action::ActionsMenu {
@@ -781,7 +833,7 @@ fn instance_action(inst: &Instance, code: KeyCode) -> Option<Action> {
 /// The mods screen, or why it isn't available for this instance.
 fn mods(inst: &Instance) -> Action {
     if inst.loader.supports_mod_browser() {
-        Action::Mods(inst.id.clone())
+        Action::Open(Route::Mods(inst.id.clone()))
     } else {
         Action::Banner(Banner::info(
             "The mods browser works with Fabric instances.",

@@ -3,7 +3,7 @@ source: crates/mctui/src/app/tests.rs
 expression: h.text()
 ---
 
-  mctui  ›  Instances                                                  ● Steve
+  mctui                                                                ● Steve
 
 
 
@@ -16,7 +16,7 @@ expression: h.text()
                              Blazingly monospaced!
 
 
-                         Create your first instance   ↵
+                          Create your first instance  ↵
 
 
 

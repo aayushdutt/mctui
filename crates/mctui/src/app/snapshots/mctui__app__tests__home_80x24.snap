@@ -3,12 +3,12 @@ source: crates/mctui/src/app/tests.rs
 expression: "Harness::new(80, 24).text()"
 ---
 
-  mctui  ›  Instances                                                  ● Steve
+  mctui                                                                ● Steve
 
-    Instances                3      Survival 1.21                     ● Ready
+    INSTANCES   3                   Survival 1.21                     ● Ready
                                     Minecraft 1.21.4  ·  Fabric 0.16.10
     Survival 1.21       2h ago
-                                      ▶ Play   ↵      Play offline   o
+                                      ▶ Play  ↵      Play offline  o
     Snapshot Test          new
                                      Overview   Mods 3   Resource packs 0
     Creative Build      3d ago
@@ -18,10 +18,10 @@ expression: "Harness::new(80, 24).text()"
                                     3
                                     mods
 
-                                    Worlds
+                                    WORLDS   2
+
                                     New World                           2h ago
                                     Hardcore Run                        3d ago
-
 
 
    ↵  play    o  offline    n  new    /  search    :  commands    ?  help

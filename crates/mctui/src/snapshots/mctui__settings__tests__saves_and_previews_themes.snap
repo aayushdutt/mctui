@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/settings.rs
+expression: h.text()
+---
+
+  mctui  ›  Settings                                                                       ● Steve
+
+    APPEARANCE
+
+    Theme                  ‹ auto ›
+
+
+    GAME
+
+    Show snapshots         ○ Off
+
+    Java                   Automatic
+
+    JVM arguments          -Xmx2G -Xms512M
+
+
+    ACCOUNT
+
+    Microsoft client ID    mctui's own
+
+                           ←→ previews each theme. auto follows your terminal's
+                           light or dark background.
+
+
+
+
+
+   ↵  save    ←→  change    tab  next    esc  back

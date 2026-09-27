@@ -17,7 +17,24 @@ pub enum Target {
     /// Everything outside an open overlay's card. Clicking it closes the overlay.
     Backdrop,
     Overlay(overlay::Target),
+    /// A form field, by position (one form is on screen at a time).
+    Field(usize),
+    /// A row of a [`super::list::List`], by the list's id and the row's key.
+    Row {
+        list: &'static str,
+        key: String,
+    },
     Home(home::Target),
+}
+
+impl Target {
+    /// Whether this is a list row, where a double-click means "open".
+    pub fn is_row(&self) -> bool {
+        matches!(
+            self,
+            Target::Row { .. } | Target::Home(home::Target::Row(_))
+        )
+    }
 }
 
 /// The clickable regions of one frame. Later regions sit on top of earlier ones.

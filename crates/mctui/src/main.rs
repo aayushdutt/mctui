@@ -4,10 +4,15 @@
 
 mod app;
 mod data;
+mod edit;
 mod format;
 mod fuzzy;
 mod home;
+mod msg;
 mod overlay;
+mod screen;
+mod settings;
+mod task;
 mod term;
 #[cfg(test)]
 mod testing;
@@ -18,7 +23,6 @@ use std::io::IsTerminal as _;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use crossterm::event::Event;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use mctui_core::paths::DataDir;
@@ -27,8 +31,9 @@ use tokio::sync::mpsc;
 
 use crate::app::App;
 use crate::data::Data;
+use crate::task::{Event, Tasks};
 use crate::term::Tui;
-use crate::theme::{Terminal, Theme};
+use crate::theme::Terminal;
 
 /// Never draw more often than this: floods of events (drags, progress) still
 /// coalesce into ~60 frames a second.
@@ -56,22 +61,19 @@ fn main() -> anyhow::Result<()> {
     } else {
         Terminal::default()
     };
-    let theme = Theme::resolve(&data.config.theme, terminal);
 
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(run(data, notices, theme))
+    runtime.block_on(run(data, notices, terminal))
 }
 
-async fn run(data: Data, notices: Vec<String>, theme: Theme) -> anyhow::Result<()> {
+async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Result<()> {
     let mut tui = Tui::enter()?;
     let size = tui.size()?;
-    let mut app = App::new(
-        data,
-        notices,
-        theme,
-        Rect::new(0, 0, size.width, size.height),
-    );
-    let mut events = spawn_input_reader();
+    let (tx, mut events) = mpsc::unbounded_channel();
+    spawn_input_reader(tx.clone());
+    let tasks = Tasks::new(tx, tokio::runtime::Handle::current());
+    let area = Rect::new(0, 0, size.width, size.height);
+    let mut app = App::new(data, notices, terminal, tasks, area);
     let tz = TimeZone::system();
     let mut prof = RenderProf::from_env();
 
@@ -125,17 +127,16 @@ async fn sleep_until(deadline: Option<Instant>) {
     }
 }
 
-/// Reads terminal events on a dedicated thread; the channel closes if reading fails.
-fn spawn_input_reader() -> mpsc::UnboundedReceiver<Event> {
-    let (tx, rx) = mpsc::unbounded_channel();
+/// Reads terminal events on a dedicated thread until reading fails or the app
+/// is gone.
+fn spawn_input_reader(tx: mpsc::UnboundedSender<Event>) {
     std::thread::spawn(move || {
         while let Ok(event) = crossterm::event::read() {
-            if tx.send(event).is_err() {
+            if tx.send(Event::Term(event)).is_err() {
                 break;
             }
         }
     });
-    rx
 }
 
 /// Logs to `<data>/mctui.log` when `MCTUI_LOG` is set (e.g. `MCTUI_LOG=debug`).

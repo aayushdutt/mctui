@@ -15,16 +15,17 @@ use super::layout::{self, Layout};
 use super::{Facets, Filter, Home, Pane, Row, Tab, Target};
 use crate::data::Data;
 use crate::format;
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
+use crate::ui::widgets::{self, ButtonKind};
 use crate::ui::{self, Canvas, text};
 
 /// Each list row takes this many lines: the row and a blank line after it.
 pub const ROW_PITCH: u16 = 2;
 
 impl Home {
-    pub fn render(&self, cv: &mut Canvas<'_>, data: &Data, splash: &str) {
+    pub(super) fn draw(&self, cv: &mut Canvas<'_>, data: &Data) {
         if data.instances.is_empty() {
-            render_empty(cv, self.body, splash);
+            render_empty(cv, self.body, self.splash);
             return;
         }
         let lay = layout::layout(self.body);
@@ -58,19 +59,18 @@ impl Home {
         } else {
             format!("{shown} of {total}")
         };
-        let count = Line::styled(count, Style::new().fg(t.muted));
+        let title = Rect::new(pane.x + 2, pane.y, pane.width.saturating_sub(4), 1);
         match &self.filter {
             Filter::Editing(input) => {
                 // The title row becomes a filled search field.
-                cv.band(pane, t.surface);
-                let inset = Rect {
-                    width: pane.width.saturating_sub(2),
-                    ..pane
-                };
-                let right = cv.line_right(inset, pane.y, &count);
-                let x = pane.x + 2;
-                cv.text(x, pane.y, "/", 1, Style::new().fg(t.accent).bold());
-                let field = Rect::new(x + 2, pane.y, right.x.saturating_sub(x + 4), 1);
+                cv.band(pane, t.selection);
+                let right = cv.line_right(
+                    title,
+                    pane.y,
+                    &Line::styled(count, Style::new().fg(t.subtle)),
+                );
+                cv.text(title.x, pane.y, "/", 1, Style::new().fg(t.accent).bold());
+                let field = Rect::new(title.x + 2, pane.y, right.x.saturating_sub(title.x + 4), 1);
                 input.render(
                     cv,
                     field,
@@ -80,16 +80,16 @@ impl Home {
                 );
             }
             Filter::Applied(input) => {
-                let query = format!("“{}”  ", text::truncate(input.as_str(), 16));
-                let right = Line::from(vec![
-                    Span::styled(query, Style::new().fg(t.subtle)),
-                    count.spans[0].clone(),
-                ]);
-                cv.zone(pane, "Instances", Some(right), focused);
+                let query = text::truncate(input.as_str(), 16);
+                widgets::section(
+                    cv,
+                    title,
+                    "Instances",
+                    Some(&format!("{count}   “{query}”")),
+                    focused,
+                );
             }
-            Filter::Off => {
-                cv.zone(pane, "Instances", Some(count), focused);
-            }
+            Filter::Off => widgets::section(cv, title, "Instances", Some(&count), focused),
         }
 
         let body = layout::list_rows(lay);
@@ -145,23 +145,8 @@ impl Home {
         data: &Data,
     ) {
         let t = *cv.theme();
-        if selected {
-            cv.band(area, t.selection);
-        } else if hovered {
-            cv.band(area, t.surface);
-        }
-        let inner = Rect {
-            x: area.x + 2,
-            width: area.width.saturating_sub(4),
-            ..area
-        };
-        let name_style = if selected {
-            Style::new().fg(t.strong).bold()
-        } else if hovered {
-            Style::new().fg(t.strong)
-        } else {
-            Style::new().fg(t.text)
-        };
+        let inner = widgets::row(cv, area, selected, hovered);
+        let name_style = widgets::row_label(&t, selected, hovered);
 
         let (index, positions) = match row {
             Row::New => {
@@ -225,15 +210,18 @@ impl Home {
                 w,
                 dim,
             );
-            let label = Line::from(vec![
-                Span::styled("Create instance", Style::new().bold()),
-                Span::raw("  ↵"),
-            ]);
-            button(cv, x, area.y + 3, &label, true, Target::Create);
+            let target = ui::Target::Home(Target::Create);
+            widgets::button(
+                cv,
+                x,
+                area.y + 3,
+                "Create instance",
+                Some("↵"),
+                ButtonKind::Primary,
+                target,
+            );
             return;
         };
-        let focused = self.focus == Pane::Detail;
-
         // Title, with its state chip flush right.
         let (status, status_bg) = self.status(&t, inst);
         let status_w = status.width() as u16 + 2;
@@ -244,15 +232,9 @@ impl Home {
             status_bg,
             status_w,
         );
-        let title_fg = if focused { t.accent } else { t.strong };
         let room = chip.x.saturating_sub(x + 2);
-        cv.text(
-            x,
-            area.y,
-            &text::truncate(&inst.name, usize::from(room)),
-            room,
-            Style::new().fg(title_fg).bold(),
-        );
+        let name = text::truncate(&inst.name, usize::from(room));
+        cv.text(x, area.y, &name, room, Style::new().fg(t.strong).bold());
         let identity = format!("Minecraft {}  ·  {}", inst.version, loader_label(inst));
         cv.text(
             x,
@@ -274,61 +256,47 @@ impl Home {
     fn actions(&self, cv: &mut Canvas<'_>, x: u16, y: u16, inst: &Instance, data: &Data) {
         let playing = self.playing.as_deref() == Some(inst.id.as_str());
         let play = if playing {
-            "View game"
+            "▶ View game"
         } else if data.accounts.active().is_none() {
-            "Sign in & play"
+            "▶ Sign in & play"
         } else {
-            "Play"
+            "▶ Play"
         };
-        let label = Line::from(vec![
-            Span::styled(format!("▶ {play}"), Style::new().bold()),
-            Span::raw("   ↵"),
-        ]);
-        let end = button(cv, x, y, &label, true, Target::Play).right();
+        let target = ui::Target::Home(Target::Play);
+        let end = widgets::button(cv, x, y, play, Some("↵"), ButtonKind::Primary, target).right();
         if !playing {
-            let label = Line::from(vec![Span::raw("Play offline"), Span::raw("   o")]);
-            button(cv, end + 2, y, &label, false, Target::PlayOffline);
+            let target = ui::Target::Home(Target::PlayOffline);
+            widgets::button(
+                cv,
+                end + 2,
+                y,
+                "Play offline",
+                Some("o"),
+                ButtonKind::Secondary,
+                target,
+            );
         }
     }
 
-    /// Tab chips: "Overview", "Mods 3", "Resource packs 0". The active one is
-    /// filled — with the accent tint while the pane has focus.
+    /// Tab chips: "Overview", "Mods 3", "Resource packs 0".
     fn tabs(&self, cv: &mut Canvas<'_>, x: u16, y: u16, w: u16, inst: &Instance) {
-        let t = *cv.theme();
         let facets = self.facets.get(&inst.id);
-        let mut cx = x;
-        for tab in Tab::ALL {
-            let room = (x + w).saturating_sub(cx);
-            if room < 4 {
-                break;
-            }
-            let target = ui::Target::Home(Target::Tab(tab));
-            let active = tab == self.tab;
-            let (fg, bg) = match (active, self.focus == Pane::Detail, cv.hovered(&target)) {
-                (true, true, _) => (t.strong, t.selection),
-                (true, false, _) => (t.strong, t.surface),
-                (false, _, true) => (t.text, t.surface),
-                (false, _, false) => (t.dim, Color::Reset),
-            };
-            let label = if active {
-                Style::new().fg(fg).bold()
-            } else {
-                Style::new().fg(fg)
-            };
-            let mut spans = vec![Span::styled(tab.title(), label)];
-            let count = match tab {
-                Tab::Overview => None,
-                Tab::Mods => Some(facets.map_or(0, |f| f.mods.len())),
-                Tab::ResourcePacks => Some(facets.map_or(0, |f| f.packs.len())),
-            };
-            if let Some(n) = count {
-                let fg = if active { t.subtle } else { t.muted };
-                spans.push(Span::styled(format!(" {n}"), Style::new().fg(fg)));
-            }
-            let chip = cv.pill(cx, y, &Line::from(spans), bg, room);
-            cv.click(chip, target);
-            cx = chip.right() + 1;
-        }
+        let tabs: Vec<(&str, Option<usize>)> = Tab::ALL
+            .iter()
+            .map(|tab| {
+                let count = match tab {
+                    Tab::Overview => None,
+                    Tab::Mods => Some(facets.map_or(0, |f| f.mods.len())),
+                    Tab::ResourcePacks => Some(facets.map_or(0, |f| f.packs.len())),
+                };
+                (tab.title(), count)
+            })
+            .collect();
+        let active = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
+        let focused = self.focus == Pane::Detail;
+        widgets::tabs(cv, Rect::new(x, y, w, 1), &tabs, active, focused, |i| {
+            ui::Target::Home(Target::Tab(Tab::ALL[i]))
+        });
     }
 
     fn tab_body(&self, cv: &mut Canvas<'_>, area: Rect, inst: &Instance) {
@@ -387,38 +355,8 @@ impl Home {
     }
 }
 
-/// A clickable button: `primary` ones are filled with the accent, others sit on
-/// a quiet surface. Brightens under the pointer. Returns its area.
-fn button(
-    cv: &mut Canvas<'_>,
-    x: u16,
-    y: u16,
-    label: &Line<'_>,
-    primary: bool,
-    target: Target,
-) -> Rect {
-    let t = *cv.theme();
-    let target = ui::Target::Home(target);
-    let hovered = cv.hovered(&target);
-    let (bg, fg) = match (primary, hovered) {
-        (true, false) => (t.accent, theme::on_color(t.accent)),
-        (true, true) => (t.accent_hi, theme::on_color(t.accent_hi)),
-        (false, false) => (t.surface, t.text),
-        (false, true) => (t.surface_hi, t.strong),
-    };
-    // A cell wider than a chip on each side: buttons should look pressable.
-    let mut spans = vec![Span::raw(" ")];
-    spans.extend(label.spans.iter().cloned());
-    spans.push(Span::raw(" "));
-    let line = Line::from(spans).patch_style(Style::new().fg(fg));
-    let area = cv.pill(x, y, &line, bg, 48);
-    cv.click(area, target);
-    area
-}
-
 /// The overview: a row of stat tiles, then recent worlds.
 fn overview(cv: &mut Canvas<'_>, area: Rect, inst: &Instance, facets: Option<&Facets>) {
-    const MIN_TILE: u16 = 13;
     let t = *cv.theme();
     let (now, tz) = (cv.cx.now, cv.cx.tz.clone());
     let worlds = facets.map_or(&[][..], |f| &f.worlds[..]);
@@ -438,34 +376,20 @@ fn overview(cv: &mut Canvas<'_>, area: Rect, inst: &Instance, facets: Option<&Fa
         stats.push((mods.to_string(), if mods == 1 { "mod" } else { "mods" }));
     }
 
-    // Tiles share the width, and wrap into rows when the pane is narrow.
-    let per_row = (area.width / MIN_TILE).clamp(1, stats.len() as u16);
-    let tile_w = area.width / per_row;
-    let mut y = area.y;
-    for chunk in stats.chunks(usize::from(per_row)) {
-        if y + 1 >= area.bottom() {
-            return;
-        }
-        for (i, (value, label)) in chunk.iter().enumerate() {
-            let tx = area.x + i as u16 * tile_w;
-            let w = tile_w.saturating_sub(1);
-            cv.text(tx, y, value, w, Style::new().fg(t.strong).bold());
-            cv.text(tx, y + 1, label, w, Style::new().fg(t.muted));
-        }
-        y += 3;
-    }
+    let mut y = area.y + widgets::stats(cv, area, &stats) + 1;
 
     if worlds.is_empty() || y + 1 >= area.bottom() {
         return;
     }
-    cv.text(
-        area.x,
-        y,
+    let count = worlds.len().to_string();
+    widgets::section(
+        cv,
+        Rect::new(area.x, y, area.width, 1),
         "Worlds",
-        area.width,
-        Style::new().fg(t.subtle).bold(),
+        Some(&count),
+        false,
     );
-    y += 1;
+    y += 2;
     let room = usize::from(area.bottom().saturating_sub(y));
     let (shown, rest) = if worlds.len() > room {
         (
@@ -593,17 +517,17 @@ fn render_empty(cv: &mut Canvas<'_>, body: Rect, splash: &str) {
             *style,
         );
     }
-    let label = Line::from(vec![
-        Span::styled("Create your first instance", Style::new().bold()),
-        Span::raw("   ↵"),
-    ]);
-    // The button pads its label by 2 cells each side.
-    button(
+    // " Create your first instance  ↵ ": the label, the key, and padding.
+    let label = "Create your first instance";
+    let w = text::width(label) + 5;
+    let target = ui::Target::Home(Target::Create);
+    widgets::button(
         cv,
-        center(label.width() + 4),
+        center(w),
         top + 5,
-        &label,
-        true,
-        Target::Create,
+        label,
+        Some("↵"),
+        ButtonKind::Primary,
+        target,
     );
 }

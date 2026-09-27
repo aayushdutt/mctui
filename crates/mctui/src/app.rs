@@ -5,7 +5,8 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use mctui_core::account::AccountKind;
 use mctui_core::facets;
@@ -16,10 +17,14 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::data::Data;
+use crate::edit::EditInstance;
 use crate::format;
-use crate::home::{self, Home};
-use crate::overlay::{Confirm, Help, Menu, Outcome, Overlay, Palette};
-use crate::theme::Theme;
+use crate::home::Home;
+use crate::overlay::{Confirm, Help, Menu, Outcome, Overlay, Palette, PaletteItem};
+use crate::screen::{Ctx, Handled, Mouse, Screen, ScreenId};
+use crate::settings::Settings;
+use crate::task::{Event, Tasks};
+use crate::theme::{Terminal, Theme};
 use crate::ui::{self, Canvas, Cx, Hits, Target, text};
 
 /// How long a banner stays up.
@@ -27,26 +32,38 @@ const BANNER_TTL: Duration = Duration::from_secs(4);
 /// Two clicks on the same spot within this are a double-click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 
-/// Something only the app can do, asked for by a screen, overlay or click.
+/// A screen to open.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Action {
-    Quit,
-    Banner(Banner),
-    Launch {
-        id: String,
-        offline: bool,
-    },
+pub enum Route {
     NewInstance,
     Settings,
     Accounts,
     Mods(String),
     ResourcePacks(String),
     EditInstance(String),
+    Launch { id: String, offline: bool },
+}
+
+/// Something only the app can do, asked for by a screen, overlay or click.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    Quit,
+    Banner(Banner),
+    Open(Route),
+    /// Close the top screen.
+    Close,
+    /// Switch themes (settings previews them live).
+    SetTheme(String),
+    /// Instances changed on disk: rescan and refresh every screen.
+    Reload,
+    /// Ask first; run `on_yes` if confirmed.
+    Confirm(Box<Question>),
+    Many(Vec<Action>),
     OpenFolder(String),
     /// Ask before deleting.
     ConfirmDelete(String),
     Delete(String),
-    /// Jump to an instance.
+    /// Jump to an instance on home.
     Select(String),
     ActionsMenu {
         id: String,
@@ -56,11 +73,22 @@ pub enum Action {
 
 impl Action {
     pub fn launch(inst: &Instance, offline: bool) -> Self {
-        Self::Launch {
+        Self::Open(Route::Launch {
             id: inst.id.clone(),
             offline,
-        }
+        })
     }
+}
+
+/// A yes/no question for [`Action::Confirm`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Question {
+    pub title: String,
+    pub message: String,
+    pub yes: &'static str,
+    /// A caution line; makes the dialog destructive (red).
+    pub danger: Option<String>,
+    pub on_yes: Action,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,11 +141,19 @@ struct Chrome {
     footer: Rect,
 }
 
+/// Home's id: it is always at the bottom of the stack.
+const HOME: ScreenId = 0;
+
 #[derive(Debug)]
 pub struct App {
     data: Data,
+    terminal: Terminal,
     theme: Theme,
     home: Home,
+    /// Screens opened over home, top last.
+    stack: Vec<(ScreenId, Box<dyn Screen>)>,
+    next_id: ScreenId,
+    tasks: Tasks,
     overlay: Option<Overlay>,
     banner: Option<(Banner, Instant)>,
     /// Problems found at startup; they stay until the next key.
@@ -136,18 +172,28 @@ pub struct App {
     footer: Vec<ui::Hint>,
     notice_lines: Vec<String>,
     quit: bool,
-    splash: &'static str,
     /// Opens a folder in the file manager (swapped out in tests).
     open: fn(&std::path::Path) -> std::io::Result<()>,
 }
 
 impl App {
-    pub fn new(data: Data, notices: Vec<String>, theme: Theme, size: Rect) -> Self {
-        let home = Home::new(&data);
+    pub fn new(
+        data: Data,
+        notices: Vec<String>,
+        terminal: Terminal,
+        tasks: Tasks,
+        size: Rect,
+    ) -> Self {
+        let home = Home::new(&data, splash());
+        let theme = Theme::resolve(&data.config.theme, terminal);
         let mut app = Self {
             data,
+            terminal,
             theme,
             home,
+            stack: Vec::new(),
+            next_id: HOME + 1,
+            tasks,
             overlay: None,
             banner: None,
             notices,
@@ -160,7 +206,6 @@ impl App {
             footer: Vec::new(),
             notice_lines: Vec::new(),
             quit: false,
-            splash: splash(),
             open: |path| open::that_detached(path),
         };
         app.relayout();
@@ -169,7 +214,7 @@ impl App {
 
     #[cfg(test)]
     pub fn set_splash(&mut self, splash: &'static str) {
-        self.splash = splash;
+        self.home.set_splash(splash);
     }
 
     pub fn should_quit(&self) -> bool {
@@ -186,37 +231,103 @@ impl App {
         }
     }
 
+    fn active(&self) -> &dyn Screen {
+        self.stack
+            .last()
+            .map_or(&self.home as &dyn Screen, |(_, s)| s.as_ref())
+    }
+
+    fn active_id(&self) -> ScreenId {
+        self.stack.last().map_or(HOME, |(id, _)| *id)
+    }
+
+    /// Runs `f` on screen `id` (if it's still open) with a context for it.
+    fn with_screen<R>(
+        &mut self,
+        id: ScreenId,
+        f: impl FnOnce(&mut dyn Screen, &mut Ctx<'_>) -> R,
+    ) -> Option<R> {
+        let screen: &mut dyn Screen = if id == HOME {
+            &mut self.home
+        } else {
+            self.stack
+                .iter_mut()
+                .find(|(sid, _)| *sid == id)?
+                .1
+                .as_mut()
+        };
+        let tasks = self.tasks.for_screen(id);
+        let mut cx = Ctx {
+            data: &mut self.data,
+            tasks: &tasks,
+            theme: &self.theme,
+            now: Instant::now(),
+        };
+        Some(f(screen, &mut cx))
+    }
+
+    /// Runs `f` on the active screen and acts on what it says.
+    fn on_active(&mut self, f: impl FnOnce(&mut dyn Screen, &mut Ctx<'_>) -> Handled) -> bool {
+        let handled = self
+            .with_screen(self.active_id(), f)
+            .unwrap_or(Handled::Ignored);
+        self.apply(handled)
+    }
+
+    /// Acts on a screen's answer. Returns whether to redraw.
+    fn apply(&mut self, handled: Handled) -> bool {
+        match handled {
+            Handled::Ignored => false,
+            Handled::Consumed => true,
+            Handled::Action(action) => {
+                self.run(action);
+                true
+            }
+        }
+    }
+
     /// When the app next needs to wake without input.
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.banner.as_ref().map(|(_, until)| *until)
+        let banner = self.banner.as_ref().map(|(_, until)| *until);
+        let screen = self.active().next_deadline();
+        banner.into_iter().chain(screen).min()
     }
 
     /// Time passed. Returns whether to redraw.
     pub fn tick(&mut self, now: Instant) -> bool {
+        let mut redraw = false;
         if self.banner.as_ref().is_some_and(|(_, until)| *until <= now) {
             self.banner = None;
             self.relayout();
-            return true;
+            redraw = true;
         }
-        false
+        let id = self.active_id();
+        redraw |= self.with_screen(id, |s, _| s.tick(now)).unwrap_or(false);
+        redraw
     }
 
-    /// Handles one terminal event. Returns whether to redraw.
+    /// Handles one event. Returns whether to redraw.
     pub fn handle(&mut self, event: Event) -> bool {
         let redraw = match event {
-            Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
-            Event::Mouse(mouse) => self.on_mouse(mouse),
-            Event::Paste(text) => self.on_paste(&text),
-            Event::Resize(w, h) => {
+            Event::Msg(id, msg) => {
+                let handled = self.with_screen(id, |s, cx| s.handle_msg(msg, cx));
+                handled.is_some_and(|h| self.apply(h))
+            }
+            Event::Term(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => {
+                self.on_key(key)
+            }
+            Event::Term(TermEvent::Mouse(mouse)) => self.on_mouse(mouse),
+            Event::Term(TermEvent::Paste(text)) => self.on_paste(&text),
+            Event::Term(TermEvent::Resize(w, h)) => {
                 self.size = Rect::new(0, 0, w, h);
                 true
             }
-            Event::FocusGained => {
+            Event::Term(TermEvent::FocusGained) => {
                 // Pick up instances added or edited while we were away.
                 self.reload();
                 true
             }
-            Event::Key(_) | Event::FocusLost => false,
+            Event::Term(TermEvent::Key(_) | TermEvent::FocusLost) => false,
         };
         if redraw {
             self.relayout();
@@ -238,33 +349,52 @@ impl App {
         let dismissed = !self.notices.is_empty();
         self.notices.clear();
 
-        if !self.home.captures_text()
-            && !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        if plain && !self.active().captures_text() {
             match key.code {
                 KeyCode::Char('?') => {
-                    self.overlay = Some(Overlay::Help(Help::new("Home", Home::help())));
+                    let (title, groups) = self.active().help();
+                    self.overlay = Some(Overlay::Help(Help::new(title, groups)));
                     return true;
                 }
                 KeyCode::Char(':') => {
-                    self.overlay = Some(Overlay::Palette(Palette::new(
-                        self.home.palette_items(&self.data),
-                    )));
+                    self.overlay = Some(Overlay::Palette(Palette::new(self.palette_items())));
                     return true;
                 }
                 _ => {}
             }
         }
-        match self.home.handle_key(key, &self.data) {
-            home::Handled::Ignored => dismissed,
-            home::Handled::Consumed => true,
-            home::Handled::Action(action) => {
-                self.run(action);
-                true
-            }
+        if self.on_active(|s, cx| s.handle_key(key, cx)) {
+            return true;
         }
+        // Unhandled esc on a screen over home goes back.
+        if key.code == KeyCode::Esc && !self.stack.is_empty() {
+            self.run(Action::Close);
+            return true;
+        }
+        dismissed
+    }
+
+    /// The `:` palette: the screen's commands, then the app's.
+    fn palette_items(&self) -> Vec<PaletteItem> {
+        let mut items = self.active().palette(&self.data);
+        let verb = |label: &str, key, action| PaletteItem {
+            label: label.to_owned(),
+            key,
+            jump: false,
+            action,
+        };
+        if !self.stack.is_empty() {
+            items.push(verb(
+                "Home",
+                Some("esc"),
+                Action::Many(vec![Action::Close; self.stack.len()]),
+            ));
+        }
+        items.push(verb("Quit mctui", None, Action::Quit));
+        items
     }
 
     fn on_paste(&mut self, text: &str) -> bool {
@@ -273,7 +403,7 @@ impl App {
                 overlay.handle_paste(text);
                 true
             }
-            None => self.home.handle_paste(text, &self.data),
+            None => self.on_active(|s, cx| s.handle_paste(text, cx)),
         }
     }
 
@@ -312,10 +442,10 @@ impl App {
                 let down = mouse.kind == MouseEventKind::ScrollDown;
                 match (&mut self.overlay, target) {
                     (Some(overlay), _) => overlay.scroll(down),
-                    (None, Some(Target::Home(t))) => {
-                        self.on_home_mouse(&t, home::Mouse::Scroll { down })
+                    (None, Some(target)) => {
+                        self.on_active(|s, cx| s.handle_mouse(&target, Mouse::Scroll { down }, cx))
                     }
-                    (None, _) => false,
+                    (None, None) => false,
                 }
             }
             _ => false,
@@ -346,35 +476,26 @@ impl App {
         self.notices.clear();
         // Only list rows mean something on a double-click; a button would
         // just act twice.
-        if double && !matches!(target, Target::Home(home::Target::Row(_))) {
+        if double && !target.is_row() {
             return dismissed;
         }
         let acted = match target {
             Target::Key(code) if left => {
                 // A clicked letter is a command, not something to type.
-                if matches!(code, KeyCode::Char(_)) {
+                if matches!(code, KeyCode::Char(_)) && self.stack.is_empty() {
                     self.home.commit_filter(&self.data);
                 }
                 self.on_key(KeyEvent::from(code))
             }
-            Target::Home(t) if left => self.on_home_mouse(&t, home::Mouse::Click { double }),
-            Target::Home(t) if button == MouseButton::Right => {
-                self.on_home_mouse(&t, home::Mouse::RightClick(pos))
+            target if left => {
+                self.on_active(|s, cx| s.handle_mouse(&target, Mouse::Click { double }, cx))
+            }
+            target if button == MouseButton::Right => {
+                self.on_active(|s, cx| s.handle_mouse(&target, Mouse::RightClick(pos), cx))
             }
             _ => false,
         };
         acted || dismissed
-    }
-
-    fn on_home_mouse(&mut self, target: &home::Target, mouse: home::Mouse) -> bool {
-        match self.home.handle_mouse(target, mouse, &self.data) {
-            home::Handled::Ignored => false,
-            home::Handled::Consumed => true,
-            home::Handled::Action(action) => {
-                self.run(action);
-                true
-            }
-        }
     }
 
     fn finish_overlay(&mut self, outcome: Outcome) {
@@ -389,17 +510,24 @@ impl App {
     }
 
     fn run(&mut self, action: Action) {
-        let not_yet = |what: &str| Banner::info(format!("{what} isn't in the Rust build yet."));
         match action {
             Action::Quit => self.quit = true,
             Action::Banner(banner) => self.show(banner),
-            Action::Launch { .. } => self.show(not_yet("Launching")),
-            Action::NewInstance => self.show(not_yet("Creating instances")),
-            Action::Settings => self.show(not_yet("Settings")),
-            Action::Accounts => self.show(not_yet("Signing in")),
-            Action::Mods(_) => self.show(not_yet("The mods browser")),
-            Action::ResourcePacks(_) => self.show(not_yet("Resource packs")),
-            Action::EditInstance(_) => self.show(not_yet("Editing instances")),
+            Action::Open(route) => self.open(&route),
+            Action::Close => {
+                self.stack.pop();
+            }
+            Action::SetTheme(name) => self.theme = Theme::resolve(&name, self.terminal),
+            Action::Reload => self.reload(),
+            Action::Confirm(q) => {
+                let dialog = Confirm::new(q.title, q.message, q.yes, q.on_yes);
+                let dialog = match q.danger {
+                    Some(warning) => dialog.danger(warning),
+                    None => dialog,
+                };
+                self.overlay = Some(Overlay::Confirm(dialog));
+            }
+            Action::Many(actions) => actions.into_iter().for_each(|a| self.run(a)),
             Action::OpenFolder(id) => self.open_folder(&id),
             Action::ConfirmDelete(id) => self.confirm_delete(&id),
             Action::Delete(id) => self.delete(&id),
@@ -413,6 +541,27 @@ impl App {
         }
     }
 
+    /// Opens a screen over the current one.
+    fn open(&mut self, route: &Route) {
+        let not_yet = |what: &str| Banner::info(format!("{what} isn't in the Rust build yet."));
+        let screen: Box<dyn Screen> = match route {
+            Route::Settings => Box::new(Settings::new(&self.data)),
+            Route::EditInstance(id) => match self.data.instance(id) {
+                Some(inst) => Box::new(EditInstance::new(inst)),
+                None => return,
+            },
+            Route::Launch { .. } => return self.show(not_yet("Launching")),
+            Route::NewInstance => return self.show(not_yet("Creating instances")),
+            Route::Accounts => return self.show(not_yet("Signing in")),
+            Route::Mods(_) => return self.show(not_yet("The mods browser")),
+            Route::ResourcePacks(_) => return self.show(not_yet("Resource packs")),
+        };
+        let id = self.next_id;
+        self.next_id += 1;
+        self.stack.push((id, screen));
+        self.overlay = None;
+    }
+
     fn show(&mut self, banner: Banner) {
         self.banner = Some((banner, Instant::now() + BANNER_TTL));
     }
@@ -422,6 +571,9 @@ impl App {
             self.show(Banner::warn(problem));
         }
         self.home.reload(&self.data);
+        for (_, screen) in &mut self.stack {
+            screen.reload(&self.data);
+        }
     }
 
     fn open_folder(&mut self, id: &str) {
@@ -457,14 +609,13 @@ impl App {
         } else {
             format!("Removes its folder: {}.", lost.join(" · "))
         };
-        let dialog = Confirm::new(
-            "Delete instance?",
-            format!("Delete “{}”?\n{what}", inst.name),
-            "Delete",
-            Action::Delete(id.to_owned()),
-        )
-        .danger("This cannot be undone.");
-        self.overlay = Some(Overlay::Confirm(dialog));
+        self.run(Action::Confirm(Box::new(Question {
+            title: "Delete instance?".into(),
+            message: format!("Delete “{}”?\n{what}", inst.name),
+            yes: "Delete",
+            danger: Some("This cannot be undone.".into()),
+            on_yes: Action::Delete(id.to_owned()),
+        })));
     }
 
     fn delete(&mut self, id: &str) {
@@ -483,7 +634,7 @@ impl App {
     }
 
     /// Recomputes the chrome and footer after a state change, and tells the
-    /// screen its new body.
+    /// active screen its new body.
     fn relayout(&mut self) {
         // A little air around everything: 1 row top and bottom, 2 columns each side.
         let area = self.size;
@@ -492,7 +643,7 @@ impl App {
         } else {
             area
         };
-        self.footer = self.home.hints(&self.data);
+        self.footer = self.active().hints(&self.data);
         self.notice_lines = notice_lines(&self.notices, inner.width);
         let footer_h = ui::hints_height(&self.footer, inner.width);
         let notices_h = self.notice_lines.len() as u16;
@@ -531,9 +682,11 @@ impl App {
             banner,
             footer,
         };
-        self.home.set_body(self.chrome.body);
-        // The body may have changed the footer (a detail pane that no longer fits).
-        self.footer = self.home.hints(&self.data);
+        let body = self.chrome.body;
+        let id = self.active_id();
+        self.with_screen(id, |s, _| s.set_body(body));
+        // The body may have changed the footer (a pane that no longer fits).
+        self.footer = self.active().hints(&self.data);
     }
 
     /// Draws a frame. Returns its clickable regions and where the cursor goes.
@@ -543,23 +696,30 @@ impl App {
         let chrome = self.chrome;
         let t = self.theme;
 
+        let crumbs = self.active().crumbs(&self.data);
+        let crumbs: Vec<&str> = crumbs.iter().map(String::as_str).collect();
         let account = self.account_status();
         cv.header(
             chrome.header,
-            &["Instances"],
+            &crumbs,
             Some((account, Target::Key(KeyCode::Char('a')))),
         );
-        self.home.render(&mut cv, &self.data, self.splash);
+        let screen = self.active();
+        cv.clipped(chrome.body, |cv| screen.render(cv, &self.data));
 
         let lines = &self.notice_lines;
         for (i, line) in lines.iter().enumerate() {
-            let last = i + 1 == lines.len();
-            let fg = if last { t.muted } else { t.warning };
+            let fg = if i + 1 == lines.len() {
+                t.muted
+            } else {
+                t.warning
+            };
+            let area = chrome.notices;
             cv.text(
-                chrome.notices.x,
-                chrome.notices.y + i as u16,
+                area.x,
+                area.y + i as u16,
                 line,
-                chrome.notices.width,
+                area.width,
                 Style::new().fg(fg),
             );
         }
@@ -672,4 +832,4 @@ fn splash() -> &'static str {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

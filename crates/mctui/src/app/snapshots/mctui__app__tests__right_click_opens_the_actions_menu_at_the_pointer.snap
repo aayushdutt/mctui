@@ -3,12 +3,12 @@ source: crates/mctui/src/app/tests.rs
 expression: h.text()
 ---
 
-  mctui  ›  Instances                                                  ● Steve
+  mctui                                                                ● Steve
 
-    Instances                3      Creative Build                    ● Ready
+    INSTANCES   3                   Creative Build                    ● Ready
                                     Minecraft 1.21.1  ·  Vanilla
     Survival 1.21       2h ago
-                                      ▶ Play   ↵      Play offline   o
+                                      ▶ Play  ↵      Play offline  o
     Snapshot Test          new
                                      Overview   Mods 0   Resource packs 0
 

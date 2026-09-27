@@ -99,6 +99,7 @@ pub fn fixture() -> Fixture {
 
     let instances = store.scan().expect("scan").instances;
     let data = Data {
+        dir: data_dir.clone(),
         config: Config::default(),
         accounts,
         store,

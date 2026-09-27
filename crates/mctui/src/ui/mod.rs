@@ -7,9 +7,12 @@
 //! colour. Structure comes from whitespace; emphasis from single-row tints —
 //! the selection band, chips, keycaps and buttons.
 
+pub mod form;
 pub mod hits;
 pub mod input;
+pub mod list;
 pub mod text;
+pub mod widgets;
 
 use std::borrow::Cow;
 
@@ -27,6 +30,7 @@ use crate::theme::Theme;
 
 pub const DOT: &str = "●";
 pub const CHECK: &str = "✓";
+pub const CROSS: &str = "✗";
 pub const WARN: &str = "▲";
 
 /// Read-only state a frame is drawn against.
@@ -211,42 +215,6 @@ impl<'a> Canvas<'a> {
             &text::fit(left, usize::from(row.width)),
             row.width,
         );
-    }
-
-    /// A titled region without a box: a bold title (accent when focused, muted
-    /// when not) with an optional annotation flush right, then a blank row.
-    /// Returns the body area below.
-    pub fn zone(
-        &mut self,
-        area: Rect,
-        title: &str,
-        right: Option<Line<'_>>,
-        focused: bool,
-    ) -> Rect {
-        if area.height < 2 || title.is_empty() {
-            return area;
-        }
-        let t = self.cx.theme;
-        let mut room = area.width.saturating_sub(2);
-        if let Some(right) = right {
-            let rw = right.width() as u16;
-            if rw + 4 < room {
-                room -= rw + 2;
-                let inset = Rect {
-                    width: area.width.saturating_sub(2),
-                    ..area
-                };
-                self.line_right(inset, area.y, &right);
-            }
-        }
-        let fg = if focused { t.accent } else { t.muted };
-        let title = text::truncate(title, usize::from(room));
-        self.text(area.x + 2, area.y, &title, room, Style::new().fg(fg).bold());
-        Rect {
-            y: area.y + 2,
-            height: area.height - 2,
-            ..area
-        }
     }
 
     /// The key-hint bar: each key on a keycap, its action dim beside it; wraps
