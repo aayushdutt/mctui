@@ -257,7 +257,7 @@ impl Home {
         let playing = self.playing.as_deref() == Some(inst.id.as_str());
         let play = if playing {
             "▶ View game"
-        } else if data.accounts.active().is_none() {
+        } else if crate::accounts::needs_sign_in(data) {
             "▶ Sign in & play"
         } else {
             "▶ Play"

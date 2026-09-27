@@ -12,6 +12,7 @@ repository = "https://github.com/aayushdutt/mctui"
 mctui-core = { path = "crates/mctui-core" }
 
 anyhow = "1"
+base64 = "0.23"
 bytes = "1"
 crossterm = "0.29"
 dirs = "7"
@@ -20,6 +21,7 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 futures-util = "0.3"
 insta = "1.48"
 jiff = { version = "0.2", features = ["serde"] }
+md-5 = "0.11"
 nucleo-matcher = "0.3"
 open = "5"
 ratatui = "0.30"

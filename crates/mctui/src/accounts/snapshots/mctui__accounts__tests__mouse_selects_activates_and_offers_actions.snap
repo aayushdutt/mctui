@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/accounts/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Accounts                                           Notch · offline
+
+    ACCOUNTS   3
+
+    Steve                                                       Microsoft
+
+                                                        ▲ Sign-in expired
+    jeb_
+    ──────────────────────────────                               ● Active
+
+     Play as this account       ↵
+     Remove                     d
+
+    ──────────────────────────────
+
+
+
+
+   ✓  Now playing as Notch.
+
+   ↵  switch    n  add account    o  offline profile    d  remove    esc  back
+   ?  help

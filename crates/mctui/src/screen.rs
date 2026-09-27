@@ -106,7 +106,7 @@ pub trait Screen: std::fmt::Debug {
         Handled::Ignored
     }
 
-    /// Instances changed on disk (or were edited elsewhere in the app).
+    /// Data changed elsewhere in the app: instances on disk, or accounts.
     fn reload(&mut self, _data: &Data) {}
 
     /// When the screen next needs to redraw on its own (a spinner frame).

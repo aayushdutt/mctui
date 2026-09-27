@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/accounts/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Accounts  ›  Sign in                                       ● Steve
+
+    Go to microsoft.com/link and enter this code:
+
+       F 7 K 9 Z Q 2 X      ✓ Copied
+
+      Open browser  b      Copy code  c
+
+    ⠋  Waiting for you to sign in…   15 min left
+
+
+
+
+
+
+
+
+
+
+
+
+   b  open browser    c  copy code    esc  cancel

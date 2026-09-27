@@ -11,8 +11,10 @@ publish = false
 mctui-core.workspace = true
 
 anyhow.workspace = true
+base64.workspace = true
 crossterm.workspace = true
 jiff.workspace = true
+md-5.workspace = true
 nucleo-matcher.workspace = true
 open.workspace = true
 ratatui.workspace = true
@@ -26,6 +28,7 @@ unicode-width.workspace = true
 [dev-dependencies]
 insta.workspace = true
 tempfile.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true

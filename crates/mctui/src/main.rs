@@ -2,7 +2,9 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod accounts;
 mod app;
+mod clipboard;
 mod data;
 mod edit;
 mod format;
@@ -78,6 +80,7 @@ async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Re
     let services = Services::new(Http::new()?, &data.dir);
     let area = Rect::new(0, 0, size.width, size.height);
     let mut app = App::new(data, notices, terminal, (tasks, services), area);
+    app.start();
     let tz = TimeZone::system();
     let mut prof = RenderProf::from_env();
 
@@ -96,6 +99,9 @@ async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Re
                 out = Some(hits);
             })?;
             dirty = out.is_some_and(|hits| app.set_hits(hits));
+            if let Some(text) = app.take_clipboard() {
+                clipboard::copy(&text);
+            }
             next_frame = started + FRAME;
             prof.record(started.elapsed());
         }

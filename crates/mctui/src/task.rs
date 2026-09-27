@@ -5,15 +5,6 @@
 //! the work when dropped, so a screen that closes takes its work with it, and
 //! results for screens that are gone are dropped by the app.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        unreachable_code,
-        reason = "no screen sends messages yet; the wizard is the first"
-    )
-)]
-
 use std::future::Future;
 
 use tokio::sync::mpsc::UnboundedSender;

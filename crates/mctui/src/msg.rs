@@ -3,6 +3,8 @@
 
 #[derive(Debug)]
 pub enum Msg {
+    /// Sign-in steps and session checks.
+    Accounts(crate::accounts::Msg),
     #[cfg(test)]
     Test(u32),
 }

@@ -9,14 +9,21 @@ use std::time::{Duration, SystemTime};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use mctui_core::account::{Account, AccountKind, Accounts, Secret};
+use mctui_core::auth::{Auth, Endpoints};
 use mctui_core::config::Config;
+use mctui_core::fabric::Fabric;
 use mctui_core::instance::{Instance, InstanceStore, Loader};
+use mctui_core::modrinth;
+use mctui_core::mojang::Mojang;
+use mctui_core::net::Http;
 use mctui_core::paths::DataDir;
+use mctui_core::vanilla_tweaks::VanillaTweaks;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
 use tempfile::TempDir;
 
 use crate::data::Data;
+use crate::services::Services;
 
 /// The fixed present every fixture and frame is measured against.
 pub fn now() -> Timestamp {
@@ -102,10 +109,42 @@ pub fn fixture() -> Fixture {
         dir: data_dir.clone(),
         config: Config::default(),
         accounts,
+        sessions: std::collections::HashMap::new(),
         store,
         instances,
     };
     Fixture { dir, data }
+}
+
+/// Clients that never reach the real services: sign-in talks to `base` (a
+/// mock server) and polls in milliseconds, or, without one, to a port
+/// nothing listens on.
+pub fn services(base: Option<String>, data: &DataDir) -> Services {
+    let http = Http::new().expect("http client");
+    let base = base.unwrap_or_else(|| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        format!("http://{}", listener.local_addr().expect("address"))
+    });
+    let endpoints = Endpoints {
+        device_code: format!("{base}/devicecode"),
+        token: format!("{base}/token"),
+        xbox_user: format!("{base}/user/authenticate"),
+        xsts: format!("{base}/xsts/authorize"),
+        minecraft_login: format!("{base}/authentication/login_with_xbox"),
+        minecraft_profile: format!("{base}/minecraft/profile"),
+    };
+    let mut services = Services::new(http.clone(), data);
+    services.auth =
+        Auth::with_endpoints(http.clone(), endpoints).with_poll_unit(Duration::from_millis(1));
+    services.mojang = Mojang::with_manifest_url(
+        http.clone(),
+        data,
+        format!("{base}/mc/game/version_manifest_v2.json"),
+    );
+    services.fabric = Fabric::with_meta_url(http.clone(), data, base.clone());
+    services.modrinth = modrinth::Client::with_base_url(http.clone(), base.clone());
+    services.vanilla_tweaks = VanillaTweaks::new(http, data).with_base_url(&base);
+    services
 }
 
 /// An instance folder on disk, with its `Instance`.

@@ -8,19 +8,20 @@ use crossterm::event::{
     Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
 };
-use mctui_core::account::AccountKind;
 use mctui_core::facets;
 use mctui_core::instance::Instance;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 
+use crate::accounts::{self, AccountList, Checks, OfflineProfile, SignIn};
 use crate::data::Data;
 use crate::edit::EditInstance;
 use crate::format;
 use crate::home::Home;
-use crate::overlay::{Confirm, Help, Menu, Outcome, Overlay, Palette, PaletteItem};
+use crate::msg::Msg;
+use crate::overlay::{Confirm, Help, Menu, MenuItem, Outcome, Overlay, Palette, PaletteItem};
 use crate::screen::{Ctx, Handled, Mouse, Screen, ScreenId};
 use crate::services::Services;
 use crate::settings::Settings;
@@ -39,6 +40,9 @@ pub enum Route {
     NewInstance,
     Settings,
     Accounts,
+    // Microsoft sign-in, then `then`: the launch that needed it.
+    SignIn { then: Option<Box<Self>> },
+    OfflineProfile,
     Mods(String),
     ResourcePacks(String),
     EditInstance(String),
@@ -70,6 +74,17 @@ pub enum Action {
         id: String,
         anchor: Option<Position>,
     },
+    /// A small menu of actions, at the pointer when `anchor` is given.
+    Menu {
+        title: String,
+        items: Vec<MenuItem>,
+        anchor: Option<Position>,
+    },
+    /// Change the accounts; the app saves them and checks the session.
+    Account(accounts::Change),
+    /// Put text on the clipboard.
+    Copy(String),
+    OpenUrl(String),
 }
 
 impl Action {
@@ -144,6 +159,8 @@ struct Chrome {
 
 /// Home's id: it is always at the bottom of the stack.
 const HOME: ScreenId = 0;
+/// The app's own background work (session checks) reports to this id.
+const APP: ScreenId = ScreenId::MAX;
 
 #[derive(Debug)]
 pub struct App {
@@ -174,8 +191,12 @@ pub struct App {
     footer: Vec<ui::Hint>,
     notice_lines: Vec<String>,
     quit: bool,
-    /// Opens a folder in the file manager (swapped out in tests).
-    open: fn(&std::path::Path) -> std::io::Result<()>,
+    /// Session checks the app runs for the accounts.
+    checks: Checks,
+    /// Text to put on the clipboard after the next frame.
+    clipboard: Option<String>,
+    /// Opens a folder or a web page (swapped out in tests).
+    open: fn(&std::ffi::OsStr) -> std::io::Result<()>,
 }
 
 impl App {
@@ -209,10 +230,25 @@ impl App {
             footer: Vec::new(),
             notice_lines: Vec::new(),
             quit: false,
-            open: |path| open::that_detached(path),
+            checks: Checks::default(),
+            clipboard: None,
+            open: |target| open::that_detached(target),
         };
         app.relayout();
         app
+    }
+
+    /// Starts the background work a fresh run begins with: checking the
+    /// active account's session.
+    pub fn start(&mut self) {
+        let tasks = self.tasks.for_screen(APP);
+        self.checks
+            .check_active(&mut self.data, &tasks, &self.services);
+    }
+
+    /// Text the app asked to copy, for the terminal to write after a frame.
+    pub fn take_clipboard(&mut self) -> Option<String> {
+        self.clipboard.take()
     }
 
     #[cfg(test)]
@@ -313,6 +349,7 @@ impl App {
     /// Handles one event. Returns whether to redraw.
     pub fn handle(&mut self, event: Event) -> bool {
         let redraw = match event {
+            Event::Msg(APP, msg) => self.on_app_msg(msg),
             Event::Msg(id, msg) => {
                 let handled = self.with_screen(id, |s, cx| s.handle_msg(msg, cx));
                 handled.is_some_and(|h| self.apply(h))
@@ -337,6 +374,20 @@ impl App {
             self.relayout();
         }
         redraw
+    }
+
+    /// Background work the app owns reported back.
+    fn on_app_msg(&mut self, msg: Msg) -> bool {
+        match msg {
+            Msg::Accounts(msg) => {
+                if let Some(banner) = self.checks.handle(msg, &mut self.data) {
+                    self.show(banner);
+                }
+                true
+            }
+            #[cfg(test)]
+            Msg::Test(_) => false,
+        }
     }
 
     fn on_key(&mut self, key: KeyEvent) -> bool {
@@ -542,6 +593,31 @@ impl App {
                     self.overlay = Some(Overlay::Menu(menu));
                 }
             }
+            Action::Menu {
+                title,
+                items,
+                anchor,
+            } => self.overlay = Some(Overlay::Menu(Menu::new(title, items, anchor))),
+            Action::Account(change) => {
+                let tasks = self.tasks.for_screen(APP);
+                if let Some(banner) =
+                    self.checks
+                        .apply(change, &mut self.data, &tasks, &self.services)
+                {
+                    self.show(banner);
+                }
+                for (_, screen) in &mut self.stack {
+                    screen.reload(&self.data);
+                }
+            }
+            Action::Copy(text) => self.clipboard = Some(text),
+            Action::OpenUrl(url) => {
+                if let Err(e) = (self.open)(url.as_ref()) {
+                    self.show(Banner::warn(format!(
+                        "Couldn't open your browser ({e}) — go to {url} yourself."
+                    )));
+                }
+            }
         }
     }
 
@@ -554,9 +630,21 @@ impl App {
                 Some(inst) => Box::new(EditInstance::new(inst)),
                 None => return,
             },
+            Route::Accounts => Box::new(AccountList::new(&self.data)),
+            Route::SignIn { then } => {
+                let tasks = self.tasks.for_screen(self.next_id);
+                let then = then.as_deref().cloned();
+                Box::new(SignIn::new(then, &self.data, &self.services, &tasks))
+            }
+            Route::OfflineProfile => Box::new(OfflineProfile::new()),
+            // A-8: playing online needs a sign-in that works; get one first,
+            // then carry on with the launch.
+            Route::Launch { offline: false, .. } if accounts::needs_sign_in(&self.data) => {
+                let then = Some(Box::new(route.clone()));
+                return self.open(&Route::SignIn { then });
+            }
             Route::Launch { .. } => return self.show(not_yet("Launching")),
             Route::NewInstance => return self.show(not_yet("Creating instances")),
-            Route::Accounts => return self.show(not_yet("Signing in")),
             Route::Mods(_) => return self.show(not_yet("The mods browser")),
             Route::ResourcePacks(_) => return self.show(not_yet("Resource packs")),
         };
@@ -585,7 +673,8 @@ impl App {
             return;
         };
         let dir = inst.game_dir();
-        let banner = match std::fs::create_dir_all(&dir).and_then(|()| (self.open)(&dir)) {
+        let opened = std::fs::create_dir_all(&dir).and_then(|()| (self.open)(dir.as_os_str()));
+        let banner = match opened {
             Ok(()) => Banner::info(format!("Opened “{}” in your file manager.", inst.name)),
             Err(e) => Banner::warn(format!("Couldn't open {}: {e}", dir.display())),
         };
@@ -768,24 +857,7 @@ impl App {
 
     /// The header's right side: who's signed in.
     fn account_status(&self) -> Line<'static> {
-        let t = self.theme;
-        match self.data.accounts.active() {
-            None => Line::styled("Not signed in", Style::new().fg(t.dim)),
-            Some(acc) => {
-                let name = Span::styled(acc.name.clone(), Style::new().fg(t.text));
-                match acc.kind {
-                    AccountKind::Msa => Line::from(vec![
-                        Span::styled(format!("{} ", ui::DOT), Style::new().fg(t.success)),
-                        name,
-                    ]),
-                    AccountKind::Offline => Line::from(vec![
-                        name,
-                        Span::styled(" · offline", Style::new().fg(t.dim)),
-                    ]),
-                    AccountKind::Other(_) => Line::from(name),
-                }
-            }
-        }
+        accounts::status_line(&self.data, &self.theme)
     }
 }
 

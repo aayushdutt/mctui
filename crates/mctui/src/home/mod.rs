@@ -596,7 +596,7 @@ impl Home {
     fn play_label(&self, inst: &Instance, data: &Data) -> &'static str {
         if self.playing.as_deref() == Some(inst.id.as_str()) {
             "view game"
-        } else if data.accounts.active().is_none() {
+        } else if crate::accounts::needs_sign_in(data) {
             "sign in & play"
         } else {
             "play"

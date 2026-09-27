@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/accounts/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Accounts  ›  Sign in                                                           ● Steve
+
+    ✗  Couldn't sign in
+
+    Couldn't reach Microsoft — check your connection, then press r.
+
+      Try again  r
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   r  try again    esc  back

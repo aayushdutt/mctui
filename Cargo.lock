@@ -1511,10 +1511,12 @@ name = "mctui"
 version = "0.5.0-dev"
 dependencies = [
  "anyhow",
+ "base64 0.23.1",
  "crossterm",
  "insta",
  "jiff",
  "mctui-core",
+ "md-5",
  "nucleo-matcher",
  "open",
  "ratatui",
@@ -1525,6 +1527,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-segmentation",
  "unicode-width",
+ "wiremock",
 ]
 
 [[package]]
@@ -1549,6 +1552,16 @@ dependencies = [
  "tracing",
  "wiremock",
  "zip",
+]
+
+[[package]]
+name = "md-5"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
+dependencies = [
+ "cfg-if",
+ "digest 0.11.3",
 ]
 
 [[package]]

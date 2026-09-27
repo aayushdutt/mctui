@@ -17,6 +17,8 @@ pub(crate) struct Harness {
     pub app: App,
     _dir: TempDir,
     size: (u16, u16),
+    /// Stands in for the online services in [`Harness::online`] tests.
+    server: Option<wiremock::MockServer>,
     runtime: tokio::runtime::Runtime,
     events: tokio::sync::mpsc::UnboundedReceiver<Event>,
 }
@@ -31,12 +33,29 @@ impl Harness {
     }
 
     fn with_notices(w: u16, h: u16, notices: Vec<String>, edit: impl FnOnce(&mut Data)) -> Self {
+        Self::build(w, h, notices, edit, false)
+    }
+
+    /// A harness whose online services are a mock server: give it answers
+    /// with [`Harness::mock`]. Otherwise nothing online is reachable.
+    pub fn online(w: u16, h: u16, edit: impl FnOnce(&mut Data)) -> Self {
+        Self::build(w, h, Vec::new(), edit, true)
+    }
+
+    fn build(
+        w: u16,
+        h: u16,
+        notices: Vec<String>,
+        edit: impl FnOnce(&mut Data),
+        online: bool,
+    ) -> Self {
         let testing::Fixture { dir, mut data } = testing::fixture();
         edit(&mut data);
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (tx, events) = tokio::sync::mpsc::unbounded_channel();
         let tasks = Tasks::new(tx, runtime.handle().clone());
-        let services = Services::new(mctui_core::net::Http::new().unwrap(), &data.dir);
+        let server = online.then(|| runtime.block_on(wiremock::MockServer::start()));
+        let services = testing::services(server.as_ref().map(wiremock::MockServer::uri), &data.dir);
         let terminal = crate::theme::Terminal::default();
         let mut app = App::new(
             data,
@@ -51,11 +70,29 @@ impl Harness {
             app,
             _dir: dir,
             size: (w, h),
+            server,
             runtime,
             events,
         };
         h.draw();
         h
+    }
+
+    /// Mounts an answer on the mock server.
+    pub fn mock(&self, mock: wiremock::Mock) {
+        let server = self.server.as_ref().expect("an online harness");
+        self.runtime.block_on(mock.mount(server));
+    }
+
+    /// How many requests the mock server has had for `path`.
+    pub fn requests(&self, path: &str) -> usize {
+        let server = self.server.as_ref().expect("an online harness");
+        let requests = self.runtime.block_on(server.received_requests());
+        requests
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path() == path)
+            .count()
     }
 
     pub fn data(&self) -> &Data {
@@ -121,7 +158,7 @@ impl Harness {
         }
     }
 
-    fn mouse(&mut self, kind: MouseEventKind, at: Position) -> bool {
+    pub fn mouse(&mut self, kind: MouseEventKind, at: Position) -> bool {
         let event = MouseEvent {
             kind,
             column: at.x,
@@ -134,7 +171,7 @@ impl Harness {
     }
 
     /// Where `target` was drawn in the last frame.
-    fn find(&self, target: &Target) -> Position {
+    pub fn find(&self, target: &Target) -> Position {
         let area = self
             .app
             .hits
@@ -143,7 +180,7 @@ impl Harness {
         area.as_position()
     }
 
-    fn click(&mut self, target: &Target) -> bool {
+    pub fn click(&mut self, target: &Target) -> bool {
         let at = self.find(target);
         // Keep separate clicks from reading as a double-click.
         self.app.last_click = None;
@@ -511,6 +548,9 @@ fn screenshots() {
     save("settings", &mut settings);
     settings.press(KeyCode::Down);
     save("settings-toggle", &mut settings);
+
+    let light = |h: &mut Harness| h.app.theme = crate::theme::Theme::new(&theme::LIGHT, None);
+    crate::accounts::tests::screenshots(&save, &light);
 }
 
 // Regressions from the phase-1 review.
@@ -590,7 +630,8 @@ fn clicking_a_key_hint_while_typing_runs_the_command() {
     h.press(KeyCode::Char('/'));
     h.type_text("sur");
     h.click(&Target::Key(KeyCode::Char('a')));
-    assert_eq!(h.banner(), Some("Signing in isn't in the Rust build yet."));
+    assert!(h.text().contains("ACCOUNTS"), "opened the accounts");
+    h.press(KeyCode::Esc);
     assert!(h.text().contains("“sur”"), "the filter kept what was typed");
 }
 

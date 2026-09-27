@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/accounts/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Accounts  ›  Offline profile                               ● Steve
+
+    Name                   ab
+                           ✗ Too short: use at least 3 characters.
+                           3–16 letters, numbers or underscores. Plays
+                           singleplayer and LAN, not online servers.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ↵  add    esc  discard

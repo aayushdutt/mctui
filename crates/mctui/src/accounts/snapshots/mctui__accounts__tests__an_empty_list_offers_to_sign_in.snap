@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/accounts/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Accounts                                             Not signed in
+
+    ACCOUNTS
+
+    Sign in with Microsoft to play online, or add an offline profile.
+
+      Sign in with Microsoft  ↵      Offline profile  o
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ↵  sign in    o  offline profile    esc  back    ?  help

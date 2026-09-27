@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/accounts/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Accounts                                                   ● Steve
+
+    ACCOUNTS   3
+
+    Steve                                                           ctive
+              Remove account?
+    jeb_      ────────────────────────────────────────────────────  pired
+
+    Notch     Remove “Steve” from mctui?                            fline
+
+    + Add Mi  ▲ You'll have to sign in again to use it.
+
+                Remove      Cancel
+
+               ←→  choose    ↵  confirm    esc  cancel
+
+              ────────────────────────────────────────────────────
+
+
+
+
+   n  add account    o  offline profile    d  remove    esc  back    ?  help

@@ -10,7 +10,7 @@ use super::{Outcome, Target};
 use crate::app::Action;
 use crate::ui::{self, Canvas, Hint, text};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
     pub label: &'static str,
     /// Pressing this runs the entry; shown flush right.
