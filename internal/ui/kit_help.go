@@ -47,67 +47,70 @@ func helpGroup(title string, bindings ...key.Binding) HelpGroup {
 	return g
 }
 
-// HelpOverlay renders the full-screen help modal: a bordered card titled with
-// the screen name, its binding groups stacked inside, and a footer telling the
-// user how to dismiss it. Sized to fit within width×height.
-func HelpOverlay(screen string, groups []HelpGroup, width, height int) string {
-	accent := Active.Primary
-
-	panelWidth := width - 8
-	if panelWidth > 60 {
-		panelWidth = 60
-	}
-	floor := min(40, max(24, width-8))
-	if panelWidth < floor {
-		panelWidth = floor
-	}
-	contentW := panelWidth - 4 // inside the Panel border + padding
-
-	keyStyle := lipgloss.NewStyle().Foreground(Active.Secondary)
-	descStyle := lipgloss.NewStyle().Foreground(Active.TextMuted)
+// HelpCard renders the `?` key reference as a [Card] for a width×height screen
+// (composite it over the screen with [Overlay]): the screen's binding groups,
+// keys in the accent and descriptions dim, with a close hint at the bottom.
+// Groups stack in one column; when that's taller than the screen they're laid
+// out in two balanced columns instead of being clipped.
+func HelpCard(screen string, groups []HelpGroup, width, height int) string {
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary)
+	descStyle := lipgloss.NewStyle().Foreground(Active.TextDim)
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(Active.Title)
 
 	// Widest key cluster across all groups, so the descriptions align in one column.
 	keyW := 0
 	for _, g := range groups {
 		for _, e := range g.Entries {
-			if w := lipgloss.Width(e.Keys); w > keyW {
-				keyW = w
-			}
+			keyW = max(keyW, lipgloss.Width(e.Keys))
 		}
 	}
-	if keyW > contentW-6 {
-		keyW = max(1, contentW-6)
-	}
 
-	var lines []string
-	for gi, g := range groups {
+	var blocks []string
+	for _, g := range groups {
 		if len(g.Entries) == 0 {
 			continue
 		}
-		if gi > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, titleStyle.Render(g.Title))
+		lines := []string{titleStyle.Render(g.Title)}
 		for _, e := range g.Entries {
-			pad := keyW - lipgloss.Width(e.Keys)
-			if pad < 0 {
-				pad = 0
-			}
-			row := keyStyle.Render(e.Keys) + strings.Repeat(" ", pad) + "  " + descStyle.Render(e.Desc)
-			lines = append(lines, row)
+			pad := max(0, keyW-lipgloss.Width(e.Keys))
+			lines = append(lines, keyStyle.Render(e.Keys)+strings.Repeat(" ", pad)+"  "+descStyle.Render(e.Desc))
 		}
+		blocks = append(blocks, strings.Join(lines, "\n"))
 	}
 
-	body := strings.Join(lines, "\n")
-	panel := Panel(screen+" · keys", body, panelWidth, accent)
+	body := strings.Join(blocks, "\n\n")
+	colW := lipgloss.Width(body)
+	// Card chrome: 1 padding row + title + blank above; blank + hint + padding below.
+	const chrome = 6
+	if lipgloss.Height(body)+chrome > height && len(blocks) > 1 && 2*colW+4+4 <= width {
+		body = twoColumns(blocks, colW)
+	}
 
-	hint := lipgloss.NewStyle().MarginTop(1).Render(KeyHints(
-		panelWidth,
-		KeyHint{"?", "close"},
-		KeyHint{"esc", "close"},
-	))
+	hint := KeyHints(lipgloss.Width(body), KeyHint{"esc", "close"})
+	body = body + "\n\n" + hint
+	cw := min(max(lipgloss.Width(body)+4, 40), max(24, width-4))
+	return Card(screen+" · keys", body, cw, Active.Primary)
+}
 
-	box := lipgloss.JoinVertical(lipgloss.Left, panel, hint)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+// twoColumns splits blocks into a left and right column of roughly equal
+// height and joins them side by side.
+func twoColumns(blocks []string, colW int) string {
+	total := 0
+	for _, b := range blocks {
+		total += lipgloss.Height(b) + 1
+	}
+	var left, right []string
+	h := 0
+	for _, b := range blocks {
+		if h < total/2 || len(left) == 0 {
+			left = append(left, b)
+			h += lipgloss.Height(b) + 1
+		} else {
+			right = append(right, b)
+		}
+	}
+	col := lipgloss.NewStyle().Width(colW)
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		col.Render(strings.Join(left, "\n\n")), "    ",
+		col.Render(strings.Join(right, "\n\n")))
 }

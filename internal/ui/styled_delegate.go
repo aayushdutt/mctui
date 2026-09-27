@@ -36,12 +36,27 @@ type styledTitleItem interface {
 // styledTitleItem) fall through to the default delegate untouched.
 type styledTitleDelegate struct {
 	list.DefaultDelegate
+
+	// focused, when set, reports whether the list's pane has focus; a pane
+	// without it shows no selected row (the cursor is kept and reappears on
+	// focus). A func rather than a flag so rendering never writes state.
+	focused func() bool
+}
+
+// unfocused reports whether the selection should be hidden.
+func (d *styledTitleDelegate) unfocused() bool {
+	return d.focused != nil && !d.focused()
 }
 
 func (d *styledTitleDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	it, ok := item.(styledTitleItem)
 	if !ok {
-		d.DefaultDelegate.Render(w, m, index, item)
+		dd := d.DefaultDelegate
+		if d.unfocused() {
+			dd.Styles.SelectedTitle = dd.Styles.NormalTitle
+			dd.Styles.SelectedDesc = dd.Styles.NormalDesc
+		}
+		dd.Render(w, m, index, item)
 		return
 	}
 	if m.Width() <= 0 {
@@ -58,7 +73,7 @@ func (d *styledTitleDelegate) Render(w io.Writer, m list.Model, index int, item 
 	textwidth := m.Width() - s.NormalTitle.GetPaddingLeft() - s.NormalTitle.GetPaddingRight()
 
 	var (
-		isSelected   = index == m.Index()
+		isSelected   = index == m.Index() && !d.unfocused()
 		emptyFilter  = m.FilterState() == list.Filtering && m.FilterValue() == ""
 		isFiltered   = m.FilterState() == list.Filtering || m.FilterState() == list.FilterApplied
 		matchedRunes []int

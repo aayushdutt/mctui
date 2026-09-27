@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/aayushdutt/mctui/internal/api"
 	"github.com/aayushdutt/mctui/internal/core"
+	"github.com/aayushdutt/mctui/internal/mods"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -182,4 +184,119 @@ func TestWizard_SpaceTogglesAndPersistsSnapshots(t *testing.T) {
 	if !p.Value {
 		t.Fatalf("PersistShowSnapshots.Value = %v, want true", p.Value)
 	}
+}
+
+// In the search field, ← edits text instead of jumping to Installed (where a
+// following backspace would open "Remove mod?").
+func TestMods_LeftInSearchFieldEditsText(t *testing.T) {
+	m := newModsWith(t)
+	m.modsFocus = panelQuery
+	m.query.Focus()
+	m.query.SetValue("sodium")
+	m, _ = sendMods(t, m, "left")
+	if m.modsFocus != panelQuery {
+		t.Fatalf("← in the search field moved focus to %d", m.modsFocus)
+	}
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = nm.(*ModsModel)
+	if m.modsDialog == modsDialogConfirmRemoveJar {
+		t.Fatal("backspace in the search field opened the remove dialog")
+	}
+}
+
+// ↑/↓ stay inside the focused pane.
+func TestMods_VerticalKeysStayInPane(t *testing.T) {
+	m := newModsWith(t)
+	m.modsFocus = panelInstalled
+	m.installed.Select(0)
+	m, _ = sendMods(t, m, "up")
+	if m.modsFocus != panelInstalled {
+		t.Errorf("↑ at the top of Installed left the pane (focus %d)", m.modsFocus)
+	}
+	m.installed.Select(len(m.installed.Items()) - 1)
+	m, _ = sendMods(t, m, "down")
+	if m.modsFocus != panelInstalled {
+		t.Errorf("↓ at the bottom of Installed left the pane (focus %d)", m.modsFocus)
+	}
+}
+
+// Shift+tab walks the panes backwards.
+func TestMods_ShiftTabReverses(t *testing.T) {
+	m := newModsWith(t)
+	m.modsFocus = panelInstalled
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := nm.(*ModsModel).modsFocus; got != panelBrowse {
+		t.Errorf("shift+tab from Installed went to %d, want the results", got)
+	}
+}
+
+// Esc during a download cancels it and stays on the screen.
+func TestMods_EscDuringDownloadCancelsInPlace(t *testing.T) {
+	m := newModsWith(t)
+	m.installing = true
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		if _, home := cmd().(NavigateToHome); home {
+			t.Fatal("esc during a download left the screen")
+		}
+	}
+	if m.installing {
+		t.Error("esc should cancel the download")
+	}
+}
+
+// A new search replaces the last install's "Added …" note, so the results
+// heading comes back.
+func TestMods_NewSearchClearsInstallNote(t *testing.T) {
+	m := newModsWith(t)
+	m.installOK = "Added Sodium ✓"
+	m.modsFocus = panelQuery
+	m.query.Focus()
+	m, _ = sendMods(t, m, "s")
+	if m.installOK != "" {
+		t.Errorf("installOK = %q after typing a new search, want it cleared", m.installOK)
+	}
+}
+
+// During a download the search field keeps d, r and backspace (the "folder
+// changes wait" guard is for the lists, not typing).
+func TestMods_SearchFieldTypesDuringDownload(t *testing.T) {
+	m := newModsWith(t)
+	m.installing = true
+	m.modsFocus = panelQuery
+	m.query.Focus()
+	for _, k := range []string{"d", "r", "x", "backspace"} {
+		m, _ = sendMods(t, m, k)
+	}
+	if got := m.query.Value(); got != "dr" {
+		t.Errorf("query = %q, want %q", got, "dr")
+	}
+}
+
+// Esc cancels a download in place; the cancelled install's late result must not
+// overwrite "Download cancelled." or end a newer download.
+func TestMods_CancelledInstallResultIsDropped(t *testing.T) {
+	m := newModsWith(t)
+	// Installs run in a goroutine; point them at an unroutable address so the
+	// test never touches the network.
+	m.svc = mods.NewService(api.NewModrinthClientWithBaseURL("http://127.0.0.1:0"))
+	m.installModCmd("p1", "Sodium") // starts install #1
+	stale := m.installSeq
+	m, _ = sendMods(t, m, "esc")
+	if m.installErr != "Download cancelled." {
+		t.Fatalf("setup: installErr = %q", m.installErr)
+	}
+	nm, _ := m.Update(ModInstallDoneMsg{Seq: stale, ProjectID: "p1", Title: "Sodium", Err: errors.New("boom")})
+	m = nm.(*ModsModel)
+	if m.installErr != "Download cancelled." {
+		t.Errorf("a cancelled install's result replaced the status: %q", m.installErr)
+	}
+
+	m.installModCmd("p2", "Lithium") // install #2 running
+	nm, _ = m.Update(ModInstallDoneMsg{Seq: stale, ProjectID: "p1", Title: "Sodium"})
+	m = nm.(*ModsModel)
+	if !m.installing || m.installCancel == nil {
+		t.Error("a stale result ended the newer download")
+	}
+	m.CancelPending()
 }

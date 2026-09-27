@@ -2,125 +2,122 @@ package ui
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
-	"github.com/aayushdutt/mctui/internal/mods"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
-func (m *ModsModel) libraryBannerBlock(nLocal int) string {
-	if m.installedErr != "" {
-		return lipgloss.NewStyle().Foreground(Active.Error).Render(m.installedErr)
+// libraryBannerBlock is the one line above the installed list: an error, a
+// toast, or blank (the pane title carries the count).
+func (m *ModsModel) libraryBannerBlock(width int) string {
+	line := ""
+	switch {
+	case m.installedErr != "":
+		line = lipgloss.NewStyle().Foreground(Active.Error).Render(m.installedErr)
+	case m.libraryToast != "":
+		line = lipgloss.NewStyle().Foreground(Active.SuccessSoft).Render(m.libraryToast)
 	}
-	if m.libraryToast != "" {
-		return lipgloss.NewStyle().Foreground(Active.SuccessSoft).Render(m.libraryToast)
+	if line == "" {
+		return ""
 	}
-	if len(m.installed.Items()) == 0 {
-		return lipgloss.NewStyle().Foreground(Active.TextDim).Render("No mods — search →")
-	}
-	return lipgloss.NewStyle().Foreground(Active.Border).
-		Render(fmt.Sprintf("%d jar(s) · %s", nLocal, filepath.Base(mods.ModsDir(m.inst))))
+	return "  " + ansi.Truncate(line, max(1, width-2), "…")
 }
 
-func (m *ModsModel) buildModrinthChrome(status string, statusVisible bool, meta string) string {
-	qLabel := lipgloss.NewStyle().Foreground(Active.Border).Render("Query")
+// libraryBody is the installed list, or — with no mods — a short hint in its
+// place (instead of the list's bare "No mods.").
+func (m *ModsModel) libraryBody(width int) string {
+	if len(m.installed.Items()) > 0 || m.installedErr != "" {
+		return m.installed.View()
+	}
+	hint := lipgloss.NewStyle().Foreground(Active.TextMuted).Width(max(1, width-2)).
+		Render("No mods yet. Pick one in Discover and press ↵ to install it.")
+	return lipgloss.NewStyle().PaddingLeft(2).Render(hint)
+}
+
+// buildModrinthChrome is the Discover pane above the results:
+//
+//	/ Search Modrinth…
+//	Popular                         6 of 5,056
+//	(blank)
+//
+// The second line is the heading ([resultsHeading]) unless there's a status to
+// show (searching, installing, an error), which takes its place.
+func (m *ModsModel) buildModrinthChrome(status string, width int) string {
+	m.query.PromptStyle = lipgloss.NewStyle().Foreground(Active.TextMuted)
 	if m.modsFocus == panelQuery {
-		// Focus is the accent (Primary) everywhere — never green.
-		qLabel = lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render("Query")
+		m.query.PromptStyle = lipgloss.NewStyle().Foreground(Active.Primary)
 	}
-	searchBox := m.query.View()
-	if m.modsFocus != panelQuery {
-		searchBox = lipgloss.NewStyle().Foreground(Active.TextDim).Render(searchBox)
+	line := m.resultsHeading(width)
+	if status != "" {
+		line = "  " + ansi.Truncate(status, max(1, width-2), "…")
 	}
-	queryRow := lipgloss.JoinVertical(lipgloss.Left, qLabel, searchBox)
+	return lipgloss.JoinVertical(lipgloss.Left, "  "+m.query.View(), line, "")
+}
 
-	statusBlock := ""
-	if statusVisible && strings.TrimSpace(status) != "" {
-		bar := lipgloss.NewStyle().Foreground(Active.Primary).Render("┃ ")
-		statusBlock = lipgloss.JoinHorizontal(lipgloss.Top, bar, status)
+// resultsHeading names what the list shows — "Popular" (empty search) or
+// "Results" — with a quiet "6 of 5,056" flush right.
+func (m *ModsModel) resultsHeading(width int) string {
+	title := "Popular"
+	if strings.TrimSpace(m.query.Value()) != "" {
+		title = "Results"
 	}
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		queryRow,
-		statusBlock,
-		meta,
-	)
+	left := "  " + lipgloss.NewStyle().Foreground(Active.TextDim).Render(title)
+	if m.lastTotalHits == 0 || len(m.results.Items()) == 0 {
+		return left
+	}
+	count := lipgloss.NewStyle().Foreground(Active.TextMuted).
+		Render(fmt.Sprintf("%d of %s", len(m.results.Items()), formatModHitCount(m.lastTotalHits)))
+	return StatusBar(left, count, width)
 }
 
 // View implements tea.Model.
 func (m *ModsModel) View() string {
-	if m.help {
-		return boundToScreen(HelpOverlay("Mods", m.helpGroups(), m.width, m.height), m.width, m.height)
-	}
-	if m.palette.Active {
-		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
-	}
-
-	if m.modsDialog == modsDialogConfirmRemoveJar {
-		return ConfirmDialog{
+	base := m.baseView()
+	switch {
+	case m.help:
+		return Overlay(base, HelpCard("Mods", m.helpGroups(), m.width, m.height), m.width, m.height)
+	case m.palette.Active:
+		return Overlay(base, m.palette.View(m.width, m.height), m.width, m.height)
+	case m.modsDialog == modsDialogConfirmRemoveJar:
+		return Overlay(base, ConfirmDialog{
 			Title:    "Remove mod?",
-			Message:  fmt.Sprintf("Remove %q\nfrom this instance?", m.modsDialogJar),
-			Warning:  "Deletes the .jar from disk.",
+			Message:  fmt.Sprintf("Remove %s\nfrom this instance?", modDisplayNameOnly(m.modsDialogJar)),
+			Warning:  "Deletes " + m.modsDialogJar + " from disk.",
 			Confirm:  "Remove",
 			Cancel:   "Cancel",
 			Kind:     ConfirmDanger,
 			FocusYes: m.modsDialogFocusYes,
-		}.Render(m.width, m.height)
+		}.View(m.width), m.width, m.height)
 	}
+	return base
+}
 
+// baseView renders the screen itself (overlays composite over it in View).
+func (m *ModsModel) baseView() string {
 	nLocal := len(m.installed.Items())
 
-	contentInnerW := max(24, m.width-8)
-	ctxLineText := fmt.Sprintf("%s · Minecraft %s · Fabric · %d installed", m.inst.Name, m.inst.Version, nLocal)
-	header := lipgloss.NewStyle().MarginBottom(1).Render(lipgloss.JoinVertical(
-		lipgloss.Left, ScreenHeader("Mods", ctxLineText), Rule(contentInnerW)))
+	ctx := fmt.Sprintf("Minecraft %s · Fabric", m.inst.Version)
+	header := lipgloss.NewStyle().MarginBottom(1).Render(
+		AppHeader(m.width, lipgloss.NewStyle().Foreground(Active.TextDim).Render(ctx), m.inst.Name, "Mods"))
 
-	modrinthStatus := ""
-	modrinthStatusVisible := false
+	var status string
 	switch {
 	case m.installing:
-		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Secondary).Render("Installing mod + dependencies…")
-		modrinthStatusVisible = true
+		status = lipgloss.NewStyle().Foreground(Active.Secondary).Render("Installing mod + dependencies…")
 	case m.installErr != "":
-		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Error).Render(m.installErr)
-		modrinthStatusVisible = true
+		status = lipgloss.NewStyle().Foreground(Active.Error).Render(m.installErr)
 	case m.installOK != "":
-		modrinthStatus = lipgloss.NewStyle().Foreground(Active.SuccessAccent).Render(m.installOK)
-		modrinthStatusVisible = true
+		status = lipgloss.NewStyle().Foreground(Active.SuccessAccent).Render(m.installOK)
+	case m.searching && strings.TrimSpace(m.query.Value()) == "":
+		status = lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Loading Modrinth…")
 	case m.searching:
-		modrinthStatusVisible = true
-		if strings.TrimSpace(m.query.Value()) == "" {
-			modrinthStatus = lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Loading Modrinth…")
-		} else {
-			modrinthStatus = lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Searching…")
-		}
+		status = lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Searching…")
 	case m.searchErr != "":
-		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Error).Render(m.searchErr)
-		modrinthStatusVisible = true
+		status = lipgloss.NewStyle().Foreground(Active.Error).Render(m.searchErr)
 	case m.searchNotice != "":
-		modrinthStatus = lipgloss.NewStyle().Foreground(Active.Warning).Render(m.searchNotice)
-		modrinthStatusVisible = true
+		status = lipgloss.NewStyle().Foreground(Active.Warning).Render(m.searchNotice)
 	}
-	// Bound the status line to the browse pane so a long error/notice can't widen
-	// the Zone past its column (Zones don't clamp the body the way Panel did).
-	if modrinthStatus != "" {
-		rw := m.resultsListW
-		if rw < 4 {
-			rw = 28
-		}
-		modrinthStatus = ansi.Truncate(modrinthStatus, rw, "…")
-	}
-
-	meta := ""
-	if !m.searching && m.searchErr == "" && m.lastTotalHits > 0 && len(m.results.Items()) > 0 {
-		meta = lipgloss.NewStyle().Foreground(Active.TextMuted).
-			Render(fmt.Sprintf("Showing %d of ~%s projects", len(m.results.Items()), formatModHitCount(m.lastTotalHits)))
-	}
-
-	// Rows carry their own swatch + installed/installing pills, so no legend.
-	libBanner := m.libraryBannerBlock(nLocal)
 
 	libW := m.libraryListW
 	if libW < 4 {
@@ -130,14 +127,15 @@ func (m *ModsModel) View() string {
 	if resW < 4 {
 		resW = 28
 	}
-	libraryInner := lipgloss.JoinVertical(lipgloss.Left,
-		libBanner,
-		m.installed.View(),
-	)
-	rightTop := m.buildModrinthChrome(modrinthStatus, modrinthStatusVisible, meta)
+	// Side by side, the banner sits on the heading's row and both lists start on
+	// the same line; stacked, it's one line.
+	libraryTop := m.libraryBannerBlock(libW)
+	if !m.compactLayout {
+		libraryTop = lipgloss.JoinVertical(lipgloss.Left, "", libraryTop, "")
+	}
+	libraryInner := lipgloss.JoinVertical(lipgloss.Left, libraryTop, m.libraryBody(libW))
 	rightInner := lipgloss.JoinVertical(lipgloss.Left,
-		rightTop,
-		SectionHeader(m.results.Title, resW),
+		m.buildModrinthChrome(status, resW),
 		m.results.View(),
 	)
 
@@ -149,30 +147,28 @@ func (m *ModsModel) View() string {
 		}
 	}
 
-	// De-boxed Zones: the focused pane shows a ┃ accent title, the other a muted
-	// one, over a dim rule — the ┃ is the single "you are here" stroke (replacing
-	// the old ▸ marker + per-pane accent border).
-	libraryView := Zone(m.installed.Title, libraryInner, libW, m.modsFocus == panelInstalled)
+	// The focused pane's title is in the accent color; the count sits flush right.
+	count := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(fmt.Sprint(nLocal))
+	libraryView := ZoneR("Installed", count, libraryInner, libW, m.modsFocus == panelInstalled)
 	browseBox := Zone("Discover", rightInner, resW, m.rightColumnFocused())
 
 	layout := ""
 	if m.compactLayout {
 		layout = lipgloss.JoinVertical(lipgloss.Left,
 			header,
-			"",
 			libraryView,
 			"",
 			browseBox,
 		)
 	} else {
 		row := lipgloss.JoinHorizontal(lipgloss.Top, libraryView, strings.Repeat(" ", 2), browseBox)
-		layout = lipgloss.JoinVertical(lipgloss.Left, header, "", row)
+		layout = lipgloss.JoinVertical(lipgloss.Left, header, row)
 	}
 
 	helpItems := m.footerHelpItems()
-	help := lipgloss.JoinVertical(lipgloss.Left,
-		Rule(min(contentInnerW, 56)),
-		lipgloss.NewStyle().MarginTop(1).Render(modsRenderHelp(helpItems, m.width-6)))
+	// A blank line where the footer rule used to be keeps the height budget
+	// (footerHelpHeight) while matching every other screen's footer.
+	help := lipgloss.JoinVertical(lipgloss.Left, "", modsRenderHelp(helpItems, modsHelpBodyMaxWidth(m.width)))
 
 	// No self-padding: the root app applies the single AppShellStyle inset once
 	// (app.View), and SetSize already receives the pre-padded contentSize — a

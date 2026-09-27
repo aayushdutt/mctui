@@ -86,3 +86,39 @@ func TestRP_ClearDialogEnterFollowsHighlight(t *testing.T) {
 		t.Errorf("Enter on the highlighted Clear should clear (count=%d)", m.sel.Count())
 	}
 }
+
+// Enter in "Your pack" is affirmative-only: it must not remove the tweak
+// (space or d do).
+func TestRP_EnterInCartDoesNotRemove(t *testing.T) {
+	restoreDark(t)
+	m := rpRenderModel(t, 120, 40, map[string][]string{"Aesthetic": {"ClearGlass"}})
+	m.inst.Path = t.TempDir()
+	m.rpFocus = rpPanelCart
+	m.Update(keyMsg("enter"))
+	if m.sel.Count() != 1 {
+		t.Fatalf("enter removed a tweak from the pack (count=%d)", m.sel.Count())
+	}
+	m.Update(keyMsg("d"))
+	if m.sel.Count() != 0 {
+		t.Errorf("d in the pack pane should remove the tweak (count=%d)", m.sel.Count())
+	}
+}
+
+// Esc during Build & Apply cancels it and stays on the screen.
+func TestRP_EscDuringBuildCancelsInPlace(t *testing.T) {
+	restoreDark(t)
+	m := rpRenderModel(t, 120, 40, map[string][]string{"Aesthetic": {"ClearGlass"}})
+	m.applying = true
+	_, cmd := m.Update(keyMsg("esc"))
+	if cmd != nil {
+		if _, home := cmd().(NavigateToHome); home {
+			t.Fatal("esc during a build left the screen")
+		}
+	}
+	if m.applying {
+		t.Error("esc should cancel the build")
+	}
+	if f := ansi.Strip(KeyHints(200, m.footerHelpItems()...)); strings.Contains(f, "esc cancel build") {
+		t.Error("after cancelling, the footer should be back to normal")
+	}
+}

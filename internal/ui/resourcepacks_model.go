@@ -118,18 +118,23 @@ func (m *ResourcePacksModel) helpGroups() []HelpGroup {
 // Service from it (mirroring NewModsModel, which takes *api.ModrinthClient and
 // builds a *mods.Service internally).
 func NewResourcePacksModel(inst *core.Instance, client *api.VanillaTweaksClient) *ResourcePacksModel {
-	// Categories: a tight single-line tree; the header + per-row totals already
-	// convey scope, so no status bar. Packs: filterable ("/" search), with a
-	// status bar. Cart: status bar, no filter.
-	categoriesList := NewThemedList(ThemedListConfig{
+	// Categories: a tight single-line tree. Packs: filterable ("/" search), so it
+	// keeps its status bar (that's where an active filter shows). Cart: its pane
+	// title carries the count.
+	// Only the focused pane shows a selected row.
+	var m *ResourcePacksModel // the lists' focus funcs read it once built
+	categoriesList, _ := newFocusableList(ThemedListConfig{
 		Accent: Active.Primary, AccentSoft: Active.Secondary, SingleLine: true,
-	})
-	packsList := NewThemedList(ThemedListConfig{
+		ItemName: "category", ItemNamePlural: "categories",
+	}, func() bool { return m.rpFocus == rpPanelCategories })
+	packsList, _ := newFocusableList(ThemedListConfig{
 		Accent: Active.Primary, AccentSoft: Active.Secondary, StatusBar: true, Filter: true,
-	})
-	cartList := NewThemedList(ThemedListConfig{
-		Accent: Active.Primary, AccentSoft: Active.Secondary, StatusBar: true,
-	})
+		ItemName: "pack", ItemNamePlural: "packs",
+	}, func() bool { return m.rpFocus == rpPanelPacks })
+	cartList, _ := newFocusableList(ThemedListConfig{
+		Accent: Active.Primary, AccentSoft: Active.Secondary,
+		ItemName: "tweak", ItemNamePlural: "tweaks",
+	}, func() bool { return m.rpFocus == rpPanelCart })
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -137,7 +142,7 @@ func NewResourcePacksModel(inst *core.Instance, client *api.VanillaTweaksClient)
 
 	version, ok := resourcepacks.CatalogVersionFor(inst)
 
-	m := &ResourcePacksModel{
+	m = &ResourcePacksModel{
 		inst:             inst,
 		svc:              resourcepacks.NewService(client),
 		catalogVersion:   version,
@@ -204,8 +209,10 @@ func (m *ResourcePacksModel) SetSize(w, h int) {
 	// Three panes: categories (narrow) | packs (wide) | cart (medium). Zones have
 	// no borders, so only the 2 inter-pane gaps (2 cells each) are reserved; the
 	// packs pane absorbs the columns the old borders took.
-	catW := max(16, min(26, w*22/100))
-	cartW := max(18, min(30, w*26/100))
+	// Categories get enough room for names like "Peace and Quiet" beside
+	// their counts; the packs pane takes the rest.
+	catW := max(16, min(30, w*26/100))
+	cartW := max(18, min(30, w*24/100))
 	packW := w - catW - cartW - 4
 	if packW < 24 {
 		// Reclaim from the side panes when the middle is starved.
@@ -238,27 +245,22 @@ func (m *ResourcePacksModel) relabelCategories() {
 }
 
 // applyPaneListHeights (re)derives the three list viewport heights from the live
-// terminal size AND the current dynamic in-panel chrome: the cart's "Build &
-// Apply" CTA block (+2 rows when the cart is non-empty) and the selected
-// category's warning line (+1 row when present). Both blocks render outside the
-// list bubble, so the budget must reserve room for them or View overflows the
-// terminal and clips the footer. Called from SetSize and after every cart/category
-// change (which don't trigger a resize) so the budget always matches what View
-// renders. Cheap and idempotent.
+// terminal size AND the current dynamic in-panel chrome: the selected
+// category's warning line (+1 row when present). It renders outside the list
+// bubble, so the budget must reserve room for it or View overflows the terminal
+// and clips the footer. Called from SetSize and after every cart/category change
+// (which don't trigger a resize) so the budget always matches what View renders.
+// Cheap and idempotent.
 func (m *ResourcePacksModel) applyPaneListHeights() {
 	if m.height < 1 || m.width < 1 {
 		return // SetSize hasn't run yet.
 	}
 	warnReserve := rpCategoryWarningReserve(m.selectedCategoryWarning())
-	cartReserve := 0
-	if m.sel.Count() > 0 {
-		cartReserve = rpCartCTAReserve
-	}
 
 	if m.compactLayout {
-		// Stacked: the CTA and warning add to total height directly, so fold them
-		// into the shared budget before distributing to the three panes.
-		catH, packH, cartH := rpCompactListHeights(m.height, m.width, warnReserve+cartReserve)
+		// Stacked: the warning adds to total height directly, so fold it into the
+		// shared budget before distributing to the three panes.
+		catH, packH, cartH := rpCompactListHeights(m.height, m.width, warnReserve)
 		m.categories.SetHeight(catH)
 		m.packs.SetHeight(packH)
 		m.cart.SetHeight(cartH)
@@ -266,12 +268,12 @@ func (m *ResourcePacksModel) applyPaneListHeights() {
 	}
 
 	// Split: all three panes share one budget and are joined horizontally, so the
-	// row height is the tallest pane. Shrink the pack and cart lists by their own
-	// extra chrome; categories keeps the full budget.
+	// row height is the tallest pane. Shrink the pack list by its extra chrome;
+	// the others keep the full budget.
 	listH := rpListViewportHeight(m.height, m.width)
 	m.categories.SetHeight(listH)
 	m.packs.SetHeight(max(1, listH-warnReserve))
-	m.cart.SetHeight(max(1, listH-cartReserve))
+	m.cart.SetHeight(listH)
 }
 
 // selectedCategoryWarning returns the warning text for the currently highlighted
@@ -359,21 +361,4 @@ func (m *ResourcePacksModel) applyCmd() tea.Cmd {
 	return func() tea.Msg {
 		return <-ch
 	}
-}
-
-// instanceContextLine builds the header subtitle: instance, MC/catalog version,
-// cart size, and applied/dirty state.
-func (m *ResourcePacksModel) instanceContextLine() string {
-	if m.inst == nil {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(m.inst.Name)
-	b.WriteString(" · Minecraft ")
-	b.WriteString(m.inst.Version)
-	if m.catalogSupported && m.catalogVersion != "" && m.catalogVersion != m.inst.Version {
-		b.WriteString(" · catalog ")
-		b.WriteString(m.catalogVersion)
-	}
-	return b.String()
 }

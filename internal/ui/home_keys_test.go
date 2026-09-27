@@ -2,10 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aayushdutt/mctui/internal/core"
 	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func manyInstances(n int) []*core.Instance {
@@ -74,5 +77,65 @@ func TestHome_HotkeysDontPageTheList(t *testing.T) {
 	}
 	if opened != 1 {
 		t.Errorf("f should open the folder once, opened %d times", opened)
+	}
+}
+
+// With the detail pane focused, list keys don't move the hidden list, and /
+// returns to the list to search.
+func TestHome_DetailFocusOwnsListKeys(t *testing.T) {
+	restoreDark(t)
+	m := NewHomeModel()
+	m.SetSize(120, 30)
+	m.SetInstances(manyInstances(20), "")
+	m.Update(keyMsg("right")) // focus the detail pane
+	before := m.list.Index()
+	for _, k := range []tea.KeyMsg{{Type: tea.KeyPgDown}, {Type: tea.KeyEnd}, keyMsg("G")} {
+		m.Update(k)
+		if m.list.Index() != before {
+			t.Errorf("%q moved the list from the detail pane", k.String())
+		}
+	}
+	m.Update(keyMsg("/"))
+	if m.paneFocus != focusList || m.list.FilterState() != list.Filtering {
+		t.Errorf("/ from the detail pane should focus the list and filter (focus=%v filter=%v)", m.paneFocus, m.list.FilterState())
+	}
+}
+
+// No instances: the list isn't drawn, so / must not start an invisible filter
+// (after which a/s/q would type into it).
+func TestHome_SlashIgnoredWithNoInstances(t *testing.T) {
+	restoreDark(t)
+	m := NewHomeModel()
+	m.SetSize(120, 30)
+	m.SetInstances(nil, "")
+	m.Update(keyMsg("/"))
+	if m.list.FilterState() != list.Unfiltered {
+		t.Error("/ started a filter on the empty screen")
+	}
+}
+
+// Shrinking to one column returns focus to the list (the detail pane is gone).
+func TestHome_CompactResizeReturnsFocusToList(t *testing.T) {
+	restoreDark(t)
+	m := NewHomeModel()
+	m.SetSize(120, 30)
+	m.SetInstances(manyInstances(3), "")
+	m.Update(keyMsg("right"))
+	m.SetSize(60, 30)
+	if m.paneFocus != focusList {
+		t.Error("focus stayed on the hidden detail pane")
+	}
+}
+
+// While typing a filter the footer offers only what works.
+func TestHome_FilteringFooter(t *testing.T) {
+	restoreDark(t)
+	m := NewHomeModel()
+	m.SetSize(120, 30)
+	m.SetInstances(manyInstances(3), "")
+	m.Update(keyMsg("/"))
+	f := ansi.Strip(m.buildFooter())
+	if !strings.Contains(f, "apply filter") || strings.Contains(f, "offline") {
+		t.Errorf("filtering footer = %q", f)
 	}
 }

@@ -12,8 +12,8 @@ const (
 	// AppShellStyle owns the top/bottom padding), so nothing is reserved here.
 	rpOuterPadY = 0
 
-	// rpHeaderLines: title + catalog-version line + rule + margin.
-	rpHeaderLines = 4
+	// rpHeaderLines: AppHeader + its bottom margin.
+	rpHeaderLines = 2
 
 	// rpPanelBorderV: rounded border top + bottom (one pane).
 	rpPanelBorderV = 2
@@ -26,12 +26,6 @@ const (
 
 	// rpStatusLines: the single status/notice row above the panes.
 	rpStatusLines = 1
-
-	// rpCartCTAReserve is the height of the cart pane's "Build & Apply" block
-	// (a blank spacer line + the CTA line) rendered below the cart list whenever
-	// the cart is non-empty. applyPaneListHeights subtracts it from the cart list
-	// viewport so the pane stays within the budgeted height.
-	rpCartCTAReserve = 2
 )
 
 // rpCategoryWarningReserve returns the extra lines the packs pane needs for a
@@ -64,8 +58,8 @@ func rpListViewportHeight(h, w int) int {
 // rpCompactListHeights returns the per-pane heights when stacked (narrow width).
 // Three panes share the vertical budget; the pack list (the working surface)
 // gets the largest share. extraReserve is the height of in-panel chrome rendered
-// below/above the lists (the cart "Build & Apply" CTA block and any category
-// warning line) so the stacked panes still fit the terminal.
+// above the lists (a category warning line) so the stacked panes still fit the
+// terminal.
 func rpCompactListHeights(h, w, extraReserve int) (catH, packH, cartH int) {
 	if h < 1 {
 		return 1, 1, 1
@@ -91,53 +85,43 @@ func rpCompactListHeights(h, w, extraReserve int) (catH, packH, cartH int) {
 	return catH, packH, cartH
 }
 
-// rpScreenHelpItems is the full footer: one line, six hints, ending in `? help`.
-// The long tail (→ open, o preview, : palette) lives in the `?` overlay.
-func rpScreenHelpItems() []KeyHint {
-	return []KeyHint{
-		{"space", "toggle"},
-		{"/", "search"},
-		{"b", "apply"},
-		{"c", "clear"},
-		{"esc", "home"},
-		{"?", "help"},
-	}
-}
+// rpFooterState is what the resource-packs footer describes.
+type rpFooterState int
 
-func rpScreenHelpItemsCompact() []KeyHint {
-	return []KeyHint{
-		{"space", "toggle"},
-		{"/", "search"},
-		{"b", "apply"},
-		{"esc", "home"},
-		{"?", "help"},
-	}
-}
+const (
+	rpFooterCategories rpFooterState = iota
+	rpFooterPacks
+	rpFooterCart
+	rpFooterSearch   // global search results
+	rpFooterFilter   // typing a filter
+	rpFooterApplying // Build & Apply running
+	rpFooterLoadErr  // the catalog failed to load
+)
 
-func rpScreenHelpItemsMicro() []KeyHint {
-	return []KeyHint{
-		{"space", "toggle"},
-		{"b", "apply"},
-		{"esc", "home"},
-		{"?", "help"},
-	}
-}
-
-// rpHelpItemsPick selects footer tiers so layout math matches what View renders.
-func rpHelpItemsPick(termH, termW int) []KeyHint {
-	switch {
-	case termH >= 42 && termW >= 60:
-		return rpScreenHelpItems()
-	case termH >= 22:
-		return rpScreenHelpItemsCompact()
+// rpFooterItems returns the hints for a footer state — only keys that work in
+// it, ending in ? help where ? isn't typed.
+func rpFooterItems(st rpFooterState) []KeyHint {
+	switch st {
+	case rpFooterCategories:
+		return []KeyHint{{"↵", "open"}, {"/", "search"}, {"b", "build & apply"}, {"esc", "home"}, {"?", "help"}}
+	case rpFooterCart:
+		return []KeyHint{{"space", "remove"}, {"b", "build & apply"}, {"c", "clear"}, {"esc", "home"}, {"?", "help"}}
+	case rpFooterSearch:
+		return []KeyHint{{"↵", "go to pack"}, {"esc", "exit search"}}
+	case rpFooterFilter:
+		return []KeyHint{{"↵", "apply"}, {"esc", "cancel"}}
+	case rpFooterApplying:
+		return []KeyHint{{"esc", "cancel build"}}
+	case rpFooterLoadErr:
+		return []KeyHint{{"r", "retry"}, {"esc", "home"}, {"?", "help"}}
 	default:
-		return rpScreenHelpItemsMicro()
+		return []KeyHint{{"space", "toggle"}, {"/", "search"}, {"b", "build & apply"}, {"esc", "home"}, {"?", "help"}}
 	}
 }
 
 // rpHelpBodyMaxWidth matches ResourcePacksModel.View: rpRenderHelp(..., width-6).
 func rpHelpBodyMaxWidth(termW int) int {
-	return max(1, termW-6)
+	return max(1, termW)
 }
 
 // rpRenderHelp renders the footer hint bar through the shared kit. View and the
@@ -146,7 +130,12 @@ func rpRenderHelp(items []KeyHint, width int) string {
 	return KeyHints(width, items...)
 }
 
-// rpFooterHelpLines is the rendered footer height (rule + wrapped hints + margin).
+// rpFooterHelpLines is the footer height budget: the tallest of every footer
+// the screen can show, so a state change can never move the layout.
 func rpFooterHelpLines(termH, termW int) int {
-	return footerHelpHeight(rpHelpItemsPick(termH, termW), rpHelpBodyMaxWidth(termW))
+	h := 0
+	for st := rpFooterCategories; st <= rpFooterLoadErr; st++ {
+		h = max(h, footerHelpHeight(rpFooterItems(st), rpHelpBodyMaxWidth(termW)))
+	}
+	return h
 }

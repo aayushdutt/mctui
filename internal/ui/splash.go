@@ -44,7 +44,6 @@ var splashLines = []string{
 	"Try the light theme!",
 	"gg ez launch!",
 	"Keyboard-first, always!",
-	"One heavy stroke: you are here.",
 	"Mine deeper. Type faster.",
 }
 

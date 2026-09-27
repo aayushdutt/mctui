@@ -9,50 +9,67 @@ import (
 	"github.com/aayushdutt/mctui/internal/core"
 	"github.com/aayushdutt/mctui/internal/launch"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
-// Advancement-style copy (spec M3.2): done reads as an unlocked advancement,
-// running keeps the technical name in parens, errors stay plain (no joke).
-func TestLaunch_StepRowCopy(t *testing.T) {
-	if got := stepRowText(stepInfo{name: "Checking Java", status: "done"}); got != "Advancement made: Java acquired" {
-		t.Fatalf("done copy = %q", got)
+// Steps show their real names; only the final step reads as what the user is
+// waiting for.
+func TestLaunch_StepLabels(t *testing.T) {
+	if got := stepLabel(stepInfo{name: "Downloading assets", status: "running"}); got != "Downloading assets" {
+		t.Errorf("running label = %q", got)
 	}
-	if got := stepRowText(stepInfo{name: "Downloading assets", status: "running"}); got != "Punching trees… (downloading assets)" {
-		t.Fatalf("running copy = %q", got)
-	}
-	// Errors never get flavor text.
-	if got := stepRowText(stepInfo{name: "Downloading assets", status: "error"}); got != "Downloading assets" {
-		t.Fatalf("error copy must stay plain, got %q", got)
-	}
-	// Unmapped step (e.g. starter mods) falls back to its plain name while running.
-	if got := stepRowText(stepInfo{name: "Installing starter mods", status: "running"}); got != "Installing starter mods" {
-		t.Fatalf("unmapped running copy = %q", got)
+	if got := stepLabel(stepInfo{name: "Launching", status: "pending"}); got != "Starting Minecraft" {
+		t.Errorf("final step label = %q", got)
 	}
 }
 
-// The XP bar fills proportionally, clamps, and always shows a percentage.
-func TestLaunch_XPBar(t *testing.T) {
+// The progress bar fills proportionally, clamps, and shows the percentage.
+func TestLaunch_ProgressBar(t *testing.T) {
 	restoreDark(t)
-	empty := xpBar(0, 40)
-	full := xpBar(1, 40)
-	if strings.Contains(empty, "▰") {
-		t.Error("0% bar should have no filled segments")
+	empty := ansi.Strip(progressBar(0, 40))
+	full := ansi.Strip(progressBar(1, 40))
+	if strings.Contains(empty, "━") || !strings.Contains(empty, "0%") {
+		t.Errorf("0%% bar = %q", empty)
 	}
-	if strings.Contains(full, "▱") {
-		t.Error("100% bar should have no empty segments")
+	if strings.Contains(full, "─") || !strings.Contains(full, "100%") {
+		t.Errorf("100%% bar = %q", full)
 	}
-	if !strings.Contains(empty, "0%") || !strings.Contains(full, "100%") {
-		t.Error("xp bar should render the percentage")
+	for _, p := range []float64{-0.5, 1.5} {
+		if w := lipgloss.Width(progressBar(p, 40)); w != 40 {
+			t.Errorf("bar at %v is %d wide, want 40", p, w)
+		}
 	}
-	// Over/under-range percentages clamp rather than panic or overflow.
-	_ = xpBar(-0.5, 40)
-	_ = xpBar(1.5, 40)
 }
 
-// Leaving the launch screen while a launch is still in progress must cancel it
-// (CancelLaunch tears down the launch context + status channel) rather than just
-// navigating home and leaking the launch goroutine. Regression test for the
-// Phase-1 review finding: the palette "Back to home" verb bypassed cancellation.
+// Overall progress only moves forward (the launcher mixes a download step's own
+// fraction with 0-progress info and log statuses) and reads 100% once playing.
+func TestLaunch_ProgressIsMonotonicAndFullWhilePlaying(t *testing.T) {
+	restoreDark(t)
+	m := NewLaunchModel(&core.Instance{Name: "W", Version: "1.21"}, config.DefaultConfig())
+	steps := []launch.Status{
+		{Step: "Checking Java", Progress: 0},
+		{Step: "Downloading libraries", Progress: 0.5},
+		{Step: "Downloading libraries", Progress: 0.2}, // stale/lower fraction
+		{Step: "Playing", LogLine: &launch.LogLine{Text: "x"}},
+	}
+	last := -1.0
+	for _, st := range steps[:3] {
+		m.Update(LaunchStatusUpdate{Status: st})
+		if m.percent < last {
+			t.Fatalf("progress went backwards: %.2f -> %.2f", last, m.percent)
+		}
+		last = m.percent
+	}
+	if m.percent <= 0.2 || m.percent >= 0.4 {
+		t.Errorf("halfway through step 2 of 5, progress = %.2f, want ~0.3", m.percent)
+	}
+	m.Update(LaunchStatusUpdate{Status: launch.Status{Step: "Playing"}})
+	if m.percent != 1 {
+		t.Errorf("playing progress = %.2f, want 1", m.percent)
+	}
+}
+
 func TestLaunch_LeaveWhileInProgressCancels(t *testing.T) {
 	restoreDark(t)
 	m := NewLaunchModel(&core.Instance{Name: "W", Version: "1.21", Loader: "fabric"}, config.DefaultConfig())
@@ -107,12 +124,14 @@ func cmdMsg(cmd tea.Cmd) tea.Msg {
 // esc/q while the game runs used to CancelLaunch — which SIGKILLed Minecraft.
 // Leaving now returns home and the game keeps running.
 func TestLaunch_LeavingWhilePlayingKeepsTheGame(t *testing.T) {
-	for _, k := range []string{"esc", "q"} {
-		m := playingLaunchModel(t)
-		_, cmd := m.Update(keyMsg(k))
-		if _, ok := cmdMsg(cmd).(LeaveLaunchScreen); !ok {
-			t.Errorf("%s while playing: got %T, want LeaveLaunchScreen", k, cmdMsg(cmd))
-		}
+	m0 := playingLaunchModel(t)
+	_, cmd0 := m0.Update(keyMsg("esc"))
+	if _, ok := cmdMsg(cmd0).(LeaveLaunchScreen); !ok {
+		t.Errorf("esc while playing: got %T, want LeaveLaunchScreen", cmdMsg(cmd0))
+	}
+	// q only quits from home; here it does nothing (it never stops the game).
+	if _, cmd := playingLaunchModel(t).Update(keyMsg("q")); cmdMsg(cmd) != nil {
+		t.Errorf("q on the launch screen should do nothing, got %T", cmdMsg(cmd))
 	}
 	m := playingLaunchModel(t)
 	items := m.launchPaletteItems()

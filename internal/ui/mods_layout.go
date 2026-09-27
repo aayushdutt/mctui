@@ -1,6 +1,10 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/dustin/go-humanize"
+)
 
 // Mods screen vertical layout: ModsModel.SetSize derives bubble list heights from the terminal so
 // split/stacked panes and the footer fit. See mods_layout_test.go for size invariants.
@@ -13,70 +17,51 @@ import "fmt"
 const (
 	modsOuterPadY = 0 // single-shell inset: the leaf view no longer self-pads (AppShellStyle owns it)
 
-	modsHeaderLines = 4 // title + context + rule + header margin
+	modsHeaderLines = 2 // AppHeader + its bottom margin
 
 	modsPanelBorderV = 2 // rounded border top + bottom (one pane)
 
-	modsSplitInterBlockGaps = 2 // blank lines: under header, above help
+	modsSplitInterBlockGaps = 1 // blank line above help (the header's margin is its gap)
 
-	// Upper bound for right-column stack above the Modrinth list (query, status,
-	// meta, hint). The "Discover" title now lives in the panel border, not here.
-	modsRightColumnChromeLines = 7
-	// Single-line kit SectionHeader under that stack (▸ title ──).
-	modsBrowseSectionHdrLines = 1
+	// Right-column stack above the results: the search line, the heading (or a
+	// status in its place), and a blank line (buildModrinthChrome).
+	modsRightColumnChromeLines = 3
+	// The results heading shares the status line, so it adds nothing.
+	modsBrowseSectionHdrLines = 0
 
-	// Installed pane: banner only (note, dialog, or toast). Its title lives in
-	// the panel border now.
-	modsLibraryChromeLines = 3
+	// Installed pane: one banner line (empty hint, error, or toast) above the list.
+	// (In split layout the pane pads this to the Discover chrome so the two
+	// lists' rows line up; that's free, the right column is the taller one.)
+	modsLibraryChromeLines = 1
 )
 
-// modsScreenHelpItems is the full footer: one line, six hints, ending in `? help`.
-// The long tail (←→ panes, r refresh, : palette) lives in the `?` overlay.
-func modsScreenHelpItems() []KeyHint {
-	return []KeyHint{
-		{"tab", "panes"},
-		{"/", "search"},
-		{"↵", "add"},
-		{"d", "remove"},
-		{"esc", "home"},
-		{"?", "help"},
-	}
-}
-
-func modsScreenHelpItemsCompact() []KeyHint {
-	return []KeyHint{
-		{"tab", "pane"},
-		{"/", "search"},
-		{"↵", "add"},
-		{"esc", "home"},
-		{"?", "help"},
-	}
-}
-
-func modsScreenHelpItemsMicro() []KeyHint {
-	return []KeyHint{
-		{"tab", "pane"},
-		{"↵", "add"},
-		{"esc", "home"},
-		{"?", "help"},
-	}
-}
-
-// modsHelpItemsPick selects footer tiers so layout math matches what View renders.
-func modsHelpItemsPick(termH, termW int) []KeyHint {
-	switch {
-	case termH >= 42 && termW >= 52:
-		return modsScreenHelpItems()
-	case termH >= 22:
-		return modsScreenHelpItemsCompact()
+// modsFooterItems returns the footer hints for the focused pane — only keys
+// that work there, ending in ? help where ? isn't typed into the search field.
+func modsFooterItems(focus modsPanel) []KeyHint {
+	switch focus {
+	case panelInstalled:
+		return []KeyHint{{"d", "remove"}, {"→", "discover"}, {"/", "search"}, {"esc", "home"}, {"?", "help"}}
+	case panelQuery:
+		return []KeyHint{{"↵", "search"}, {"↓", "results"}, {"tab", "next pane"}, {"esc", "done"}}
 	default:
-		return modsScreenHelpItemsMicro()
+		return []KeyHint{{"↵", "install"}, {"←", "installed"}, {"/", "search"}, {"esc", "home"}, {"?", "help"}}
 	}
 }
 
-// modsHelpBodyMaxWidth matches ModsModel.View: modsRenderHelp(..., m.width-6).
+// modsInstallingFooterItems is the footer while a mod downloads.
+func modsInstallingFooterItems() []KeyHint {
+	return []KeyHint{{"esc", "cancel download"}, {"↑↓", "browse"}, {"tab", "next pane"}, {"?", "help"}}
+}
+
+// modsFooterVariants are all the footers the screen can show. The height budget
+// uses the tallest, so moving focus can never change the layout.
+func modsFooterVariants() [][]KeyHint {
+	return [][]KeyHint{modsFooterItems(panelInstalled), modsFooterItems(panelQuery), modsFooterItems(panelBrowse), modsInstallingFooterItems()}
+}
+
+// modsHelpBodyMaxWidth matches ModsModel.View: modsRenderHelp(..., m.width).
 func modsHelpBodyMaxWidth(termW int) int {
-	return max(1, termW-6)
+	return max(1, termW)
 }
 
 // modsRenderHelp renders the footer hint bar through the shared kit. View and
@@ -89,8 +74,13 @@ func modsFooterHelpLinesFromItems(items []KeyHint, termW int) int {
 	return footerHelpHeight(items, modsHelpBodyMaxWidth(termW))
 }
 
+// modsFooterHelpLines is the footer height budget: the tallest variant.
 func modsFooterHelpLines(termH, termW int) int {
-	return modsFooterHelpLinesFromItems(modsHelpItemsPick(termH, termW), termW)
+	h := 0
+	for _, items := range modsFooterVariants() {
+		h = max(h, modsFooterHelpLinesFromItems(items, termW))
+	}
+	return h
 }
 
 // modsLayoutSplitFixedLines is vertical space (in rows) used in split layout before list viewports and help.
@@ -117,31 +107,26 @@ func modsSplitListViewportHeight(termH, termW int) int {
 	return listH
 }
 
-// modsCompactFooterItems matches footer choice in compact (stacked) layout for SetSize and View.
-func modsCompactFooterItems(termH, termW int) []KeyHint {
-	if termH >= 40 {
-		return modsHelpItemsPick(termH, termW)
-	}
-	return modsScreenHelpItemsMicro()
-}
-
 // modsCompactListHeights splits available rows between installed and Modrinth stacks.
 func modsCompactListHeights(termH, termW int) (libListH, browseListH int) {
 	if termH < 1 {
 		return 1, 1
 	}
-	helpItems := modsCompactFooterItems(termH, termW)
-	helpH := modsFooterHelpLinesFromItems(helpItems, termW)
+	helpH := modsFooterHelpLines(termH, termW)
 	libPaneShell := modsPanelBorderV + modsLibraryChromeLines
 	browsePaneShell := modsPanelBorderV + modsRightColumnChromeLines + modsBrowseSectionHdrLines
-	stackGaps := 3 // header→installed, installed→browse, browse→help
+	stackGaps := 2 // installed→browse, browse→help (the header carries its own gap)
 	preList := modsOuterPadY + modsHeaderLines + stackGaps + helpH
 	room := termH - preList - libPaneShell - browsePaneShell
 	if room < 2 {
 		return 1, 1
 	}
-	// Browse list gets the lion’s share of remaining rows.
-	libListH = max(2, min(6, max(1, room/4)))
+	// Browse list gets the lion’s share of remaining rows; installed gets about a
+	// third — two or three of its two-line rows.
+	libListH = max(2, min(9, room/3))
+	if room >= 6 {
+		libListH = max(3, libListH) // one two-line row + the page dots
+	}
 	browseListH = room - libListH
 	if browseListH < 2 {
 		browseListH = 2
@@ -154,6 +139,8 @@ func modsCompactListHeights(termH, termW int) (libListH, browseListH int) {
 	return libListH, browseListH
 }
 
+// formatModHitCount formats Modrinth's total hit count: "5,056", "12.3K",
+// "1.2M".
 func formatModHitCount(total int) string {
 	if total >= 1_000_000 {
 		return fmt.Sprintf("%.1fM", float64(total)/1_000_000)
@@ -161,5 +148,5 @@ func formatModHitCount(total int) string {
 	if total >= 10_000 {
 		return fmt.Sprintf("%.1fK", float64(total)/1_000)
 	}
-	return fmt.Sprintf("%d", total)
+	return humanize.Comma(int64(total))
 }

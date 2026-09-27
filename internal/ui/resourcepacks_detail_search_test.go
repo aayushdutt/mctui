@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Pressing esc while still typing the global-search filter must fully leave
@@ -83,8 +84,8 @@ func TestRPSearchJump(t *testing.T) {
 	}
 }
 
-// Applied-vs-new markers: a built pack renders [x], a newly added one [+], and a
-// removed-but-built one [-].
+// Applied-vs-new markers: a built pack and a newly added one render ● (green /
+// amber), a removed-but-built one ○ amber with its name struck through.
 func TestRPAppliedMarkers(t *testing.T) {
 	m := rpTreeModel(t)
 	// Build ClearGlass into the applied snapshot.
@@ -95,23 +96,24 @@ func TestRPAppliedMarkers(t *testing.T) {
 	m.selectCategoryByDisplay("Aesthetic")
 	m.rebuildPackItems()
 
-	check := func(name, wantBox string) {
+	check := func(name, glyph string, color lipgloss.Color) {
+		t.Helper()
 		i := rpPackIndexByName(m, name)
 		if i < 0 {
 			t.Fatalf("%s not in pack list", name)
 		}
-		title := m.packs.Items()[i].(rpPackItem).Title()
-		if !strings.Contains(title, wantBox) {
-			t.Errorf("%s title %q, want box %q", name, title, wantBox)
+		mark, _, _ := m.packs.Items()[i].(rpPackItem).titleParts()
+		if want := lipgloss.NewStyle().Foreground(color).Render(glyph) + " "; mark != want {
+			t.Errorf("%s mark %q, want %q", name, mark, want)
 		}
 	}
-	check("ClearGlass", "[x]")      // built + in cart
-	check("BorderlessGlass", "[+]") // newly added, pending
+	check("ClearGlass", rpGlyphOn, Active.Success)      // built + in cart
+	check("BorderlessGlass", rpGlyphOn, Active.Warning) // newly added, pending
 
-	// Now remove the applied pack from the cart -> pending removal [-].
+	// Now remove the applied pack from the cart -> pending removal.
 	m.sel.Toggle(m.catalog, "Aesthetic", "ClearGlass")
 	m.rebuildPackItems()
-	check("ClearGlass", "[-]")
+	check("ClearGlass", rpGlyphOff, Active.Warning)
 }
 
 // The highlighted pack's full description renders in the wide status line (the

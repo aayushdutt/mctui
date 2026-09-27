@@ -5,27 +5,70 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// underlineField renders a text input as a form field WITHOUT a box: a muted
-// label over the input line, the line carrying a single bottom-border underline
-// that turns accent (Primary) on focus. An optional faint hint sits beneath. This
-// is the shared field renderer for the settings and edit-instance screens (twins)
-// — the underline replaces the old rounded box whose whole border turned green on
-// focus, so focus reads as one accent stroke consistent with the rest of the UI.
-func underlineField(label, hint string, in textinput.Model, focused bool) string {
-	lbl := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(label)
+// formLabelW is the label column width of the settings / edit-instance forms.
+const formLabelW = 22
 
-	under := Active.BorderSubtle
+// formInput builds a text input for a form row: no prompt (the label column
+// says what it is), themed, CharLimit 512.
+func formInput(value, placeholder string) textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.SetValue(value)
+	ti.Placeholder = placeholder
+	ti.CharLimit = 512
+	ti.Width = 48
+	ThemeTextInput(&ti)
+	return ti
+}
+
+// formValueWidth is the width left for a form row's value at screen width w.
+func formValueWidth(w int) int {
+	return max(12, min(60, w-2-formLabelW-1))
+}
+
+// formRow renders one form field as a label/value row:
+//
+//	› Java path             /usr/bin/java
+//	                        Empty = find or download the right Java.
+//
+// The focused row gets the › pointer and a bright label, and its hint (the
+// field's help) shows in a dim line under the value; other rows show just a dim
+// label and the value. width is the screen width, for wrapping the hint.
+func formRow(label, value, hint string, focused bool, width int) string {
+	lbl := lipgloss.NewStyle().Foreground(Active.TextDim).Width(formLabelW)
 	if focused {
-		under = Active.Primary
+		lbl = lbl.Bold(true).Foreground(Active.TextStrong)
 	}
-	line := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, true, false). // bottom edge only
-		BorderForeground(under).
-		Render(in.View())
+	row := rowMarker(focused) + lbl.Render(label) + value
+	if !focused || hint == "" {
+		return row
+	}
+	indent := lipgloss.NewStyle().PaddingLeft(2 + formLabelW)
+	h := lipgloss.NewStyle().Foreground(Active.TextMuted).Width(formValueWidth(width)).Render(hint)
+	return lipgloss.JoinVertical(lipgloss.Left, row, indent.Render(h))
+}
 
-	parts := []string{lbl, line}
-	if hint != "" {
-		parts = append(parts, lipgloss.NewStyle().Foreground(Active.TextFaint).Render(hint))
+// formSection renders a group heading inside a form ("Java"), aligned with the
+// row labels.
+func formSection(title string) string {
+	return "  " + lipgloss.NewStyle().Bold(true).Foreground(Active.TextMuted).Render(title)
+}
+
+// formToggle renders an on/off value: "On" in the success color, "Off" dim.
+func formToggle(on bool) string {
+	if on {
+		return lipgloss.NewStyle().Foreground(Active.Success).Render("On")
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return lipgloss.NewStyle().Foreground(Active.TextDim).Render("Off")
+}
+
+// formDiscardHint is shown while a first esc on a form with unsaved changes is
+// waiting for a second.
+func formDiscardHint() string {
+	return lipgloss.NewStyle().Foreground(Active.Warning).Render(GlyphWarn + " Unsaved changes — esc again to discard, ↵ to save.")
+}
+
+// clampStep moves index i by dir within [0, n), stopping at the ends.
+func clampStep(i, dir, n int) int {
+	return min(n-1, max(0, i+dir))
 }

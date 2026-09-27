@@ -23,7 +23,6 @@ const (
 	focusEditMemory
 	focusEditJavaPath
 	focusEditJVMArgs
-	focusEditSave
 )
 
 // editInstanceFocusOrder is the fixed Tab order of the form.
@@ -32,7 +31,6 @@ var editInstanceFocusOrder = []editInstanceFocus{
 	focusEditMemory,
 	focusEditJavaPath,
 	focusEditJVMArgs,
-	focusEditSave,
 }
 
 // EditInstanceModel edits the per-instance override fields of a [core.Instance].
@@ -54,6 +52,11 @@ type EditInstanceModel struct {
 
 	saveErr string
 
+	// initial is the form as it opened; discardArmed is set by a first esc
+	// with unsaved changes (see SettingsModel).
+	initial      [4]string
+	discardArmed bool
+
 	palette CommandPalette
 
 	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
@@ -67,10 +70,10 @@ type EditInstanceModel struct {
 func (m *EditInstanceModel) helpGroups() []HelpGroup {
 	return []HelpGroup{
 		{Title: "Navigate", Entries: []HelpEntry{
-			{"tab / ↑↓", "move between fields"},
+			{"↑↓ / tab", "move between fields"},
 		}},
 		{Title: "Act", Entries: []HelpEntry{
-			{"enter", "save"},
+			{"enter", "save (from any field)"},
 		}},
 		{Title: "General", Entries: []HelpEntry{
 			{":", "command palette"},
@@ -83,27 +86,18 @@ func (m *EditInstanceModel) helpGroups() []HelpGroup {
 // NewEditInstanceModel seeds the form from inst (read-only; nothing is mutated
 // here — the app applies the edit when [InstanceEdited] lands).
 func NewEditInstanceModel(inst *core.Instance) *EditInstanceModel {
-	mk := func(value, placeholder string, width int) textinput.Model {
-		ti := textinput.New()
-		ti.SetValue(value)
-		ti.Placeholder = placeholder
-		ti.CharLimit = 512
-		ti.Width = width
-		ThemeTextInput(&ti)
-		return ti
-	}
-
 	xmx, rest := splitXmx(inst.JVMArgs)
 
 	m := &EditInstanceModel{
 		inst:     inst,
 		focus:    focusEditName,
-		name:     mk(inst.Name, "Display name", 48),
-		memory:   mk(xmx, "e.g. 4G or 2048M (leave empty for default)", 48),
-		javaPath: mk(inst.JavaPath, "Auto-detect (leave empty)", 48),
-		jvmArgs:  mk(strings.Join(rest, " "), "Extra space-separated flags (optional)", 48),
+		name:     formInput(inst.Name, "Display name"),
+		memory:   formInput(xmx, "Default"),
+		javaPath: formInput(inst.JavaPath, "Automatic"),
+		jvmArgs:  formInput(strings.Join(rest, " "), "None"),
 	}
 	m.applyFocus(focusEditName)
+	m.initial = m.values()
 	m.palette = NewCommandPalette("Edit instance · commands", "Run a command…", m.editPaletteItems)
 	return m
 }
@@ -126,7 +120,7 @@ func (m *EditInstanceModel) editPaletteItems() []PaletteItem {
 func (m *EditInstanceModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	w := min(60, max(24, width-6))
+	w := formValueWidth(width)
 	m.name.Width = w
 	m.memory.Width = w
 	m.javaPath.Width = w
@@ -136,6 +130,20 @@ func (m *EditInstanceModel) SetSize(width, height int) {
 // Init implements tea.Model.
 func (m *EditInstanceModel) Init() tea.Cmd {
 	return textinput.Blink
+}
+
+func (m *EditInstanceModel) values() [4]string {
+	return [4]string{m.name.Value(), m.memory.Value(), m.javaPath.Value(), m.jvmArgs.Value()}
+}
+
+// moveFocus steps focus up/down the fields, stopping at the first and last.
+func (m *EditInstanceModel) moveFocus(dir int) {
+	for i, f := range editInstanceFocusOrder {
+		if f == m.focus {
+			m.applyFocus(editInstanceFocusOrder[clampStep(i, dir, len(editInstanceFocusOrder))])
+			return
+		}
+	}
 }
 
 func (m *EditInstanceModel) focusedInput() *textinput.Model {
@@ -182,6 +190,9 @@ func (m *EditInstanceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.palette.Active {
 			return m, m.palette.Update(msg)
 		}
+		if msg.String() != "esc" {
+			m.discardArmed = false
+		}
 		// Help overlay is read-only: it swallows every key, and only ? / esc / q
 		// dismiss it.
 		if m.help {
@@ -207,12 +218,23 @@ func (m *EditInstanceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "esc":
+			if m.values() != m.initial && !m.discardArmed {
+				// Don't throw typed changes away on one keypress.
+				m.discardArmed = true
+				return m, nil
+			}
 			return m, func() tea.Msg { return NavigateToHome{} }
-		case "tab", "down":
+		case "tab":
 			m.cycleFocus(1)
 			return m, textinput.Blink
-		case "shift+tab", "up":
+		case "shift+tab":
 			m.cycleFocus(-1)
+			return m, textinput.Blink
+		case "down":
+			m.moveFocus(1)
+			return m, textinput.Blink
+		case "up":
+			m.moveFocus(-1)
 			return m, textinput.Blink
 		case "enter":
 			return m.submit()
@@ -266,46 +288,42 @@ func (m *EditInstanceModel) submit() (*EditInstanceModel, tea.Cmd) {
 
 // View implements tea.Model.
 func (m *EditInstanceModel) View() string {
-	if m.help {
-		return boundToScreen(HelpOverlay("Edit instance", m.helpGroups(), m.width, m.height), m.width, m.height)
+	base := m.baseView()
+	switch {
+	case m.help:
+		return Overlay(base, HelpCard("Edit instance", m.helpGroups(), m.width, m.height), m.width, m.height)
+	case m.palette.Active:
+		return Overlay(base, m.palette.View(m.width, m.height), m.width, m.height)
 	}
-	if m.palette.Active {
-		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
-	}
+	return base
+}
 
-	header := ScreenHeader("Edit · "+m.inst.Name, "Per-instance overrides. Identity (version, loader) is fixed.")
+// baseView renders the screen itself (overlays composite over it in View).
+func (m *EditInstanceModel) baseView() string {
+	header := AppHeader(m.width, lipgloss.NewStyle().Foreground(Active.TextDim).
+		Render("Minecraft "+m.inst.Version+" · "+loaderDisplay(m.inst)), m.inst.Name, "Edit")
+	f := m.focus
 
-	nameBlock := underlineField("Name", "Display name only. Does not move or rename the instance folder.", m.name, m.focus == focusEditName)
-	memBlock := underlineField("Memory (max heap)", "Sets -Xmx. e.g. 4G or 2048M. Empty leaves the default.", m.memory, m.focus == focusEditMemory)
-	javaBlock := underlineField("Java path", "Leave empty to auto-detect or download.", m.javaPath, m.focus == focusEditJavaPath)
-	jvmBlock := underlineField("JVM arguments", "Space-separated. The -Xmx flag is managed by the Memory field above.", m.jvmArgs, m.focus == focusEditJVMArgs)
-
-	saveBtn := lipgloss.NewStyle().MarginTop(1).Render(Pill("Save", m.focus == focusEditSave))
-
-	errBlock := ""
-	if m.saveErr != "" {
-		errBlock = lipgloss.NewStyle().Foreground(Active.Error).MarginTop(1).Render(m.saveErr)
-	}
-
-	help := lipgloss.NewStyle().MarginTop(1).Render(KeyHints(max(40, m.width-4),
-		KeyHint{"tab", "move"},
-		KeyHint{"enter", "save"},
-		KeyHint{"esc", "cancel"},
-		KeyHint{"?", "help"},
-	))
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
+	rows := []string{
+		header, "",
+		formSection("Instance"),
+		formRow("Name", m.name.View(), "Display name only; the folder isn't renamed.", f == focusEditName, m.width),
 		"",
-		nameBlock,
-		memBlock,
-		javaBlock,
-		jvmBlock,
-		saveBtn,
-		errBlock,
-		help,
-	)
+		formSection("Java"),
+		formRow("Memory", m.memory.View(), "Max heap, e.g. 4G or 2048M. Empty uses the default.", f == focusEditMemory, m.width),
+		formRow("Java path", m.javaPath.View(), "Empty finds or downloads the right Java for this version.", f == focusEditJavaPath, m.width),
+		formRow("JVM arguments", m.jvmArgs.View(), "Extra space-separated flags. Memory is set above.", f == focusEditJVMArgs, m.width),
+	}
+	if m.saveErr != "" {
+		rows = append(rows, "", lipgloss.NewStyle().Foreground(Active.Error).Render(GlyphFail+" "+m.saveErr))
+	}
+	if m.discardArmed {
+		rows = append(rows, "", formDiscardHint())
+	}
+	// Every field is a text input, so ? and : type into it — not offered here.
+	rows = append(rows, "", KeyHints(m.width,
+		KeyHint{"↵", "save"}, KeyHint{"↑↓", "move"}, KeyHint{"esc", "cancel"}))
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
 // splitXmx surfaces the -Xmx value (e.g. "4G") out of a JVM-args slice and

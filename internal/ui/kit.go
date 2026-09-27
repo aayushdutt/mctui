@@ -7,82 +7,72 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// kit.go is the shared UI vocabulary every screen builds from: one set of
-// glyphs, one panel, one key-hint bar, one rule, one header. Screens compose
-// these instead of hand-rolling borders, separators, and icons — that's what
-// keeps the TUI visually consistent. The look is "bordered panels": rounded,
-// titled cards anchor content, accent section headers and rules separate it.
+// kit.go is the shared UI vocabulary every screen builds from: one header, one
+// key-hint bar, one selection bar, one rule, one small set of glyphs. Screens
+// compose these instead of hand-rolling borders, separators, and icons — that's
+// what keeps the TUI consistent.
+//
+// The look: quiet chrome, loud content. Structure comes from whitespace, one
+// hairline rule under each pane title, and a three-step gray ramp (content,
+// metadata, hints). The accent color only ever means "you are here / this is a
+// key": the selection bar, the focused title, key glyphs. Green, amber, and red
+// are reserved for state. Boxes are only for things that float (dialogs, the
+// palette, help).
 
 // Monochrome glyph set — consistent cell widths across terminals (unlike color
-// emoji). One brand emoji ([BrandGlyph]) is kept for the wordmark.
+// emoji).
 const (
 	GlyphDone    = "✓" // completed / success
 	GlyphFail    = "✗" // error / failure
-	GlyphRunning = "◐" // in progress
 	GlyphPending = "○" // not started
 	GlyphPointer = "▸" // section marker / menu cursor
 	GlyphDot     = "●" // status dot
 	GlyphWarn    = "▲" // warning
-	BrandGlyph   = "🎮"
-
-	// SelectBar is the accent bar that marks the selected/hovered row — the one
-	// selection idiom shared across the whole UI. The bubbles list delegate
-	// paints it as a thick left border (see ThemeListDelegate); hand-rendered
-	// rows draw it via [rowMarker]. Keeping a single glyph here is what makes the
-	// Instances list, the detail rows, and the overlay menus all highlight the
-	// same way.
-	SelectBar = "┃"
 )
 
 // rowMarker returns the 2-cell leading gutter for a hand-rendered selectable
-// row: an accent [SelectBar] when selected, two blanks otherwise. The width is
-// constant so selected and unselected rows stay column-aligned, and it mirrors
-// the bubbles delegate's selected left bar so every selectable row in the app
-// shares one selection cue. Pair it with a bold/accent label on the selected
-// row.
+// row: the accent [SelectMark] plus a space when selected, two blanks
+// otherwise. The width is constant so selected and unselected rows stay
+// column-aligned, and it matches the pointer the list delegates draw, so every
+// selectable row in the app shares one selection cue. Pair it with a bright,
+// bold label on the selected row.
 func rowMarker(selected bool) string {
 	if !selected {
 		return "  "
 	}
-	return lipgloss.NewStyle().Foreground(Active.Primary).Bold(true).Render(SelectBar) + " "
+	return selectMark(Active.Primary) + " "
 }
 
-// ActionButton renders an inline action affordance (e.g. "Add mods…") as a
-// button that is visually distinct from selectable list rows: a leading "+"
-// badge inside a pill. Unfocused it is an outlined "ghost" button — accent text
-// on a faint fill (the same chip language as the list's "new" badge); focused it
-// fills with the accent color like the primary Play button, signalling it is the
-// active target. Single line, so it is safe inside a tight row list. This is the
-// one place inline actions get their identity — route every "+ Add…" style row
-// through it so they read the same everywhere.
-func ActionButton(label string, focused bool) string {
-	st := lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	if focused {
-		st = st.Foreground(OnColor(Active.Primary)).Background(Active.Primary)
-	} else {
-		st = st.Foreground(Active.Primary).Background(Active.BorderFaint)
-	}
-	return st.Render("+ " + label)
-}
-
-// Zone renders a titled content region WITHOUT a box: a bold title line — an
-// accent ┃ focus bar + accent label when focused, a muted label (two-space
-// gutter, no bar) when not — over a dim [Rule], over the body. It is the
-// in-layout replacement for [Panel]: structure comes from the title, the rule,
-// and whitespace instead of a rounded border, so it reclaims the border's two
-// columns and bottom row and keeps the focus cue consistent with the ┃ selection
-// idiom. Panel stays for FLOATING overlays (dialogs, palette, help), where the
-// box's containment is real information.
+// Zone renders a titled content region WITHOUT a box: a bold title line — the
+// accent color when focused, muted when not — over a dim [Rule], over the body.
+// It is the in-layout replacement for [Panel]: structure comes from the title,
+// the rule, and whitespace instead of a rounded border. The title sits in the
+// same 2-cell gutter as list rows, so it lines up with their text. Floating
+// things (dialogs, palette, help) use [Card].
 //
 // width is the rule width; body is rendered flush-left beneath it (size the body
 // to width before passing it in). An empty title renders just the rule + body.
 func Zone(title, body string, width int, focused bool) string {
+	return ZoneR(title, "", body, width, focused)
+}
+
+// ZoneR is [Zone] with a right-aligned annotation on the title line — a count
+// ("5") or a status ("● Ready"). The annotation is dropped if it doesn't fit.
+func ZoneR(title, right, body string, width int, focused bool) string {
 	// Truncate the title to the pane so a long one (e.g. an accumulating
 	// resource-packs breadcrumb) can't widen the Zone past its column and shove
-	// the neighbouring pane off the frame — Panel used to clamp this; Zone must too.
-	// The 2-cell gutter is the ┃ + space (focused) or two spaces (not).
+	// the neighbouring pane off the frame.
+	// The title sits after a 2-cell gutter (aligned with list-row text).
+	room := width - 2
+	if right != "" {
+		if lipgloss.Width(right)+4 < room {
+			room -= lipgloss.Width(right) + 2
+		} else {
+			right = ""
+		}
+	}
 	if title != "" {
-		title = ansi.Truncate(title, max(1, width-2), "…")
+		title = ansi.Truncate(title, max(1, room), "…")
 	}
 
 	var head string
@@ -90,14 +80,16 @@ func Zone(title, body string, width int, focused bool) string {
 	case title == "":
 		head = ""
 	case focused:
-		bar := lipgloss.NewStyle().Foreground(Active.Primary).Bold(true).Render(SelectBar)
 		label := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render(title)
-		head = bar + " " + label
+		head = "  " + label
 	default:
 		label := lipgloss.NewStyle().Bold(true).Foreground(Active.TextMuted).Render(title)
 		head = "  " + label
 	}
 
+	if head != "" && right != "" {
+		head = StatusBar(head, right, width)
+	}
 	parts := make([]string, 0, 3)
 	if head != "" {
 		parts = append(parts, head, Rule(width))
@@ -106,20 +98,6 @@ func Zone(title, body string, width int, focused bool) string {
 		parts = append(parts, body)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
-}
-
-// Pill renders a label as a ghost→filled pill: accent text on a faint fill,
-// filling with the accent color (WCAG-safe text via OnColor) when focused. Same
-// affordance as [ActionButton] but without the leading "+", for standalone
-// actions like Save.
-func Pill(label string, focused bool) string {
-	st := lipgloss.NewStyle().Bold(true).Padding(0, 2)
-	if focused {
-		st = st.Foreground(OnColor(Active.Primary)).Background(Active.Primary)
-	} else {
-		st = st.Foreground(Active.Primary).Background(Active.BorderFaint)
-	}
-	return st.Render(label)
 }
 
 // ClampWidth truncates every line of s to at most width cells — a defensive
@@ -133,6 +111,38 @@ func ClampWidth(s string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width).Render(s)
 }
 
+// ClampHeight keeps at most the first height lines of s — the vertical twin of
+// ClampWidth. A view taller than the terminal would otherwise lose its TOP rows
+// (bubbletea keeps the bottom), i.e. the header that says where you are.
+func ClampHeight(s string, height int) string {
+	if height < 1 {
+		return s
+	}
+	if lines := strings.Split(s, "\n"); len(lines) > height {
+		return strings.Join(lines[:height], "\n")
+	}
+	return s
+}
+
+// ReplaceLastLine puts line on the last row of a height-row screen (padding
+// with blank rows when the view is shorter) — used for app-level prompts.
+func ReplaceLastLine(s string, height int, line string) string {
+	lines := strings.Split(s, "\n")
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	lines[len(lines)-1] = line
+	return strings.Join(lines, "\n")
+}
+
+// QuitWhilePlayingPrompt is the confirmation shown after a first q / ctrl+c
+// while a game is still running.
+func QuitWhilePlayingPrompt(width int) string {
+	return lipgloss.NewStyle().Foreground(Active.Warning).Render(ansi.Truncate(
+		GlyphWarn+" Minecraft is still running — press again to quit mctui (the game keeps running; its playtime won't be recorded).",
+		max(1, width), "…"))
+}
+
 // Rule returns a themed horizontal rule (divider) of the given visible width.
 func Rule(width int) string {
 	if width < 1 {
@@ -141,12 +151,10 @@ func Rule(width int) string {
 	return lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render(strings.Repeat("─", width))
 }
 
-// SectionHeader renders an accent ▸ marker, a title, and a rule filling the rest
-// of width — the "Discover"-style header used to label a region.
+// SectionHeader renders a title and a rule filling the rest of width — used to
+// label a region inside a pane ("Discover ──────").
 func SectionHeader(title string, width int) string {
-	mark := lipgloss.NewStyle().Foreground(Active.Primary).Render(GlyphPointer + " ")
-	label := lipgloss.NewStyle().Bold(true).Foreground(Active.Title).Render(title)
-	head := mark + label
+	head := lipgloss.NewStyle().Bold(true).Foreground(Active.Title).Render(title)
 	rest := width - lipgloss.Width(head) - 1
 	if rest < 0 {
 		return head
@@ -154,29 +162,45 @@ func SectionHeader(title string, width int) string {
 	return head + " " + Rule(rest)
 }
 
-// ScreenHeader renders a consistent screen title with an optional subtitle line.
-func ScreenHeader(title, subtitle string) string {
-	t := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render(title)
-	if subtitle == "" {
-		return t
+// AppHeader is the one header every screen starts with: the "mctui" wordmark
+// and a breadcrumb trail on the left ("mctui › Survival World › Mods"), and
+// optional context flush right (account, counts, state). The last crumb — where
+// you are — is bright; earlier ones are dim. When both sides don't fit, the
+// right side is dropped and the trail truncated, so it's always one line.
+func AppHeader(width int, right string, crumbs ...string) string {
+	sep := lipgloss.NewStyle().Foreground(Active.TextFaint).Render("  ›  ")
+	parts := []string{lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render("mctui")}
+	for i, c := range crumbs {
+		st := lipgloss.NewStyle().Foreground(Active.TextDim)
+		if i == len(crumbs)-1 {
+			st = lipgloss.NewStyle().Foreground(Active.TextStrong)
+		}
+		parts = append(parts, st.Render(c))
 	}
-	s := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(subtitle)
-	return lipgloss.JoinVertical(lipgloss.Left, t, s)
+	left := strings.Join(parts, sep)
+	if right != "" && lipgloss.Width(left)+2+lipgloss.Width(right) <= width {
+		return StatusBar(left, right, width)
+	}
+	return ansi.Truncate(left, max(1, width), "…")
 }
 
 // KeyHint is a single key + action label, e.g. {"↵", "launch"}.
 type KeyHint struct{ Key, Label string }
 
-// KeyHints renders a consistent, width-aware hint bar: keys in the accent color,
-// labels muted, separated by a middot. Wraps to multiple lines to fit width.
+// KeyHints renders the width-aware hint bar used by every footer:
+//
+//	↵ play   n new   / search   ? help
+//
+// Keys bold in the accent, labels dim, no brackets or bullets — the color does
+// the grouping. Wraps to multiple lines to fit width.
 func KeyHints(width int, hints ...KeyHint) string {
-	keyStyle := lipgloss.NewStyle().Foreground(Active.Secondary)
-	lblStyle := lipgloss.NewStyle().Foreground(Active.TextFaint)
-	sep := lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("  ·  ")
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary)
+	lblStyle := lipgloss.NewStyle().Foreground(Active.TextDim)
+	const sep = "   "
 
 	items := make([]string, 0, len(hints))
 	for _, h := range hints {
-		item := keyStyle.Render("[" + h.Key + "]")
+		item := keyStyle.Render(h.Key)
 		if h.Label != "" {
 			item += " " + lblStyle.Render(h.Label)
 		}
@@ -185,17 +209,16 @@ func KeyHints(width int, hints ...KeyHint) string {
 	return joinWrapped(items, sep, width)
 }
 
-// footerHelpHeight is the rendered height of a one-line (or wrapped) KeyHints
-// footer plus its leading rule and top margin. The mods and resource-packs
-// vertical budgets share this so the "single shell owns the insets" layout keeps
-// one source of truth for footer height instead of two hand-copied formulas.
+// footerHelpHeight is the rendered height of a KeyHints footer (one line, or
+// more when it wraps) plus the blank line above it. The mods and resource-packs
+// vertical budgets share this with their View, so the two can't drift.
 func footerHelpHeight(items []KeyHint, bodyWidth int) int {
 	body := KeyHints(bodyWidth, items...)
 	lines := 1
 	if body != "" {
 		lines = strings.Count(body, "\n") + 1
 	}
-	return 1 + lines + 1 // rule + hint text + top margin
+	return 1 + lines // blank line + hint text
 }
 
 // StatusBar lays out left content and right content on one line, filling the gap
@@ -206,50 +229,6 @@ func StatusBar(left, right string, width int) string {
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
-}
-
-// Panel renders body inside a rounded border with the title set into the top
-// edge, accent-colored:
-//
-//	╭─ Title ─────────╮
-//	│ body            │
-//	╰─────────────────╯
-//
-// width is the total outer width. Body lines are padded/wrapped to fit.
-func Panel(title, body string, width int, accent lipgloss.Color) string {
-	if width < 4 {
-		width = 4
-	}
-	border := lipgloss.NewStyle().Foreground(accent)
-	inner := width - 2    // cells between the corner glyphs
-	contentW := width - 4 // inner minus one space of padding each side
-
-	var top string
-	if title != "" {
-		// Keep at least the leading dash, two pad spaces, and a closing dash.
-		if maxTitle := inner - 4; lipgloss.Width(title) > maxTitle {
-			title = ansi.Truncate(title, max(0, maxTitle), "…")
-		}
-		label := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(" " + title + " ")
-		dashes := inner - 1 - lipgloss.Width(label) // one leading ─ before the label
-		if dashes < 0 {
-			dashes = 0
-		}
-		top = border.Render("╭─") + label + border.Render(strings.Repeat("─", dashes)+"╮")
-	} else {
-		top = border.Render("╭" + strings.Repeat("─", inner) + "╮")
-	}
-
-	left := border.Render("│") + " "
-	right := " " + border.Render("│")
-	var rows []string
-	block := lipgloss.NewStyle().Width(contentW).Render(body) // pads every line to contentW, wraps long ones
-	for _, vl := range strings.Split(block, "\n") {
-		rows = append(rows, left+vl+right)
-	}
-
-	bottom := border.Render("╰" + strings.Repeat("─", inner) + "╯")
-	return strings.Join(append(append([]string{top}, rows...), bottom), "\n")
 }
 
 // joinWrapped joins items with sep, wrapping to a new line when the next item

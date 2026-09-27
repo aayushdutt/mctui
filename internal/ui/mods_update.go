@@ -17,9 +17,6 @@ import (
 func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
-		if m.installing {
-			return m, nil
-		}
 		// Ignore mouse events while the remove-confirm dialog is open, mirroring the
 		// KeyMsg dialog guard — otherwise a wheel event would clear the dialog and
 		// scroll the hidden list underneath.
@@ -40,7 +37,11 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.results.CursorUp()
 				}
 			case panelQuery:
+				// Scrolling the results from the search field moves focus to them,
+				// so Enter acts on the row you scrolled to (not a new search).
 				if len(m.results.Items()) > 0 {
+					m.query.Blur()
+					m.modsFocus = panelBrowse
 					m.results.CursorUp()
 				}
 			}
@@ -58,6 +59,8 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case panelQuery:
 				if len(m.results.Items()) > 0 {
+					m.query.Blur()
+					m.modsFocus = panelBrowse
 					m.results.CursorDown()
 				}
 			}
@@ -79,8 +82,26 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.installing && msg.String() != "esc" {
-			return m, nil
+		if m.installing {
+			// Browsing stays live during a download; only changes to the mods
+			// folder wait. Esc cancels the download and stays on the screen.
+			if msg.String() == "esc" {
+				m.CancelPending()
+				m.installSeq++ // its late result is stale now
+				m.installing = false
+				m.installingProjectID = ""
+				m.installOK = ""
+				m.installErr = "Download cancelled."
+				m.rebuildBrowseBadges()
+				return m, nil
+			}
+			// The search field keeps its letters and backspace.
+			if m.modsFocus != panelQuery {
+				switch msg.String() {
+				case "d", "backspace", "r", "R":
+					return m, nil
+				}
+			}
 		}
 
 		if m.modsDialog == modsDialogConfirmRemoveJar {
@@ -103,16 +124,23 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.clearModsDialog()
 				return m, nil
-			case "n", "N", "esc", "backspace":
-				m.clearModsDialog()
-				return m, nil
 			default:
+				if ConfirmCancels(msg.String()) {
+					m.clearModsDialog()
+				}
 				return m, nil
 			}
 		}
 
 		switch msg.String() {
 		case "esc":
+			if m.modsFocus == panelQuery && !m.installing {
+				// Esc leaves the search field (to the results under it), like
+				// every text field; a second esc goes home.
+				m.query.Blur()
+				m.modsFocus = panelBrowse
+				return m, nil
+			}
 			m.CancelPending()
 			if m.installing {
 				m.installing = false
@@ -122,7 +150,11 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return NavigateToHome{} }
 		case "tab", "shift+tab":
 			m.libraryToast = ""
-			m.cycleTab()
+			if msg.String() == "shift+tab" {
+				m.cycleTab(-1)
+			} else {
+				m.cycleTab(1)
+			}
 			if m.modsFocus == panelQuery {
 				return m, textinput.Blink
 			}
@@ -167,10 +199,10 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "left":
-			if m.modsFocus == panelBrowse || m.modsFocus == panelQuery {
+			// In the search field ←/→ move the text cursor (handled below).
+			if m.modsFocus == panelBrowse {
 				m.libraryToast = ""
 				m.modsFocus = panelInstalled
-				m.query.Blur()
 				return m, nil
 			}
 			if m.modsFocus == panelInstalled {
@@ -209,24 +241,17 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		// ↑/↓ never leave the focused pane: ←/→ (h/l) and tab switch panes. Inside
+		// the Discover pane the search field sits above its results, so ↓ from
+		// the field and ↑ from the first result move between those two.
 		if m.modsFocus == panelQuery && msg.String() == "up" {
-			m.modsFocus = panelInstalled
-			m.query.Blur()
-			if len(m.installed.Items()) > 0 {
-				m.installed.Select(len(m.installed.Items()) - 1)
-			}
 			return m, nil
 		}
 
 		if m.modsFocus == panelQuery && msg.String() == "enter" {
 			m.cancelSearch()
 			m.searchSeq++
-			if strings.TrimSpace(m.query.Value()) == "" {
-				m.results.Title = "Modrinth — popular"
-			} else {
-				m.results.Title = "Modrinth — search"
-			}
-			m.searchNotice = ""
+			m.clearSearchStatus()
 			return m, m.runSearchQuery()
 		}
 
@@ -238,12 +263,7 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancelSearch()
 				m.searchSeq++
 				seq := m.searchSeq
-				if strings.TrimSpace(m.query.Value()) == "" {
-					m.results.Title = "Modrinth — popular"
-				} else {
-					m.results.Title = "Modrinth — search"
-				}
-				m.searchNotice = ""
+				m.clearSearchStatus()
 				return m, tea.Batch(cmd, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
 					return modSearchDueMsg{seq: seq}
 				}))
@@ -255,23 +275,6 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modsFocus = panelQuery
 			m.query.Focus()
 			return m, textinput.Blink
-		}
-
-		if m.modsFocus == panelInstalled && (msg.String() == "up" || msg.String() == "k") && m.installed.Index() == 0 {
-			m.clearModsDialog()
-			m.libraryToast = ""
-			m.modsFocus = panelQuery
-			m.query.Focus()
-			return m, textinput.Blink
-		}
-		if m.modsFocus == panelInstalled && (msg.String() == "down" || msg.String() == "j") {
-			n := len(m.installed.Items())
-			if n > 0 && m.installed.Index() >= n-1 {
-				m.clearModsDialog()
-				m.libraryToast = ""
-				m.modsFocus = panelBrowse
-				return m, nil
-			}
 		}
 
 		if m.modsFocus == panelInstalled && msg.String() == "enter" {
@@ -351,14 +354,16 @@ func (m *ModsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.searchNotice = ""
 		}
-		if strings.TrimSpace(m.query.Value()) == "" {
-			m.results.Title = "Modrinth — popular"
-		} else {
-			m.results.Title = "Modrinth — search"
-		}
 		return m, nil
 
 	case ModInstallDoneMsg:
+		if msg.Seq != m.installSeq {
+			// A cancelled install reporting late: some of its jars may have
+			// landed, so refresh the lists, but leave the status (and any newer
+			// download) alone.
+			m.loadInstalledJarList()
+			return m, nil
+		}
 		m.installing = false
 		m.installingProjectID = ""
 		m.cancelInstallDownload()

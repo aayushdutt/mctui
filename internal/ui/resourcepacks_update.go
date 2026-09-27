@@ -157,14 +157,35 @@ func (m *ResourcePacksModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleClearDialogKey(msg)
 	}
 
-	// While building, only esc (cancel) is honored.
+	// While building, only esc is honored: it cancels the build and stays.
 	if m.applying {
 		if msg.String() == "esc" {
 			m.CancelPending()
 			m.applying = false
-			return m, func() tea.Msg { return NavigateToHome{} }
+			m.applyOK = ""
+			m.applyErr = "Build cancelled."
 		}
 		return m, nil
+	}
+
+	// No catalog for this version: only leaving (and help/palette) make sense;
+	// the panes aren't drawn.
+	if !m.catalogSupported {
+		switch msg.String() {
+		case "esc":
+			return m, func() tea.Msg { return NavigateToHome{} }
+		case "?":
+			m.help = true
+		case ":":
+			m.palette.Open()
+			return m, textinput.Blink
+		}
+		return m, nil
+	}
+
+	// After a failed catalog load, r retries.
+	if m.loadErr != "" && (msg.String() == "r" || msg.String() == "R") {
+		return m, tea.Batch(m.spinner.Tick, m.loadCatalogCmd())
 	}
 
 	// If the pack list is actively filtering, let it consume keys (except esc,
@@ -225,8 +246,17 @@ func (m *ResourcePacksModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case " ", "enter":
-		// Categories: expand/dive. Packs/cart: toggle the pack.
+		// Categories: expand/dive. Packs: toggle the pack. Cart: space removes;
+		// Enter is affirmative-only, so it never removes.
+		if m.rpFocus == rpPanelCart && msg.String() == "enter" {
+			return m, nil
+		}
 		return m, m.activate()
+
+	case "d":
+		if m.rpFocus == rpPanelCart {
+			return m, m.activate()
+		}
 
 	case "o", "O":
 		return m, m.openHighlightedPreview()
@@ -299,9 +329,9 @@ func (m *ResourcePacksModel) handleClearDialogKey(msg tea.KeyMsg) (tea.Model, te
 		m.rebuildPackItems()
 		m.rebuildCartItems()
 		return m, m.flashNotice("Cleared your pack")
-	case "n", "N", "esc", "backspace":
+	}
+	if ConfirmCancels(key) {
 		m.rpDialog = rpDialogNone
-		return m, nil
 	}
 	return m, nil
 }

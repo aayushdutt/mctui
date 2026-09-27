@@ -31,7 +31,10 @@ const (
 type PaletteItem struct {
 	Label string
 	Kind  PaletteKind
-	Run   func() tea.Cmd
+	// Key is the screen shortcut that does the same thing (e.g. "m"), shown
+	// right-aligned so the palette teaches the keys. Optional.
+	Key string
+	Run func() tea.Cmd
 }
 
 // CommandPalette is the reusable command-palette overlay. Construct it once per
@@ -138,34 +141,32 @@ func (p *CommandPalette) Update(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	var cmd tea.Cmd
+	before := p.input.Value()
 	p.input, cmd = p.input.Update(msg)
+	if p.input.Value() != before {
+		// A new query re-ranks the matches: highlight the best one again, so
+		// Enter runs what's on top rather than whatever row the cursor was on.
+		p.cursor = 0
+	}
 	p.refilter()
 	return cmd
 }
 
-// View renders the centered palette modal sized to a width×height screen.
+// View renders the palette as a [Card] for a width×height screen (composite it
+// over the screen with [Overlay]).
 func (p *CommandPalette) View(width, height int) string {
-	accent := Active.Primary
+	cw := cardWidth(width, 56)
+	inner := cw - 4
 
-	panelWidth := width - 8
-	if panelWidth > 52 {
-		panelWidth = 52
-	}
-	floor := min(34, max(20, width-8))
-	if panelWidth < floor {
-		panelWidth = floor
-	}
-
-	// Cap the visible list so the modal can't overrun a short terminal.
+	// Cap the visible list so the card can't overrun a short terminal.
 	maxRows := 8
-	if avail := height - 8; avail < maxRows {
+	if avail := height - 10; avail < maxRows {
 		maxRows = max(1, avail)
 	}
 
 	parts := []string{p.input.View(), ""}
-
 	if len(p.items) == 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(Active.TextMuted).Render("No matches"))
+		parts = append(parts, lipgloss.NewStyle().Foreground(Active.TextMuted).Render("  No matches"))
 	} else {
 		// Window the list around the cursor so the highlighted row stays visible.
 		start := 0
@@ -174,37 +175,36 @@ func (p *CommandPalette) View(width, height int) string {
 		}
 		end := min(len(p.items), start+maxRows)
 		for i := start; i < end; i++ {
-			e := p.items[i]
-			tag := "  "
-			tagColor := Active.TextMuted
-			if e.Kind == PaletteJump {
-				tag = GlyphDot + " "
-				tagColor = Active.Secondary
-			}
-			tagStr := lipgloss.NewStyle().Foreground(tagColor).Render(tag)
-			lblStyle := lipgloss.NewStyle().Foreground(Active.Text)
-			selected := i == p.cursor
-			if selected {
-				lblStyle = lblStyle.Bold(true).Foreground(accent)
-			}
-			parts = append(parts, rowMarker(selected)+tagStr+lblStyle.Render(e.Label))
+			parts = append(parts, p.row(p.items[i], i == p.cursor, inner))
 		}
 	}
+	parts = append(parts, "", KeyHints(inner,
+		KeyHint{"↑↓", "move"},
+		KeyHint{"↵", "run"},
+		KeyHint{"esc", "close"},
+	))
 
-	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	title := p.title
 	if title == "" {
 		title = "Command palette"
 	}
-	panel := Panel(title, body, panelWidth, accent)
+	return Card(title, strings.Join(parts, "\n"), cw, Active.Primary)
+}
 
-	hint := lipgloss.NewStyle().MarginTop(1).Render(KeyHints(
-		panelWidth,
-		KeyHint{"↑↓", "move"},
-		KeyHint{"↵", "go"},
-		KeyHint{"esc", "close"},
-	))
-
-	box := lipgloss.JoinVertical(lipgloss.Left, panel, hint)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+// row renders one entry: selection gutter, a dot for jump-to-instance rows, the
+// label, and its shortcut key flush right.
+func (p *CommandPalette) row(e PaletteItem, selected bool, width int) string {
+	tag := "  "
+	if e.Kind == PaletteJump {
+		tag = lipgloss.NewStyle().Foreground(Active.TextMuted).Render(GlyphDot) + " "
+	}
+	lbl := lipgloss.NewStyle().Foreground(Active.Text)
+	if selected {
+		lbl = lbl.Foreground(Active.TextStrong).Bold(true)
+	}
+	row := rowMarker(selected) + tag + lbl.Render(e.Label)
+	if e.Key != "" {
+		row = StatusBar(row, lipgloss.NewStyle().Foreground(Active.TextMuted).Render(e.Key), width)
+	}
+	return row
 }

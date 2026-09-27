@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"fmt"
-
 	"github.com/aayushdutt/mctui/internal/core"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -98,50 +96,33 @@ func (m *HomeModel) runAction(a homeAction) tea.Cmd {
 	return nil
 }
 
-// renderActionsPopup builds the centered actions modal. Called from View only
-// when the overlay is active.
+// renderActionsPopup builds the actions card (composited over home by View).
+// Called from View only when the overlay is active.
 func (m *HomeModel) renderActionsPopup() string {
-	accent := Active.Primary
-
-	panelWidth := m.width - 8
-	if panelWidth > 44 {
-		panelWidth = 44
-	}
-	floor := min(30, max(18, m.width-8))
-	if panelWidth < floor {
-		panelWidth = floor
-	}
+	cw := cardWidth(m.width, 44)
+	inner := cw - 4
 
 	title := "Actions"
 	if m.actionsTarget != nil {
-		title = fmt.Sprintf("Actions — %s", m.actionsTarget.Name)
+		title = m.actionsTarget.Name
 	}
 
-	rows := make([]string, 0, len(homeActions))
+	rows := make([]string, 0, len(homeActions)+2)
 	for i, a := range homeActions {
-		keyCol := lipgloss.NewStyle().Foreground(Active.Secondary).Render(a.key)
-		lblColor := Active.Text
-		if a.danger {
-			lblColor = Active.Error
-		}
 		selected := i == m.actionsCursor
-		lblStyle := lipgloss.NewStyle().Foreground(lblColor)
-		if selected {
-			lblStyle = lblStyle.Bold(true)
+		lbl := lipgloss.NewStyle().Foreground(Active.Text)
+		if a.danger {
+			lbl = lbl.Foreground(Active.Error)
 		}
-		rows = append(rows, rowMarker(selected)+keyCol+"  "+lblStyle.Render(a.label))
+		if selected {
+			lbl = lbl.Bold(true)
+			if !a.danger {
+				lbl = lbl.Foreground(Active.TextStrong)
+			}
+		}
+		key := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(a.key) + " "
+		rows = append(rows, StatusBar(rowMarker(selected)+lbl.Render(a.label), key, inner))
 	}
-
-	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
-	panel := Panel(title, body, panelWidth, accent)
-
-	hint := lipgloss.NewStyle().MarginTop(1).Render(KeyHints(
-		panelWidth,
-		KeyHint{"↑↓", "move"},
-		KeyHint{"↵", "do"},
-		KeyHint{"esc", "close"},
-	))
-
-	box := lipgloss.JoinVertical(lipgloss.Left, panel, hint)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	rows = append(rows, "", KeyHints(inner, KeyHint{"↑↓", "move"}, KeyHint{"↵", "run"}, KeyHint{"esc", "close"}))
+	return Card(title, lipgloss.JoinVertical(lipgloss.Left, rows...), cw, Active.Primary)
 }

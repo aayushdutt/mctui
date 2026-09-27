@@ -8,10 +8,10 @@ import (
 	"github.com/aayushdutt/mctui/internal/config"
 	"github.com/aayushdutt/mctui/internal/core"
 	"github.com/aayushdutt/mctui/internal/launch"
-	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // LaunchModel shows launch progress
@@ -20,12 +20,12 @@ type LaunchModel struct {
 	width    int
 	height   int
 
-	progress progress.Model
-	status   launch.Status
-	steps    []stepInfo
-	done     bool
-	err      error
-	logs     []string
+	percent float64 // overall progress 0..1; only moves forward
+	status  launch.Status
+	steps   []stepInfo
+	done    bool
+	err     error
+	logs    []string
 
 	cfg *config.Config // optional; used for log verbosity while playing
 
@@ -96,77 +96,66 @@ type stepInfo struct {
 	status string // pending, running, done, error
 }
 
-// advancementCopy maps each technical launch step to Minecraft advancement-style
-// flavor text (Phase 3's launch personality). The technical name is kept in the
-// running row so the line still says what is really happening; unmapped steps
-// (e.g. "Installing starter mods") fall back to their plain name.
-var advancementCopy = map[string]string{
-	"Checking Java":         "Java acquired",
-	"Downloading libraries": "Getting an upgrade",
-	"Downloading assets":    "Punching trees…",
-	"Preparing game":        "Ready to spawn",
-	"Launching":             "Entering world…",
+// stepLabel is the text for a launch step row: its technical name, except the
+// final step reads as what the user is waiting for.
+func stepLabel(step stepInfo) string {
+	if step.name == "Launching" {
+		return "Starting Minecraft"
+	}
+	return step.name
 }
 
-// stepRowText renders one step's line text. Done steps read as an unlocked
-// advancement; the running step shows the advancement with its technical name in
-// parentheses; errors stay plain (never joke in an error).
-func stepRowText(step stepInfo) string {
-	adv := advancementCopy[step.name]
-	if adv == "" {
-		adv = step.name
+// progressBar renders overall progress as a thin line — a green run for the
+// done part over a faint track — with the percentage flush right:
+//
+//	━━━━━━━━━━━━━━──────────────────────  46%
+func progressBar(percent float64, width int) string {
+	percent = min(1, max(0, percent))
+	width = max(8, width)
+	pct := fmt.Sprintf("  %3.0f%%", percent*100)
+	barW := max(1, width-lipgloss.Width(pct))
+	filled := min(barW, int(percent*float64(barW)+0.5))
+	return lipgloss.NewStyle().Foreground(Active.Success).Render(strings.Repeat("━", filled)) +
+		lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render(strings.Repeat("─", barW-filled)) +
+		lipgloss.NewStyle().Foreground(Active.TextDim).Render(pct)
+}
+
+// updatePercent folds a status into the overall progress. The launcher reports
+// a download step's own 0..1 fraction (and 0 on log lines), so the overall
+// figure is (steps before + fraction of this one) / steps, never moving back,
+// and 100% once the game is running.
+func (m *LaunchModel) updatePercent(st launch.Status) {
+	if st.Step == "Playing" {
+		m.percent = 1
+		return
 	}
-	switch step.status {
-	case "done":
-		return "Advancement made: " + adv
-	case "running":
-		if adv == step.name {
-			return adv
+	if st.LogLine != nil || len(m.steps) == 0 {
+		return
+	}
+	idx := -1
+	for i, s := range m.steps {
+		if s.name == st.Step {
+			idx = i
+			break
 		}
-		return adv + " (" + strings.ToLower(step.name) + ")"
-	case "error":
-		return step.name
-	default:
-		return adv
 	}
-}
-
-// xpBar renders the launch progress as Minecraft's experience bar: a thin
-// segmented ▰▱ track, Success-green fill, with the percentage flush right. Themed
-// (Active.Success / BorderFaint) so it reads correctly in all six palettes.
-func xpBar(percent float64, width int) string {
-	if percent < 0 {
-		percent = 0
+	if idx < 0 {
+		return
 	}
-	if percent > 1 {
-		percent = 1
+	frac := 0.0
+	if strings.HasPrefix(st.Step, "Downloading") {
+		frac = min(1, max(0, st.Progress))
 	}
-	if width < 8 {
-		width = 8
+	if p := (float64(idx) + frac) / float64(len(m.steps)); p > m.percent {
+		m.percent = p
 	}
-	pctStr := fmt.Sprintf(" %3.0f%%", percent*100)
-	barW := width - lipgloss.Width(pctStr)
-	if barW < 1 {
-		barW = 1
-	}
-	filled := int(percent*float64(barW) + 0.5)
-	if filled > barW {
-		filled = barW
-	}
-	fill := lipgloss.NewStyle().Foreground(Active.Success).Render(strings.Repeat("▰", filled))
-	rest := lipgloss.NewStyle().Foreground(Active.BorderFaint).Render(strings.Repeat("▱", barW-filled))
-	pct := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(pctStr)
-	return fill + rest + pct
 }
 
 // NewLaunchModel creates a new launch view. cfg is used for game log verbosity ([v] while playing).
 func NewLaunchModel(instance *core.Instance, cfg *config.Config) *LaunchModel {
-	p := ThemeProgress(50)
-
 	m := &LaunchModel{
 		instance: instance,
 		cfg:      cfg,
-		progress: p,
 		steps: []stepInfo{
 			{name: "Checking Java", status: "pending"},
 			{name: "Downloading libraries", status: "pending"},
@@ -216,12 +205,12 @@ func (m *LaunchModel) updateStopDialog(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	stop := false
-	switch msg.String() {
-	case "y", "Y":
+	switch key := msg.String(); {
+	case key == "y" || key == "Y":
 		stop = true
-	case "enter":
+	case key == "enter":
 		stop = m.stopFocusYes
-	case "n", "N", "esc", "q":
+	case ConfirmCancels(key):
 	default:
 		return nil
 	}
@@ -261,7 +250,6 @@ func (m *LaunchModel) launchPaletteItems() []PaletteItem {
 func (m *LaunchModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	m.progress.Width = width - 10
 }
 
 // SetLogFilter connects [v] to the running launcher's log filter.
@@ -287,16 +275,15 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateSteps()
 
 		if msg.Status.LogLine != nil {
-			line := fmt.Sprintf("[%s] %s", msg.Status.LogLine.Type, msg.Status.LogLine.Text)
+			line := msg.Status.LogLine.Text
 			m.logs = append(m.logs, line)
 			if len(m.logs) > 15 {
 				m.logs = m.logs[len(m.logs)-15:]
 			}
 		}
 
-		// Update progress bar
-		cmd := m.progress.SetPercent(msg.Status.Progress)
-		return m, cmd
+		m.updatePercent(msg.Status)
+		return m, nil
 
 	case LaunchComplete:
 		m.confirmStop = false // the game is gone; don't leave "Stop?" over the result
@@ -310,11 +297,6 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return NavigateToHome{} }
 		}
 		return m, nil
-
-	case progress.FrameMsg:
-		progressModel, cmd := m.progress.Update(msg)
-		m.progress = progressModel.(progress.Model)
-		return m, cmd
 
 	case tea.KeyMsg:
 		if m.palette.Active {
@@ -342,7 +324,7 @@ func (m *LaunchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+c":
 			return m, tea.Quit
-		case "esc", "q":
+		case "esc":
 			// Same path as the palette "Cancel launch" / "Back to home" verb.
 			return m, m.leaveLaunch()
 		case "s":
@@ -431,14 +413,14 @@ func (m *LaunchModel) updateStepStatus(stepName, status string) {
 
 // View implements tea.Model
 func (m *LaunchModel) View() string {
-	if m.help {
-		return boundToScreen(HelpOverlay("Launch", m.helpGroups(), m.width, m.height), m.width, m.height)
-	}
-	if m.palette.Active {
-		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
-	}
-	if m.confirmStop {
-		return ConfirmDialog{
+	base := m.baseView()
+	switch {
+	case m.help:
+		return Overlay(base, HelpCard("Launch", m.helpGroups(), m.width, m.height), m.width, m.height)
+	case m.palette.Active:
+		return Overlay(base, m.palette.View(m.width, m.height), m.width, m.height)
+	case m.confirmStop:
+		return Overlay(base, ConfirmDialog{
 			Title:    "Stop Minecraft?",
 			Message:  fmt.Sprintf("Stop %s now?", m.instance.Name),
 			Warning:  "Progress not yet saved in-game may be lost. Quitting from the game menu is safer.",
@@ -446,137 +428,97 @@ func (m *LaunchModel) View() string {
 			Cancel:   "Keep playing",
 			Kind:     ConfirmDanger,
 			FocusYes: m.stopFocusYes,
-		}.Render(m.width, m.height)
+		}.View(m.width), m.width, m.height)
 	}
+	return base
+}
 
-	// Panel width: derive from content width, clamp to a readable band and
-	// guard against an unset (0) width early in the lifecycle. The progress bar
-	// (width 50) lives just above the panels, so keep panels at least 54 wide.
-	panelW := m.width
-	if panelW > 60 {
-		panelW = 60
-	}
-	if panelW < 54 {
-		panelW = 54
-	}
+// baseView renders the screen itself (overlays composite over it in View).
+func (m *LaunchModel) baseView() string {
+	panelW := min(60, max(24, m.width))
 
-	// Header: filled accent pill (kept) + instance info line.
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(OnColor(Active.Primary)).
-		Background(Active.Primary).
-		Padding(0, 1)
-
-	headerText := fmt.Sprintf("Launching: %s", m.instance.Name)
+	// Header: the shared breadcrumb, with what's being launched flush right.
+	where := "Launch"
 	if m.status.Step == "Playing" {
-		headerText = fmt.Sprintf("Playing: %s", m.instance.Name)
+		where = "Playing"
 	}
-	header := headerStyle.Render(headerText)
+	header := AppHeader(m.width, lipgloss.NewStyle().Foreground(Active.TextDim).
+		Render("Minecraft "+m.instance.Version+" · "+loaderDisplay(m.instance)), m.instance.Name, where)
 
-	info := lipgloss.NewStyle().
-		Foreground(Active.TextSubtle).
-		Render(fmt.Sprintf("Minecraft %s  %s  %s", m.instance.Version, GlyphDot, m.instance.Loader))
-
-	// Progress panel: the bar, then the step rows. The currently-running step is
-	// emphasized bold; done steps are success, pending steps dim.
-	var steps strings.Builder
-	for i, step := range m.steps {
-		var icon string
-		var style lipgloss.Style
+	// Steps under their real names: ✓ done, ● running (bright), ○ pending, ✗ failed.
+	rows := make([]string, 0, len(m.steps))
+	for _, step := range m.steps {
+		label := stepLabel(step)
 		switch step.status {
 		case "done":
-			icon = GlyphDone
-			style = lipgloss.NewStyle().Foreground(Active.Success)
+			rows = append(rows, lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone)+" "+
+				lipgloss.NewStyle().Foreground(Active.TextDim).Render(label))
 		case "running":
-			icon = GlyphRunning
-			style = lipgloss.NewStyle().Bold(true).Foreground(Active.WarningStrong)
+			rows = append(rows, lipgloss.NewStyle().Foreground(Active.Primary).Render(GlyphDot)+" "+
+				lipgloss.NewStyle().Bold(true).Foreground(Active.TextStrong).Render(label))
 		case "error":
-			icon = GlyphFail
-			style = lipgloss.NewStyle().Foreground(Active.Error)
+			rows = append(rows, lipgloss.NewStyle().Foreground(Active.Error).Render(GlyphFail+" "+label))
 		default:
-			icon = GlyphPending
-			style = lipgloss.NewStyle().Foreground(Active.TextFaint)
+			rows = append(rows, lipgloss.NewStyle().Foreground(Active.TextMuted).Render(GlyphPending+" "+label))
 		}
-		if i > 0 {
-			steps.WriteString("\n")
-		}
-		steps.WriteString(style.Render(icon + " " + stepRowText(step)))
 	}
 
-	// The progress bar renders at its own fixed width, so keep it above the
-	// panel rather than inside (where the bar + percentage would wrap).
-	stepsPanel := Zone("Progress", steps.String(), panelW, true)
+	parts := []string{header, "", progressBar(m.percent, panelW), "", strings.Join(rows, "\n")}
 
-	// Status message under the progress panel.
-	statusMsg := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(m.status.Message)
+	// One status line under the steps.
+	msg := m.status.Message
+	if m.playing() && !m.stopping {
+		msg = "Minecraft is running. Esc goes home; the game keeps going."
+	}
+	if msg != "" && !(m.done && m.err != nil) {
+		parts = append(parts, "", lipgloss.NewStyle().Foreground(Active.TextDim).Width(panelW).Render(msg))
+	}
 
-	// Completion / error footer or in-flight key hints, all routed via KeyHints.
+	// Completion / error / in-flight footer.
 	var footer string
-	if m.done {
-		if m.err != nil {
-			fail := lipgloss.NewStyle().
-				Bold(true).
-				Foreground(Active.Error).
-				Render(fmt.Sprintf("%s Failed: %v", GlyphFail, m.err))
-			hints := KeyHints(panelW,
-				KeyHint{"r", "retry"},
-				KeyHint{"o", "offline mode"},
-				KeyHint{"enter", "home"},
-				KeyHint{"?", "help"},
-			)
-			footer = lipgloss.JoinVertical(lipgloss.Left, fail, "", hints)
-		} else {
-			footer = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(Active.Success).
-				Render(fmt.Sprintf("%s Game closed. Returning to home…", GlyphDone))
-		}
-	} else if m.stopping {
-		stopping := lipgloss.NewStyle().Foreground(Active.WarningStrong).
-			Render("Stopping Minecraft… (it may take a few seconds to save)")
-		footer = lipgloss.JoinVertical(lipgloss.Left, stopping, "", KeyHints(panelW, KeyHint{"esc", "home"}))
-	} else if m.playing() {
+	switch {
+	case m.done && m.err != nil:
+		headline := lipgloss.NewStyle().Bold(true).Foreground(Active.Error).Render(GlyphFail + " Couldn't launch Minecraft")
+		detail := lipgloss.NewStyle().Foreground(Active.TextDim).Width(panelW).Render(m.err.Error())
+		parts = append(parts, "", headline, detail)
+		footer = KeyHints(panelW, KeyHint{"r", "retry"}, KeyHint{"o", "play offline"}, KeyHint{"↵", "home"}, KeyHint{"?", "help"})
+	case m.done:
+		footer = lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone + " Game closed. Returning home…")
+	case m.stopping:
+		footer = lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.NewStyle().Foreground(Active.WarningStrong).Render("Stopping Minecraft… it may take a few seconds to save."),
+			"", KeyHints(panelW, KeyHint{"esc", "home"}))
+	case m.playing():
 		hints := []KeyHint{{"esc", "home"}, {"s", "stop"}}
 		if m.cfg != nil {
 			v := launch.ParseLaunchLogVerbosity(m.cfg.LaunchLogVerbosity)
 			hints = append(hints, KeyHint{"v", "logs: " + v.ShortLabel()})
 		}
 		footer = KeyHints(panelW, append(hints, KeyHint{"?", "help"})...)
-	} else {
-		footer = KeyHints(panelW,
-			KeyHint{"esc", "cancel"},
-			KeyHint{"ctrl+c", "quit"},
-			KeyHint{"?", "help"},
-		)
+	default:
+		footer = KeyHints(panelW, KeyHint{"esc", "cancel"}, KeyHint{"?", "help"})
 	}
 
-	// Assemble: gaps are explicit "" entries rather than embedded "\n". The
-	// progress model still drives the animation; xpBar renders its % as the
-	// Minecraft experience bar.
-	parts := []string{
-		header,
-		info,
-		"",
-		xpBar(m.progress.Percent(), m.progress.Width),
-		"",
-		stepsPanel,
-	}
-	if m.status.Message != "" {
-		parts = append(parts, "", statusMsg)
-	}
-
-	// Logs panel (only when there are logs).
+	// Game log: only as many of the latest lines as fit the screen, so the
+	// header and progress never scroll off (bubbletea drops the top rows of a
+	// view taller than the terminal).
 	if len(m.logs) > 0 {
-		logStyle := lipgloss.NewStyle().Foreground(Active.TextFaint)
-		styled := make([]string, len(m.logs))
-		for i, line := range m.logs {
-			styled[i] = logStyle.Render(line)
+		used := lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, parts...)) + 1 + lipgloss.Height(footer)
+		room := m.height - used - 3 // blank + log title + rule
+		if m.height <= 0 {
+			room = len(m.logs)
 		}
-		logsPanel := Zone("Logs", strings.Join(styled, "\n"), panelW, false)
-		parts = append(parts, "", logsPanel)
+		if room > 0 {
+			lines := m.logs[max(0, len(m.logs)-room):]
+			logStyle := lipgloss.NewStyle().Foreground(Active.TextMuted)
+			styled := make([]string, len(lines))
+			for i, line := range lines {
+				styled[i] = logStyle.Render(ansi.Truncate(line, panelW, "…"))
+			}
+			parts = append(parts, "", Zone("Game log", strings.Join(styled, "\n"), panelW, false))
+		}
 	}
 
 	parts = append(parts, "", footer)
-
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

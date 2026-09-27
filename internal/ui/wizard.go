@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // WizardStep represents the current wizard step
@@ -28,7 +30,6 @@ type nameFormFocus int
 const (
 	focusWizardName            nameFormFocus = iota
 	focusWizardStarterCheckbox               // Fabric only (skipped in focus order when not Fabric)
-	focusWizardSubmit
 )
 
 // loaderChoice is one row in the mod loader step (extensible for future loaders).
@@ -47,6 +48,7 @@ type WizardModel struct {
 	// Version selection
 	versionList list.Model
 	versions    []core.Version
+	latest      string // latest release id, marked in the list
 	showSnaps   bool
 
 	// Loader selection
@@ -60,6 +62,7 @@ type WizardModel struct {
 	// Name input
 	nameInput textinput.Model
 	nameErr   string
+	autoName  string // the name the wizard suggested; replaced on back/forward only if unedited
 
 	// Fabric only: opt-in starter mods (Fabric API, Mod Menu, Sodium, Lithium) after create.
 	installStarterMods bool
@@ -83,11 +86,11 @@ func (m *WizardModel) helpGroups() []HelpGroup {
 	return []HelpGroup{
 		{Title: "Navigate", Entries: []HelpEntry{
 			{"↑↓ / j k", "select"},
-			{"tab / ⇧tab", "move between fields"},
+			{"tab / ⇧tab", "move between fields (name step)"},
 		}},
 		{Title: "Act", Entries: []HelpEntry{
 			{"enter", "next · create"},
-			{"space", "toggle snapshots · starter mods"},
+			{"space", "show snapshots · toggle starter mods"},
 			{"/", "filter versions"},
 		}},
 		{Title: "General", Entries: []HelpEntry{
@@ -104,41 +107,65 @@ type versionItem struct {
 	latest  bool
 }
 
-func (i versionItem) Title() string {
-	title := i.version.ID
-	if i.latest {
-		title += " ★"
-	}
-	return title
-}
-func (i versionItem) Description() string {
-	return fmt.Sprintf("%s • %s", i.version.Type, i.version.ReleaseTime.Format("Jan 2006"))
-}
+func (i versionItem) Title() string       { return i.version.ID }
+func (i versionItem) Description() string { return i.version.ReleaseTime.Format("Jan 2006") }
 func (i versionItem) FilterValue() string { return i.version.ID }
+
+// versionDelegate renders the version list one line per version:
+//
+//	› 1.21.4      latest       Dec 2024
+//	  25w14a      snapshot     Apr 2025
+//
+// the selected row with the › pointer and a bright id, "latest" in green, a
+// non-release type dim, and the release month dim.
+type versionDelegate struct{}
+
+func (versionDelegate) Height() int                         { return 1 }
+func (versionDelegate) Spacing() int                        { return 0 }
+func (versionDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+func (versionDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	vi, ok := item.(versionItem)
+	if !ok {
+		return
+	}
+	selected := index == m.Index() && m.FilterState() != list.Filtering
+	id := lipgloss.NewStyle().Foreground(Active.Text)
+	if selected {
+		id = id.Bold(true).Foreground(Active.TextStrong)
+	}
+	tag := ""
+	switch {
+	case vi.latest:
+		tag = lipgloss.NewStyle().Foreground(Active.Success).Render("latest")
+	case vi.version.Type != core.VersionTypeRelease:
+		tag = lipgloss.NewStyle().Foreground(Active.TextMuted).Render(strings.ReplaceAll(string(vi.version.Type), "_", " "))
+	}
+	cell := func(s string, w int) string { return s + strings.Repeat(" ", max(1, w-lipgloss.Width(s))) }
+	date := lipgloss.NewStyle().Foreground(Active.TextDim).Render(vi.version.ReleaseTime.Format("Jan 2006"))
+	line := rowMarker(selected) + cell(id.Render(ansi.Truncate(vi.version.ID, 18, "…")), 20) + cell(tag, 13) + date
+	_, _ = fmt.Fprint(w, ansi.Truncate(line, m.Width(), ""))
+}
 
 // NewWizardModel creates a new wizard. showSnapshots seeds the version-list
 // snapshot filter from config; toggling it in-wizard persists back via [PersistShowSnapshots].
 func NewWizardModel(showSnapshots bool) *WizardModel {
-	// Version list
-	delegate := ThemeListDelegate(Active.Primary, Active.Secondary)
-
-	vl := list.New([]list.Item{}, delegate, 0, 0)
-	vl.Title = "Select Minecraft Version"
-	vl.SetShowStatusBar(true)
+	// Version list: one line per version, no built-in title/help/status chrome
+	// (the step has its own), quit keys off (q must not quit the app from here),
+	// paging on PgUp/PgDn only like everywhere else.
+	vl := list.New([]list.Item{}, versionDelegate{}, 0, 0)
+	vl.SetShowTitle(false)
+	vl.SetShowHelp(false)
+	vl.SetShowStatusBar(false)
 	vl.SetFilteringEnabled(true)
-	vl.Styles.Title = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(OnColor(Active.Primary)).
-		Background(Active.Primary).
-		Padding(0, 1)
+	vl.DisableQuitKeybindings()
+	vl.KeyMap.PrevPage.SetKeys("pgup")
+	vl.KeyMap.NextPage.SetKeys("pgdown")
+	vl.SetStatusBarItemName("version", "versions")
 	ThemeListChrome(&vl)
 
 	// Name input
-	ti := textinput.New()
-	ti.Placeholder = "My Instance"
+	ti := formInput("", "My Instance")
 	ti.CharLimit = 64
-	ti.Width = 40
-	ThemeTextInput(&ti)
 
 	m := &WizardModel{
 		step:        StepSelectVersion,
@@ -171,33 +198,48 @@ func (m *WizardModel) wizardPaletteItems() []PaletteItem {
 // SetVersions updates the version list
 func (m *WizardModel) SetVersions(versions []core.Version, latest string) {
 	m.versions = versions
+	m.latest = latest
 	m.loading = false
-	m.updateVersionList(latest)
+	m.updateVersionList()
 }
 
-func (m *WizardModel) updateVersionList(latest string) {
+// updateVersionList rebuilds the list for the snapshot filter, keeping the
+// cursor on the same version where it's still listed. The returned command
+// re-applies an active text filter (callers must run it).
+func (m *WizardModel) updateVersionList() tea.Cmd {
+	prev := ""
+	if it, ok := m.versionList.SelectedItem().(versionItem); ok {
+		prev = it.version.ID
+	}
 	var items []list.Item
+	sel := 0
 	for _, v := range m.versions {
 		if !m.showSnaps && v.Type != core.VersionTypeRelease {
 			continue
 		}
-		items = append(items, versionItem{
-			version: v,
-			latest:  v.ID == latest,
-		})
+		if v.ID == prev {
+			sel = len(items)
+		}
+		items = append(items, versionItem{version: v, latest: v.ID == m.latest})
 	}
-	m.versionList.SetItems(items)
+	cmd := m.versionList.SetItems(items)
+	// Re-measure: bubbles sizes a page before it knows the list has more than
+	// one, and with no gap between rows the page dots then take an extra line —
+	// a view one row taller than the screen until the next resize.
+	m.versionList.SetSize(m.versionList.Width(), m.versionList.Height())
+	if m.versionList.FilterState() == list.Unfiltered {
+		m.versionList.Select(sel)
+	}
+	return cmd
 }
 
-// SetSize updates dimensions. The version step stacks a fair amount of chrome
-// around the list — screen header (2) + breadcrumb (2) + section header (2) +
-// the list's own status bar, the snapshot checkbox row (2), and the help line
-// (2) — so the list viewport is budgeted at height-12 to keep the whole step
-// within the terminal (measured in wizard_test.go).
+// SetSize updates dimensions. The version step stacks header (2) + step trail
+// (2) + pane title and rule (2) around the list, and a blank + footer (2) below.
 func (m *WizardModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	m.versionList.SetSize(width-4, max(3, height-12))
+	m.versionList.SetSize(m.panelWidth(), max(3, height-8))
+	m.nameInput.Width = formValueWidth(m.panelWidth())
 }
 
 // Init implements tea.Model
@@ -208,6 +250,17 @@ func (m *WizardModel) Init() tea.Cmd {
 // Update implements tea.Model
 func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		if m.step == StepSelectVersion && !m.help && !m.palette.Active {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.versionList.CursorUp()
+			case tea.MouseButtonWheelDown:
+				m.versionList.CursorDown()
+			}
+		}
+		return m, nil
+
 	case VersionsLoaded:
 		if msg.Error != nil {
 			m.err = msg.Error
@@ -243,9 +296,8 @@ func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.step == StepSelectVersion && m.versionList.FilterState() != list.Filtering &&
 			(msg.Type == tea.KeySpace || msg.String() == " " || msg.String() == "space") {
 			m.showSnaps = !m.showSnaps
-			m.updateVersionList("")
 			show := m.showSnaps
-			return m, func() tea.Msg { return PersistShowSnapshots{Value: show} }
+			return m, tea.Batch(m.updateVersionList(), func() tea.Msg { return PersistShowSnapshots{Value: show} })
 		}
 		switch msg.String() {
 		case ":":
@@ -267,6 +319,12 @@ func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "esc":
+			if m.step == StepSelectVersion && m.versionList.FilterState() != list.Unfiltered {
+				// Esc clears the version filter first (the list handles it).
+				var cmd tea.Cmd
+				m.versionList, cmd = m.versionList.Update(msg)
+				return m, cmd
+			}
 			if m.step > StepSelectVersion {
 				if m.step == StepEnterName {
 					m.nameErr = ""
@@ -299,36 +357,33 @@ func (m *WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
+			if m.step == StepSelectVersion && m.versionList.FilterState() == list.Filtering {
+				// Enter applies the filter; a second Enter picks the version.
+				var cmd tea.Cmd
+				m.versionList, cmd = m.versionList.Update(msg)
+				return m, cmd
+			}
 			if m.step == StepEnterName {
 				return m.handleNameStepEnter()
 			}
 			return m.handleEnter()
 
-		case "up":
-			if m.step == StepSelectLoader {
+		case "up", "k", "down", "j":
+			// ↑/↓ (and j/k where they don't type) move and stop at the ends.
+			dir := 1
+			if msg.String() == "up" || msg.String() == "k" {
+				dir = -1
+			}
+			typing := m.step == StepEnterName && m.nameFormFocus == focusWizardName
+			isLetter := msg.String() == "j" || msg.String() == "k"
+			switch {
+			case m.step == StepSelectLoader:
 				m.loaderHint = ""
-				m.moveLoaderSelection(-1)
-			} else if m.step == StepEnterName {
-				m.nameStepCycleFocus(-1)
+				m.moveLoaderSelection(dir)
+				return m, nil
+			case m.step == StepEnterName && !(typing && isLetter):
+				m.nameStepMoveFocus(dir)
 				return m, textinput.Blink
-			}
-		case "down":
-			if m.step == StepSelectLoader {
-				m.loaderHint = ""
-				m.moveLoaderSelection(1)
-			} else if m.step == StepEnterName {
-				m.nameStepCycleFocus(1)
-				return m, textinput.Blink
-			}
-		case "k":
-			if m.step == StepSelectLoader {
-				m.loaderHint = ""
-				m.moveLoaderSelection(-1)
-			}
-		case "j":
-			if m.step == StepSelectLoader {
-				m.loaderHint = ""
-				m.moveLoaderSelection(1)
 			}
 		}
 	}
@@ -364,13 +419,22 @@ func (m *WizardModel) handleEnter() (*WizardModel, tea.Cmd) {
 			m.loaderHint = "That loader isn't available yet — choose Vanilla or Fabric."
 			return m, nil
 		}
+		if ch.ID != m.selectedLoader {
+			// Starter mods default on for Fabric; keep the user's choice when they
+			// step back and forward without changing the loader.
+			m.installStarterMods = ch.ID == "fabric"
+		}
 		m.selectedLoader = ch.ID
 		m.selectedLoaderLabel = ch.Label
 		m.loaderHint = ""
-		m.installStarterMods = ch.ID == "fabric"
 		m.nameStepSetFocus(focusWizardName)
 		m.step = StepEnterName
-		m.nameInput.SetValue(fmt.Sprintf("%s %s", m.selectedVersion, ch.Label))
+		// Suggest "<version> <Loader>", but never overwrite a name the user typed.
+		suggested := fmt.Sprintf("%s %s", m.selectedVersion, ch.Label)
+		if v := strings.TrimSpace(m.nameInput.Value()); v == "" || v == m.autoName {
+			m.nameInput.SetValue(suggested)
+		}
+		m.autoName = suggested
 		m.nameInput.Focus()
 	}
 	return m, nil
@@ -378,13 +442,9 @@ func (m *WizardModel) handleEnter() (*WizardModel, tea.Cmd) {
 
 func (m *WizardModel) nameStepFocusOrder() []nameFormFocus {
 	if m.selectedLoader == "fabric" {
-		return []nameFormFocus{
-			focusWizardName,
-			focusWizardStarterCheckbox,
-			focusWizardSubmit,
-		}
+		return []nameFormFocus{focusWizardName, focusWizardStarterCheckbox}
 	}
-	return []nameFormFocus{focusWizardName, focusWizardSubmit}
+	return []nameFormFocus{focusWizardName}
 }
 
 func (m *WizardModel) nameStepSetFocus(f nameFormFocus) {
@@ -419,16 +479,23 @@ func (m *WizardModel) nameStepCycleFocus(delta int) {
 	m.nameStepSetFocus(order[next])
 }
 
-func (m *WizardModel) handleNameStepEnter() (*WizardModel, tea.Cmd) {
-	switch m.nameFormFocus {
-	case focusWizardStarterCheckbox:
-		m.installStarterMods = !m.installStarterMods
-		return m, nil
-	case focusWizardName, focusWizardSubmit:
-		return m.submitNameStep()
-	default:
-		return m, nil
+// handleNameStepEnter creates the instance — Enter does that from any field
+// (space toggles the starter-mods row).
+// nameStepMoveFocus moves between the name step's rows (↑/↓), stopping at the
+// first and last instead of wrapping (tab still wraps).
+func (m *WizardModel) nameStepMoveFocus(dir int) {
+	order := m.nameStepFocusOrder()
+	i := 0
+	for j, f := range order {
+		if f == m.nameFormFocus {
+			i = j
+		}
 	}
+	m.nameStepSetFocus(order[min(len(order)-1, max(0, i+dir))])
+}
+
+func (m *WizardModel) handleNameStepEnter() (*WizardModel, tea.Cmd) {
+	return m.submitNameStep()
 }
 
 func (m *WizardModel) submitNameStep() (*WizardModel, tea.Cmd) {
@@ -483,8 +550,7 @@ func (m *WizardModel) moveLoaderSelection(delta int) {
 		m.loaderIndex = selectable[0]
 		return
 	}
-	n := len(selectable)
-	next := (cur + delta + n) % n
+	next := min(len(selectable)-1, max(0, cur+delta))
 	m.loaderIndex = selectable[next]
 }
 
@@ -498,50 +564,50 @@ func (m *WizardModel) panelWidth() int {
 	return min(w, 60)
 }
 
-// stepBreadcrumb renders the numbered step progress, e.g.
-// "① Version  ▸  ② Loader  ▸  ③ Name". The current step is bold accent,
-// completed steps are success-colored, and upcoming steps are muted.
+// stepBreadcrumb renders the step trail, e.g. "✓ Version  ›  Loader  ›  Name":
+// done steps get a green check, the current one is bright and bold, upcoming
+// ones are dim.
 func (m *WizardModel) stepBreadcrumb() string {
 	steps := []string{"Version", "Loader", "Name"}
-	nums := []string{"①", "②", "③"}
-	sep := lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("  " + GlyphPointer + "  ")
-
+	sep := lipgloss.NewStyle().Foreground(Active.TextFaint).Render("  ›  ")
 	parts := make([]string, 0, len(steps))
 	for i, s := range steps {
-		var style lipgloss.Style
 		switch {
 		case i == int(m.step):
-			style = lipgloss.NewStyle().Bold(true).Foreground(Active.Primary)
+			parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(Active.TextStrong).Render(s))
 		case i < int(m.step):
-			style = lipgloss.NewStyle().Foreground(Active.Success)
+			parts = append(parts, lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone)+" "+
+				lipgloss.NewStyle().Foreground(Active.TextDim).Render(s))
 		default:
-			style = lipgloss.NewStyle().Foreground(Active.TextMuted)
+			parts = append(parts, lipgloss.NewStyle().Foreground(Active.TextMuted).Render(s))
 		}
-		label := nums[i] + " " + s
-		if i < int(m.step) {
-			label = GlyphDone + " " + s
-		}
-		parts = append(parts, style.Render(label))
 	}
 	return strings.Join(parts, sep)
 }
 
 // View implements tea.Model
 func (m *WizardModel) View() string {
-	if m.help {
-		return boundToScreen(HelpOverlay("New instance", m.helpGroups(), m.width, m.height), m.width, m.height)
+	base := m.baseView()
+	switch {
+	case m.help:
+		return Overlay(base, HelpCard("New instance", m.helpGroups(), m.width, m.height), m.width, m.height)
+	case m.palette.Active:
+		return Overlay(base, m.palette.View(m.width, m.height), m.width, m.height)
 	}
-	if m.palette.Active {
-		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
-	}
+	return base
+}
+
+// baseView renders the screen itself (overlays composite over it in View).
+func (m *WizardModel) baseView() string {
+	header := AppHeader(m.width, "", "New instance")
 	if m.err != nil {
 		w := m.panelWidth()
-		body := lipgloss.NewStyle().
-			Foreground(Active.TextSubtle).
-			Render(fmt.Sprintf("Couldn't load versions: %v", m.err))
-		panel := Panel("Error", body, w, Active.Error)
-		hints := KeyHints(w, KeyHint{"r", "retry"}, KeyHint{"esc", "back to home"})
-		return lipgloss.JoinVertical(lipgloss.Left, panel, "", hints)
+		headline := lipgloss.NewStyle().Bold(true).Foreground(Active.Error).
+			Render(GlyphFail + " Couldn't load the Minecraft version list")
+		detail := lipgloss.NewStyle().Foreground(Active.TextDim).Width(w).
+			Render(fmt.Sprintf("Check your connection and try again. (%v)", m.err))
+		hints := KeyHints(w, KeyHint{"r", "retry"}, KeyHint{"esc", "back"})
+		return lipgloss.JoinVertical(lipgloss.Left, header, "", headline, detail, "", hints)
 	}
 
 	var content string
@@ -553,188 +619,83 @@ func (m *WizardModel) View() string {
 	case StepEnterName:
 		content = m.viewNameStep()
 	}
-
-	header := ScreenHeader("New Instance", "Pick a version, a loader, and a name")
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
-		"",
-		m.stepBreadcrumb(),
-		"",
-		content,
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, header, "", m.stepBreadcrumb(), "", content)
 }
 
 func (m *WizardModel) viewVersionStep() string {
 	w := m.panelWidth()
 	if m.loading {
-		loading := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Loading versions…")
-		return Panel("New Instance", loading, w, Active.Primary)
+		return lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Loading Minecraft versions…")
 	}
+	snaps := "releases only"
+	if m.showSnaps {
+		snaps = "incl. snapshots"
+	}
+	right := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(snaps)
+	pane := ZoneR("Minecraft version", right, m.versionList.View(), w, true)
 
-	// Visible snapshot checkbox under the list — space toggles it (Tab is reserved
-	// for field/pane cycling app-wide).
-	snapMark := wizardCheckboxGlyph(m.showSnaps, false)
-	snapLabel := lipgloss.NewStyle().Foreground(Active.TextDim).Render("Show snapshots")
-	snapKey := lipgloss.NewStyle().Foreground(Active.TextFaint).Render("space")
-	snapRow := lipgloss.JoinHorizontal(lipgloss.Top, snapMark, " ", snapLabel, "  ", snapKey)
-
-	help := KeyHints(w,
-		KeyHint{"↑↓", "select"},
-		KeyHint{"space", "snapshots"},
-		KeyHint{"enter", "next"},
-		KeyHint{"esc", "cancel"},
-		KeyHint{"?", "help"},
-	)
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		SectionHeader("Minecraft version", w),
-		"",
-		m.versionList.View(),
-		"",
-		snapRow,
-		"",
-		help,
-	)
+	hints := []KeyHint{{"↵", "next"}, {"/", "filter"}}
+	if m.showSnaps {
+		hints = append(hints, KeyHint{"space", "hide snapshots"})
+	} else {
+		hints = append(hints, KeyHint{"space", "show snapshots"})
+	}
+	hints = append(hints, KeyHint{"esc", "cancel"}, KeyHint{"?", "help"})
+	if m.versionList.FilterState() == list.Filtering {
+		hints = []KeyHint{{"↵", "apply filter"}, {"esc", "clear filter"}}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, pane, "", KeyHints(m.width, hints...))
 }
 
 func (m *WizardModel) viewLoaderStep() string {
 	w := m.panelWidth()
-
-	subtitle := lipgloss.NewStyle().
-		Foreground(Active.TextDim).
-		Render("for Minecraft " + m.selectedVersion)
-
 	var rows []string
 	for i, ch := range m.loaderChoices {
 		selected := i == m.loaderIndex
-		style := lipgloss.NewStyle()
+		st := lipgloss.NewStyle().Foreground(Active.Text)
 		switch {
 		case selected:
-			// Selection is the ┃ accent bar (rowMarker) + Primary label — the one
-			// selection idiom, not a green ▸ pointer.
-			style = style.Bold(true).Foreground(Active.Primary)
+			st = st.Bold(true).Foreground(Active.TextStrong)
 		case ch.ComingSoon:
-			style = style.Foreground(Active.TextFaint)
-		default:
-			style = style.Foreground(Active.Text)
+			st = st.Foreground(Active.TextFaint)
 		}
-		rows = append(rows, rowMarker(selected)+style.Render(ch.Label))
+		rows = append(rows, rowMarker(selected)+st.Render(ch.Label))
 	}
+	right := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("Minecraft " + m.selectedVersion)
+	pane := ZoneR("Mod loader", right, "\n"+lipgloss.JoinVertical(lipgloss.Left, rows...), w, true)
 
-	body := lipgloss.JoinVertical(lipgloss.Left, append([]string{subtitle, ""}, rows...)...)
-	panel := Zone("Mod loader", body, w, true)
-
-	hintBlock := ""
+	parts := []string{pane, ""}
 	if m.loaderHint != "" {
-		hintBlock = lipgloss.NewStyle().
-			Foreground(Active.Warning).
-			Render(GlyphWarn+" "+m.loaderHint) + "\n\n"
+		parts = append(parts, lipgloss.NewStyle().Foreground(Active.Warning).Render(GlyphWarn+" "+m.loaderHint), "")
 	}
-
-	help := KeyHints(w,
-		KeyHint{"↑↓", "select"},
-		KeyHint{"enter", "next"},
-		KeyHint{"esc", "back"},
-		KeyHint{"?", "help"},
-	)
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		panel,
-		"",
-		hintBlock+help,
-	)
+	parts = append(parts, KeyHints(m.width, KeyHint{"↵", "next"}, KeyHint{"↑↓", "choose"}, KeyHint{"esc", "back"}, KeyHint{"?", "help"}))
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m *WizardModel) viewNameStep() string {
 	w := m.panelWidth()
-
-	summary := lipgloss.NewStyle().
-		Foreground(Active.TextSubtle).
-		MarginBottom(0).
-		Render(fmt.Sprintf("Minecraft %s · %s", m.selectedVersion, m.selectedLoaderLabel))
-
-	nameFocused := m.nameFormFocus == focusWizardName
-	nameField := underlineField("Instance name", "", m.nameInput, nameFocused)
-
-	errText := ""
+	rows := []string{"", formRow("Name", m.nameInput.View(), "Shown in the instance list. You can rename it later.", m.nameFormFocus == focusWizardName, w)}
+	if m.selectedLoader == "fabric" {
+		value := formToggle(m.installStarterMods)
+		rows = append(rows, formRow("Starter mods", value,
+			"Fabric API, Mod Menu, Sodium and Lithium, installed on first launch. Space to toggle.",
+			m.nameFormFocus == focusWizardStarterCheckbox, w))
+	}
 	if m.nameErr != "" {
-		errText = lipgloss.NewStyle().
-			Foreground(Active.Error).
-			MarginTop(1).
-			Render(m.nameErr)
+		rows = append(rows, "", lipgloss.NewStyle().Foreground(Active.Error).Render(GlyphFail+" "+m.nameErr))
 	}
+	right := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("Minecraft " + m.selectedVersion + " · " + m.selectedLoaderLabel)
+	pane := ZoneR("Name your instance", right, lipgloss.JoinVertical(lipgloss.Left, rows...), w, true)
 
-	nameBlock := lipgloss.JoinVertical(lipgloss.Left, nameField, errText)
-
-	starterBlock := ""
+	hints := []KeyHint{{"↵", "create"}}
 	if m.selectedLoader == "fabric" {
-		cbFocused := m.nameFormFocus == focusWizardStarterCheckbox
-		mark := wizardCheckboxGlyph(m.installStarterMods, cbFocused)
-		titleLine := lipgloss.NewStyle().Foreground(Active.Title).Render("Install recommended Fabric mods")
-		sub := lipgloss.NewStyle().Foreground(Active.TextDim).Render("Fabric API · Mod Menu · Sodium · Lithium")
-		labelCol := lipgloss.JoinVertical(lipgloss.Left, titleLine, sub)
-		row := lipgloss.JoinHorizontal(lipgloss.Top, mark, "  ", labelCol)
-		starterInner := lipgloss.JoinVertical(lipgloss.Left, row)
-		// Align □ with the text field prompt: border (1) + inner padding (1) = 2 cells.
-		rowStyle := lipgloss.NewStyle().PaddingLeft(2)
-		if cbFocused {
-			rowStyle = lipgloss.NewStyle().
-				Border(lipgloss.NormalBorder(), false, false, false, true).
-				BorderForeground(Active.Primary).
-				Background(Active.BorderFaint).
-				PaddingLeft(1).
-				PaddingRight(1)
+		hints = append(hints, KeyHint{"↑↓", "move"})
+		if m.nameFormFocus == focusWizardStarterCheckbox {
+			hints = append(hints, KeyHint{"space", "toggle"}, KeyHint{"?", "help"})
 		}
-		starterBlock = rowStyle.Render(starterInner)
 	}
-
-	createBtn := Pill("Create", m.nameFormFocus == focusWizardSubmit)
-	buttonRow := lipgloss.NewStyle().MarginTop(1).Render(createBtn)
-
-	bodyParts := []string{summary, "", nameBlock}
-	if starterBlock != "" {
-		bodyParts = append(bodyParts, starterBlock)
-	}
-	bodyParts = append(bodyParts, buttonRow)
-	body := lipgloss.JoinVertical(lipgloss.Left, bodyParts...)
-	panel := Zone("Name your instance", body, w, true)
-
-	hints := []KeyHint{
-		{"tab/↑↓", "move"},
-		{"enter", "create"},
-		{"esc", "back"},
-	}
-	if m.selectedLoader == "fabric" {
-		hints = append(hints, KeyHint{"space", "toggle mods"})
-	}
-	hints = append(hints, KeyHint{"?", "help"})
-	help := KeyHints(w, hints...)
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		panel,
-		"",
-		help,
-	)
-}
-
-// wizardCheckboxGlyph uses □ / ■ — one monospace cell each, so the glyph is always square in the grid.
-// Lipgloss borders + Width/Height do not reliably map to equal row/column counts, which caused tall boxes.
-func wizardCheckboxGlyph(checked, focused bool) string {
-	// Checkboxes live in the focus/selection domain, so an on/focused box reads in
-	// the accent (Primary), never green — Success/Warning are reserved for state.
-	if checked {
-		return lipgloss.NewStyle().Foreground(Active.Primary).Render("■")
-	}
-	st := lipgloss.NewStyle().Foreground(Active.TextMuted)
-	if focused {
-		st = st.Foreground(Active.Primary)
-	}
-	return st.Render("□")
+	hints = append(hints, KeyHint{"esc", "back"})
+	return lipgloss.JoinVertical(lipgloss.Left, pane, "", KeyHints(m.width, hints...))
 }
 
 // validateInstanceName validates the freeform display name only. Filesystem safety

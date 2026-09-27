@@ -11,14 +11,16 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Category disclosure triangles and the incompatibility-swap affordance glyph.
-// The disclosure pair uses the filled (not the thin ▸/▾) triangles — the modern
-// TUI standard (lazygit, k9s, VS Code) — for higher contrast while staying a
-// single cell wide so the row layout is unchanged.
+// Category disclosure triangles (small, one cell), the incompatibility-swap
+// glyph, and the pack state marks: ● in your pack, ○ not — green once built,
+// amber while the change is waiting for a build (matching the header's
+// "● unbuilt changes").
 const (
-	rpGlyphCollapsed = "▶"
-	rpGlyphExpanded  = "▼"
+	rpGlyphCollapsed = "▸"
+	rpGlyphExpanded  = "▾"
 	rpGlyphSwap      = "⇄"
+	rpGlyphOn        = "●"
+	rpGlyphOff       = "○"
 )
 
 // lipglossSpinnerStyle is the themed style for the resource-packs spinner.
@@ -28,7 +30,7 @@ func lipglossSpinnerStyle() lipgloss.Style {
 
 // rpSplitMinWidth is the width below which the resource-packs screen stacks its
 // panes instead of showing them side by side. Mirrors mods' splitMinWidth.
-const rpSplitMinWidth = 78
+const rpSplitMinWidth = 76
 
 // rpPanel identifies the focused pane on the resource-packs screen.
 type rpPanel int
@@ -114,11 +116,12 @@ func (i rpCategoryItem) Title() string {
 	}
 	left := indent + glyph
 
-	// Right cluster: dim aggregate total + an accent cart badge when non-empty.
+	// Right: the pack count, dim — "2/5" (in your pack / total) once the subtree
+	// has picks.
 	right := lipgloss.NewStyle().Foreground(Active.TextFaint).Render(strconv.Itoa(i.totalPacks))
 	if i.selectedCount > 0 {
-		right += " " + lipgloss.NewStyle().Foreground(Active.SuccessAccent).
-			Render(GlyphDot+strconv.Itoa(i.selectedCount))
+		right = lipgloss.NewStyle().Foreground(Active.Primary).Render(strconv.Itoa(i.selectedCount)) +
+			lipgloss.NewStyle().Foreground(Active.TextFaint).Render("/"+strconv.Itoa(i.totalPacks))
 	}
 
 	// Budget the row against the pane width, leaving room for the delegate gutter.
@@ -164,30 +167,27 @@ func (i rpPackItem) Title() string {
 	return prefix + st.Render(name)
 }
 
-// titleParts splits the row into a styled state box and the plain pack name so
-// the shared delegate can highlight filter matches without tearing the box's
-// ANSI (see styledTitleItem).
+// titleParts splits the row into a styled state mark and the plain pack name
+// so the shared delegate can highlight filter matches without tearing the
+// mark's ANSI (see styledTitleItem).
 func (i rpPackItem) titleParts() (string, string, lipgloss.Style) {
 	name := displayOf(i.pack.Pack)
-	box := func(c lipgloss.Color, glyph string) string {
+	mark := func(c lipgloss.Color, glyph string) string {
 		return lipgloss.NewStyle().Foreground(c).Render(glyph) + " "
 	}
 	switch {
 	case i.inCart && i.applied:
 		// In the built pack and still selected — unchanged.
-		return box(Active.SuccessAccent, "[x]"), name, lipgloss.NewStyle().Foreground(Active.TextStrong)
+		return mark(Active.Success, rpGlyphOn), name, lipgloss.NewStyle()
 	case i.inCart:
 		// Newly added, not yet built — pending addition.
-		return box(Active.Warning, "[+]"), name, lipgloss.NewStyle().Foreground(Active.TextStrong)
+		return mark(Active.Warning, rpGlyphOn), name, lipgloss.NewStyle()
 	case i.applied:
 		// Was built but removed from the cart — pending removal on next build.
-		return box(Active.TextMuted, "[-]"), name, lipgloss.NewStyle().Foreground(Active.TextMuted).Strikethrough(true)
-	case i.blocker != "":
-		// Selectable but conflicting — toggling swaps out the conflict. Muted (not
-		// faint/disabled) so it doesn't read as inert.
-		return box(Active.WarningSoft, "[ ]"), name, lipgloss.NewStyle().Foreground(Active.TextMuted)
+		return mark(Active.Warning, rpGlyphOff), name, lipgloss.NewStyle().Foreground(Active.TextMuted).Strikethrough(true)
 	default:
-		return box(Active.Border, "[ ]"), name, lipgloss.NewStyle().Foreground(Active.Text)
+		// Not in your pack (a conflicting one says what it replaces on line two).
+		return mark(Active.TextFaint, rpGlyphOff), name, lipgloss.NewStyle()
 	}
 }
 
@@ -228,7 +228,8 @@ func (i rpPackItem) FilterValue() string { return i.pack.Pack.Display + " " + i.
 // category so it can be removed/toggled.
 type rpCartItem struct {
 	pack RPPackRef
-	// applied marks packs already in the built pack (✓) vs pending additions (+).
+	// applied marks packs already in the built pack (green ●) vs pending
+	// additions (amber ●).
 	applied bool
 }
 
@@ -238,11 +239,11 @@ func (i rpCartItem) Title() string {
 }
 
 func (i rpCartItem) titleParts() (string, string, lipgloss.Style) {
-	mark := lipgloss.NewStyle().Foreground(Active.Warning).Render("+")
+	color := Active.Warning // added, not built yet
 	if i.applied {
-		mark = lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone)
+		color = Active.Success
 	}
-	return mark + " ", displayOf(i.pack.Pack), lipgloss.NewStyle().Foreground(Active.Text)
+	return lipgloss.NewStyle().Foreground(color).Render(rpGlyphOn) + " ", displayOf(i.pack.Pack), lipgloss.NewStyle()
 }
 func (i rpCartItem) Description() string {
 	return lipgloss.NewStyle().Foreground(Active.TextMuted).Render(i.pack.Category)

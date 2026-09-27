@@ -26,20 +26,20 @@ func (m *HomeModel) homePaletteItems() []PaletteItem {
 		playLabel = "View game"
 	}
 	items := []PaletteItem{
-		{Label: playLabel, Run: func() tea.Cmd { return m.launchSelected(false) }},
-		{Label: "Play offline", Run: func() tea.Cmd { return m.launchSelected(true) }},
-		{Label: "Mods", Run: m.paletteOpenMods},
-		{Label: "Resource packs", Run: m.paletteOpenResourcePacks},
-		{Label: "New instance", Run: func() tea.Cmd {
+		{Label: playLabel, Key: "↵", Run: func() tea.Cmd { return m.launchSelected(false) }},
+		{Label: "Play offline", Key: "o", Run: func() tea.Cmd { return m.launchSelected(true) }},
+		{Label: "Mods", Key: "m", Run: m.paletteOpenMods},
+		{Label: "Resource packs", Key: "p", Run: m.paletteOpenResourcePacks},
+		{Label: "New instance", Key: "n", Run: func() tea.Cmd {
 			return func() tea.Msg { return NavigateToNewInstance{} }
 		}},
-		{Label: "Edit instance", Run: m.paletteEditInstance},
-		{Label: "Delete instance", Run: m.paletteDeleteInstance},
-		{Label: "Open folder", Run: m.paletteOpenFolder},
-		{Label: "Settings", Run: func() tea.Cmd {
+		{Label: "Edit instance", Key: "e", Run: m.paletteEditInstance},
+		{Label: "Delete instance", Key: "d", Run: m.paletteDeleteInstance},
+		{Label: "Open folder", Key: "f", Run: m.paletteOpenFolder},
+		{Label: "Settings", Key: "s", Run: func() tea.Cmd {
 			return func() tea.Msg { return NavigateToSettings{} }
 		}},
-		{Label: "Accounts", Run: func() tea.Cmd {
+		{Label: "Accounts", Key: "a", Run: func() tea.Cmd {
 			return func() tea.Msg { return NavigateToAuth{} }
 		}},
 	}

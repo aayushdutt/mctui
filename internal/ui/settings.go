@@ -15,22 +15,20 @@ import (
 type settingsFocus int
 
 const (
-	focusSettingsJavaPath settingsFocus = iota
-	focusSettingsJVMArgs
+	focusSettingsTheme settingsFocus = iota
 	focusSettingsSnapshots
-	focusSettingsTheme
+	focusSettingsJavaPath
+	focusSettingsJVMArgs
 	focusSettingsMSAClientID
-	focusSettingsSave
 )
 
-// settingsFocusOrder is the fixed Tab order of the form.
+// settingsFocusOrder is the fixed Tab / ↑↓ order of the form, top to bottom.
 var settingsFocusOrder = []settingsFocus{
+	focusSettingsTheme,
+	focusSettingsSnapshots,
 	focusSettingsJavaPath,
 	focusSettingsJVMArgs,
-	focusSettingsSnapshots,
-	focusSettingsTheme,
 	focusSettingsMSAClientID,
-	focusSettingsSave,
 }
 
 // SettingsModel edits the user-facing subset of [config.Config]. It holds a
@@ -52,11 +50,42 @@ type SettingsModel struct {
 
 	saveErr string
 
+	// initial is the form as it opened, to tell whether esc would lose edits;
+	// discardArmed is set by a first esc with unsaved changes.
+	initial      settingsSnapshot
+	discardArmed bool
+
 	palette CommandPalette
 
 	// help is the `?` read-only key reference overlay (kit_help.go), dismissed by
 	// ? / esc / q.
 	help bool
+}
+
+// settingsSnapshot is the form's editable state, for change detection.
+type settingsSnapshot struct {
+	javaPath, jvmArgs, msaClientID string
+	snapshots                      bool
+	themeIdx                       int
+}
+
+func (m *SettingsModel) snapshot() settingsSnapshot {
+	return settingsSnapshot{m.javaPath.Value(), m.jvmArgs.Value(), m.msaClientID.Value(), m.snapshots, m.themeIdx}
+}
+
+// dirty reports whether the form has changes that esc would throw away.
+func (m *SettingsModel) dirty() bool {
+	return m.snapshot() != m.initial
+}
+
+// moveFocus steps focus up/down the rows, stopping at the first and last.
+func (m *SettingsModel) moveFocus(dir int) {
+	for i, f := range settingsFocusOrder {
+		if f == m.focus {
+			m.applyFocus(settingsFocusOrder[clampStep(i, dir, len(settingsFocusOrder))])
+			return
+		}
+	}
 }
 
 // helpGroups returns the settings screen's bindings grouped for the `?` overlay,
@@ -65,12 +94,12 @@ type SettingsModel struct {
 func (m *SettingsModel) helpGroups() []HelpGroup {
 	return []HelpGroup{
 		{Title: "Navigate", Entries: []HelpEntry{
-			{"tab / ↑↓", "move between fields"},
-			{"← → / h l", "change theme"},
+			{"↑↓ / tab", "move between fields"},
+			{"← →", "change theme"},
 			{"space", "toggle snapshots"},
 		}},
 		{Title: "Act", Entries: []HelpEntry{
-			{"enter", "save"},
+			{"enter", "save (from any field)"},
 		}},
 		{Title: "General", Entries: []HelpEntry{
 			{":", "command palette"},
@@ -81,17 +110,8 @@ func (m *SettingsModel) helpGroups() []HelpGroup {
 }
 
 // NewSettingsModel seeds the form from cfg (read-only; nothing is mutated here).
+// It opens on the Theme row — not a text field — so ? and : work right away.
 func NewSettingsModel(cfg *config.Config) *SettingsModel {
-	mk := func(value, placeholder string, width int) textinput.Model {
-		ti := textinput.New()
-		ti.SetValue(value)
-		ti.Placeholder = placeholder
-		ti.CharLimit = 512
-		ti.Width = width
-		ThemeTextInput(&ti)
-		return ti
-	}
-
 	themeNames := ThemeNames()
 	themeIdx := 0
 	for i, n := range themeNames {
@@ -102,18 +122,29 @@ func NewSettingsModel(cfg *config.Config) *SettingsModel {
 	}
 
 	m := &SettingsModel{
-		focus:       focusSettingsJavaPath,
-		javaPath:    mk(cfg.JavaPath, "Auto-detect (leave empty)", 48),
-		jvmArgs:     mk(strings.Join(cfg.JVMArgs, " "), strings.Join(config.DefaultJVMArgs(), " "), 48),
-		msaClientID: mk(cfg.MSAClientID, config.DefaultMSAClientID, 48),
+		focus:       focusSettingsTheme,
+		javaPath:    formInput(cfg.JavaPath, "Automatic"),
+		jvmArgs:     formInput(strings.Join(cfg.JVMArgs, " "), strings.Join(config.DefaultJVMArgs(), " ")),
+		msaClientID: formInput(customClientID(cfg.MSAClientID), "Built-in"),
 		snapshots:   cfg.ShowSnapshots,
 		themeNames:  themeNames,
 		themeIdx:    themeIdx,
 		origTheme:   ActiveName(),
 	}
-	m.applyFocus(focusSettingsJavaPath)
+	m.applyFocus(focusSettingsTheme)
+	m.initial = m.snapshot()
 	m.palette = NewCommandPalette("Settings · commands", "Run a command…", m.settingsPaletteItems)
 	return m
+}
+
+// customClientID is the client ID to show in the form: empty (the "Built-in"
+// placeholder) when it's the default, so the form doesn't show a GUID nobody
+// set. Saving empty keeps using the default.
+func customClientID(id string) string {
+	if id == config.DefaultMSAClientID {
+		return ""
+	}
+	return id
 }
 
 // settingsPaletteItems supplies the settings screen's `:` command-palette verbs.
@@ -135,7 +166,7 @@ func (m *SettingsModel) settingsPaletteItems() []PaletteItem {
 func (m *SettingsModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
-	w := min(60, max(24, width-6))
+	w := formValueWidth(width)
 	m.javaPath.Width = w
 	m.jvmArgs.Width = w
 	m.msaClientID.Width = w
@@ -198,6 +229,9 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.palette.Active {
 			return m, m.palette.Update(msg)
 		}
+		if msg.String() != "esc" {
+			m.discardArmed = false
+		}
 		// Help overlay is read-only: it swallows every key, and only ? / esc / q
 		// dismiss it.
 		if m.help {
@@ -241,20 +275,30 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "esc":
+			if m.dirty() && !m.discardArmed {
+				// Don't throw typed changes away on one keypress.
+				m.discardArmed = true
+				return m, nil
+			}
 			// Restore a previewed-but-unsaved theme so it doesn't persist visually.
 			Apply(m.origTheme)
 			return m, func() tea.Msg { return NavigateToHome{} }
-		case "tab", "down":
+		case "tab":
 			m.cycleFocus(1)
 			return m, textinput.Blink
-		case "shift+tab", "up":
+		case "shift+tab":
 			m.cycleFocus(-1)
 			return m, textinput.Blink
-		case "enter":
-			if m.focus == focusSettingsSnapshots {
-				m.snapshots = !m.snapshots
-				return m, nil
+		case "down", "up":
+			m.moveFocus(map[string]int{"down": 1, "up": -1}[msg.String()])
+			return m, textinput.Blink
+		case "j", "k":
+			// j/k move on rows that aren't text fields (there they type).
+			if m.focusedInput() == nil {
+				m.moveFocus(map[string]int{"j": 1, "k": -1}[msg.String()])
+				return m, textinput.Blink
 			}
+		case "enter":
 			return m.submit()
 		}
 	}
@@ -290,101 +334,67 @@ func (m *SettingsModel) submit() (*SettingsModel, tea.Cmd) {
 
 // View implements tea.Model.
 func (m *SettingsModel) View() string {
-	if m.help {
-		return boundToScreen(HelpOverlay("Settings", m.helpGroups(), m.width, m.height), m.width, m.height)
+	base := m.baseView()
+	switch {
+	case m.help:
+		return Overlay(base, HelpCard("Settings", m.helpGroups(), m.width, m.height), m.width, m.height)
+	case m.palette.Active:
+		return Overlay(base, m.palette.View(m.width, m.height), m.width, m.height)
 	}
-	if m.palette.Active {
-		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
-	}
+	return base
+}
 
-	header := ScreenHeader("Settings", "Changes apply on save and persist to config.json")
+// baseView renders the screen itself (overlays composite over it in View).
+func (m *SettingsModel) baseView() string {
+	header := AppHeader(m.width, "", "Settings")
+	f := m.focus
 
-	javaBlock := underlineField("Java path", "Leave empty to auto-detect or download.", m.javaPath, m.focus == focusSettingsJavaPath)
-	jvmBlock := underlineField("JVM arguments", "Space-separated. Empty falls back to the default.", m.jvmArgs, m.focus == focusSettingsJVMArgs)
-	msaBlock := underlineField("Microsoft client ID", "Advanced. Empty uses the built-in default. Changing this may require signing in again.", m.msaClientID, m.focus == focusSettingsMSAClientID)
-
-	// Snapshots checkbox row, styled to match the wizard's starter-mods row.
-	cbFocused := m.focus == focusSettingsSnapshots
-	mark := wizardCheckboxGlyph(m.snapshots, cbFocused)
-	cbTitle := lipgloss.NewStyle().Foreground(Active.Title).Render("Show snapshots in the version list")
-	cbSub := lipgloss.NewStyle().Foreground(Active.TextDim).Render("Includes pre-releases and weekly snapshots")
-	cbLabel := lipgloss.JoinVertical(lipgloss.Left, cbTitle, cbSub)
-	cbRow := lipgloss.JoinHorizontal(lipgloss.Top, mark, "  ", cbLabel)
-	rowStyle := lipgloss.NewStyle().PaddingLeft(2)
-	if cbFocused {
-		rowStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(Active.Primary).
-			Background(Active.BorderFaint).
-			PaddingLeft(1).
-			PaddingRight(1)
-	}
-	snapshotsBlock := rowStyle.Render(cbRow)
-
-	// Theme selector row, styled to match the snapshots checkbox row.
-	themeFocused := m.focus == focusSettingsTheme
 	themeName := ""
 	if len(m.themeNames) > 0 {
 		themeName = m.themeNames[m.themeIdx]
 	}
-	displayTheme := themeName
-	if displayTheme != "" {
-		displayTheme = strings.ToUpper(displayTheme[:1]) + displayTheme[1:]
+	if themeName != "" {
+		themeName = strings.ToUpper(themeName[:1]) + themeName[1:]
 	}
-	arrowFg := Active.TextDim
-	if themeFocused {
-		arrowFg = Active.Primary
+	arrow := lipgloss.NewStyle().Foreground(Active.TextMuted)
+	if f == focusSettingsTheme {
+		arrow = arrow.Foreground(Active.Primary)
 	}
-	arrowStyle := lipgloss.NewStyle().Foreground(arrowFg)
-	valueStyle := lipgloss.NewStyle().Bold(true).Foreground(Active.Title)
-	picker := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		arrowStyle.Render("‹ "),
-		valueStyle.Render(displayTheme),
-		arrowStyle.Render(" ›"),
-	)
-	themeTitle := lipgloss.NewStyle().Foreground(Active.Title).Render("Theme")
-	themeSub := lipgloss.NewStyle().Foreground(Active.TextDim).Render("Live preview · ←/→ to change")
-	themeLabel := lipgloss.JoinVertical(lipgloss.Left, themeTitle, themeSub)
-	themeRow := lipgloss.JoinHorizontal(lipgloss.Top, picker, "  ", themeLabel)
-	themeRowStyle := lipgloss.NewStyle().PaddingLeft(2)
-	if themeFocused {
-		themeRowStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(Active.Primary).
-			Background(Active.BorderFaint).
-			PaddingLeft(1).
-			PaddingRight(1)
-	}
-	themeBlock := themeRowStyle.Render(themeRow)
+	theme := arrow.Render("‹ ") + lipgloss.NewStyle().Foreground(Active.Text).Render(themeName) + arrow.Render(" ›")
 
-	saveBtn := lipgloss.NewStyle().MarginTop(1).Render(Pill("Save", m.focus == focusSettingsSave))
-
-	errBlock := ""
-	if m.saveErr != "" {
-		errBlock = lipgloss.NewStyle().Foreground(Active.Error).MarginTop(1).Render(m.saveErr)
-	}
-
-	help := lipgloss.NewStyle().MarginTop(1).Render(KeyHints(max(40, m.width-4),
-		KeyHint{"tab", "move"},
-		KeyHint{"space", "toggle"},
-		KeyHint{"←→", "theme"},
-		KeyHint{"enter", "save"},
-		KeyHint{"esc", "cancel"},
-		KeyHint{"?", "help"},
-	))
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
+	rows := []string{
+		header, "",
+		formSection("General"),
+		formRow("Theme", theme, "Live preview. ← → to change.", f == focusSettingsTheme, m.width),
+		formRow("Show snapshots", formToggle(m.snapshots), "Include snapshots and pre-releases in the version list. Space to toggle.", f == focusSettingsSnapshots, m.width),
 		"",
-		javaBlock,
-		jvmBlock,
-		snapshotsBlock,
-		themeBlock,
-		msaBlock,
-		saveBtn,
-		errBlock,
-		help,
-	)
+		formSection("Java"),
+		formRow("Java path", m.javaPath.View(), "Empty finds or downloads the right Java for each version.", f == focusSettingsJavaPath, m.width),
+		formRow("JVM arguments", m.jvmArgs.View(), "Space-separated. Empty uses the defaults.", f == focusSettingsJVMArgs, m.width),
+		"",
+		formSection("Advanced"),
+		formRow("Microsoft client ID", m.msaClientID.View(), "Empty uses the built-in ID. Changing it may require signing in again.", f == focusSettingsMSAClientID, m.width),
+	}
+	if m.saveErr != "" {
+		rows = append(rows, "", lipgloss.NewStyle().Foreground(Active.Error).Render(GlyphFail+" "+m.saveErr))
+	}
+	if m.discardArmed {
+		rows = append(rows, "", formDiscardHint())
+	}
+
+	// Footer: only keys that work right now. While a text field is focused, ?
+	// and : type into it, so they aren't offered.
+	hints := []KeyHint{{"↵", "save"}, {"↑↓", "move"}}
+	switch f {
+	case focusSettingsTheme:
+		hints = append(hints, KeyHint{"←→", "theme"})
+	case focusSettingsSnapshots:
+		hints = append(hints, KeyHint{"space", "toggle"})
+	}
+	hints = append(hints, KeyHint{"esc", "cancel"})
+	if m.focusedInput() == nil {
+		hints = append(hints, KeyHint{"?", "help"})
+	}
+	rows = append(rows, "", KeyHints(m.width, hints...))
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }

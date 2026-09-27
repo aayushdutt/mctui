@@ -7,10 +7,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// TestPanelGeometry checks the panel renders as a solid rectangle: every line
-// is exactly `width` visible cells, including the titled top edge and wrapped
-// body lines.
-func TestPanelGeometry(t *testing.T) {
+// TestCardGeometry checks a card renders as a solid rectangle: every line is
+// exactly `width` visible cells, including the title and wrapped body lines.
+func TestCardGeometry(t *testing.T) {
 	restoreDark(t)
 
 	cases := []struct {
@@ -21,14 +20,14 @@ func TestPanelGeometry(t *testing.T) {
 	}{
 		{"titled", "New Instance", "▸ Version   1.21.4\n  Loader    Fabric", 40},
 		{"untitled", "", "hello", 20},
-		{"long title clamps", "A very very long panel title that overflows", "x", 24},
+		{"long title clamps", "A very very long card title that overflows", "x", 24},
 		{"body wraps", "Logs", strings.Repeat("word ", 40), 30},
 		{"styled body", "Status", lipgloss.NewStyle().Foreground(Active.Success).Render("● running"), 28},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out := Panel(c.title, c.body, c.width, Active.Primary)
+			out := Card(c.title, c.body, c.width, Active.Primary)
 			for i, line := range strings.Split(out, "\n") {
 				if w := lipgloss.Width(line); w != c.width {
 					t.Errorf("line %d width = %d, want %d\n  %q", i, w, c.width, line)
@@ -64,5 +63,14 @@ func TestKeyHintsWrap(t *testing.T) {
 		if !strings.Contains(out, h.Label) {
 			t.Errorf("KeyHints output missing label %q", h.Label)
 		}
+	}
+}
+
+func TestClampHeightKeepsTheTop(t *testing.T) {
+	if got := ClampHeight("a\nb\nc\nd", 2); got != "a\nb" {
+		t.Errorf("ClampHeight = %q, want the first two lines", got)
+	}
+	if got := ClampHeight("a\nb", 5); got != "a\nb" {
+		t.Errorf("a short view must be unchanged, got %q", got)
 	}
 }

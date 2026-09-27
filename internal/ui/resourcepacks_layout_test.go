@@ -24,11 +24,10 @@ func TestRPLayoutSplitFitsTerminalHeight(t *testing.T) {
 }
 
 // Stacked layout: all three list heights plus their shells, gaps, header, status,
-// footer, AND the worst-case in-panel chrome (cart CTA + category warning) must
-// fit. extraReserve = rpCartCTAReserve + 1 (warning line) is the max overhead
-// applyPaneListHeights folds in.
+// footer, AND the worst-case in-panel chrome (a category warning line) must fit.
+// extraReserve is the max overhead applyPaneListHeights folds in.
 func TestRPLayoutCompactFitsTerminalHeight(t *testing.T) {
-	const extraReserve = rpCartCTAReserve + 1
+	const extraReserve = 1
 	for termH := rpLayoutTestMinH; termH <= 120; termH++ {
 		for termW := rpLayoutTestMinW; termW <= 160; termW++ {
 			catH, packH, cartH := rpCompactListHeights(termH, termW, extraReserve)
@@ -48,7 +47,7 @@ func TestRPLayoutCompactFitsTerminalHeight(t *testing.T) {
 // Help line count must match the width ResourcePacksModel.View passes to rpRenderHelp.
 func TestRPHelpBodyMaxWidthMatchesView(t *testing.T) {
 	w := 53
-	if got, want := rpHelpBodyMaxWidth(w), w-6; got != want {
+	if got, want := rpHelpBodyMaxWidth(w), w; got != want {
 		t.Fatalf("rpHelpBodyMaxWidth(%d)=%d want %d", w, got, want)
 	}
 }

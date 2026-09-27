@@ -16,6 +16,10 @@ import (
 
 // ModsModel: left = installed, right = Modrinth (split) or stacked when narrow.
 type ModsModel struct {
+	// installedDel / resultsDel render the two lists (fitRows adjusts them to
+	// the pane height).
+	installedDel, resultsDel *styledTitleDelegate
+
 	inst *core.Instance
 	svc  *mods.Service
 
@@ -38,6 +42,9 @@ type ModsModel struct {
 	searchCancel context.CancelFunc
 
 	installCancel context.CancelFunc
+	// installSeq numbers installs so a cancelled one's late result is dropped
+	// (ModInstallDoneMsg.Seq).
+	installSeq int
 
 	searching    bool
 	searchErr    string
@@ -92,30 +99,34 @@ func (m *ModsModel) helpGroups() []HelpGroup {
 // mods gate ([CanBrowseMods]) first — every navigation into this screen does —
 // so inst is always a Fabric instance and there is no "unsupported" fallback.
 func NewModsModel(inst *core.Instance, client *api.ModrinthClient) *ModsModel {
-	installedList := NewThemedList(ThemedListConfig{
-		Accent: Active.Primary, AccentSoft: Active.Secondary, StatusBar: true,
-	})
-	installedList.Title = "Installed (0)"
+	var m *ModsModel // the lists' focus funcs read it once built
+	installedList, installedDel := newFocusableList(ThemedListConfig{
+		Accent: Active.Primary, AccentSoft: Active.Secondary, ItemName: "mod", ItemNamePlural: "mods",
+	}, func() bool { return m.modsFocus == panelInstalled })
 
+	// One line: "/ Search Modrinth…" — the prompt doubles as the key that
+	// focuses it.
 	ti := textinput.New()
-	ti.Placeholder = "Search Fabric mods, or leave empty for popular picks…"
+	ti.Prompt = "/ "
+	ti.Placeholder = "Search Modrinth…"
 	ti.CharLimit = 200
 	ti.Width = 50
 	ThemeTextInput(&ti)
 
-	browseList := NewThemedList(ThemedListConfig{
-		Accent: Active.Primary, AccentSoft: Active.Secondary, StatusBar: true,
-	})
-	browseList.Title = "Modrinth"
+	browseList, resultsDel := newFocusableList(ThemedListConfig{
+		Accent: Active.Primary, AccentSoft: Active.Secondary, ItemName: "result", ItemNamePlural: "results",
+	}, func() bool { return m.modsFocus == panelBrowse })
 
-	m := &ModsModel{
-		inst:      inst,
-		svc:       mods.NewService(client),
-		installed: installedList,
-		query:     ti,
-		results:   browseList,
-		modsFocus: panelBrowse,
-		catalog:   &mods.ModrinthCatalog{},
+	m = &ModsModel{
+		installedDel: installedDel,
+		resultsDel:   resultsDel,
+		inst:         inst,
+		svc:          mods.NewService(client),
+		installed:    installedList,
+		query:        ti,
+		results:      browseList,
+		modsFocus:    panelBrowse,
+		catalog:      &mods.ModrinthCatalog{},
 	}
 	if inst != nil {
 		_ = mods.EnsureModsDir(inst)
@@ -233,7 +244,7 @@ func (m *ModsModel) removeConfirmedJar(name string) {
 	}
 	m.installOK = ""
 	m.installErr = ""
-	m.libraryToast = fmt.Sprintf(`Removed "%s" from this instance.`, name)
+	m.libraryToast = "Removed " + modDisplayNameOnly(name) + "."
 	m.loadInstalledJarList()
 	if n := len(m.installed.Items()); n > 0 {
 		if idx >= n {
@@ -251,7 +262,6 @@ func (m *ModsModel) loadInstalledJarList() {
 	if err != nil {
 		m.installedErr = "Couldn't read installed mods: " + err.Error()
 		m.installed.SetItems(nil)
-		m.installed.Title = "Installed"
 		m.rebuildBrowseBadges()
 		return
 	}
@@ -262,7 +272,6 @@ func (m *ModsModel) loadInstalledJarList() {
 		items = append(items, modInstalledItem{jar: j})
 	}
 	m.installed.SetItems(items)
-	m.installed.Title = fmt.Sprintf("Installed (%d)", len(jars))
 	m.rebuildBrowseBadges()
 }
 
@@ -283,11 +292,12 @@ func (m *ModsModel) SetSize(w, h int) {
 	m.width, m.height = w, h
 	m.compactLayout = w < splitMinWidth
 	if m.compactLayout {
-		m.query.Width = min(60, max(24, w-10))
+		m.query.Width = min(60, max(10, w-12))
 		listW := max(20, w-6)
 		m.libraryListW = listW
 		m.resultsListW = listW
 		libH, browseH := modsCompactListHeights(h, w)
+		m.fitRows(libH, browseH)
 		m.installed.SetSize(listW, libH)
 		m.results.SetSize(listW, browseH)
 		return
@@ -298,7 +308,7 @@ func (m *ModsModel) SetSize(w, h int) {
 		leftW = max(24, w*30/100)
 		rightInner = w - leftW - 5
 	}
-	m.query.Width = min(58, max(24, rightInner-4))
+	m.query.Width = min(58, max(10, rightInner-6))
 	// Zones have no border to inset for, so the lists fill their panes fully
 	// (reclaiming the ~4 columns the old rounded borders took).
 	lw := max(22, leftW)
@@ -306,8 +316,28 @@ func (m *ModsModel) SetSize(w, h int) {
 	m.libraryListW = lw
 	m.resultsListW = rw
 	listH := modsSplitListViewportHeight(h, w)
+	m.fitRows(listH, listH)
 	m.installed.SetSize(lw, listH)
 	m.results.SetSize(rw, listH)
+}
+
+// clearSearchStatus drops the Discover pane's notes when a new search starts,
+// so the results heading comes back instead of the last search's notice or the
+// last install's "Added …" line (a running download keeps its own status).
+func (m *ModsModel) clearSearchStatus() {
+	m.searchNotice = ""
+	if !m.installing {
+		m.installOK, m.installErr = "", ""
+	}
+}
+
+// fitRows drops a list to one-line rows when its pane is too short for one
+// two-line row plus the page dots (only on very short terminals). The gap
+// between rows stays: without it the list pushes its page dots down a line.
+// Must run before the lists' SetSize.
+func (m *ModsModel) fitRows(libH, resultsH int) {
+	m.installedDel.ShowDescription = libH >= 3
+	m.resultsDel.ShowDescription = resultsH >= 3
 }
 
 func (m *ModsModel) cancelSearch() {
@@ -340,7 +370,6 @@ func (m *ModsModel) Init() tea.Cmd {
 	m.searching = true
 	m.searchErr = ""
 	m.searchNotice = ""
-	m.results.Title = "Modrinth — popular"
 	ctx, cancel := context.WithCancel(context.Background())
 	m.searchCancel = cancel
 	browse := func() tea.Msg {
@@ -354,23 +383,38 @@ func (m *ModsModel) Init() tea.Cmd {
 }
 
 func (m *ModsModel) footerHelpItems() []KeyHint {
-	if m.compactLayout {
-		return modsCompactFooterItems(m.height, m.width)
+	if m.installing {
+		return modsInstallingFooterItems()
 	}
-	return modsHelpItemsPick(m.height, m.width)
+	items := modsFooterItems(m.modsFocus)
+	if m.compactLayout {
+		// Panes are stacked: "→ discover" would point sideways at a pane below.
+		for i, h := range items {
+			switch h.Key {
+			case "→", "←":
+				items[i] = KeyHint{"tab", "next pane"}
+			}
+		}
+	}
+	return items
 }
 
-func (m *ModsModel) cycleTab() {
+// cycleTab moves focus through Installed → Search → Results (dir +1) or back
+// (dir -1), wrapping.
+func (m *ModsModel) cycleTab(dir int) {
 	m.clearModsDialog()
-	switch m.modsFocus {
-	case panelInstalled:
-		m.modsFocus = panelQuery
+	order := []modsPanel{panelInstalled, panelQuery, panelBrowse}
+	i := 0
+	for j, p := range order {
+		if p == m.modsFocus {
+			i = j
+		}
+	}
+	m.modsFocus = order[(i+dir+len(order))%len(order)]
+	if m.modsFocus == panelQuery {
 		m.query.Focus()
-	case panelQuery:
+	} else {
 		m.query.Blur()
-		m.modsFocus = panelBrowse
-	case panelBrowse:
-		m.modsFocus = panelInstalled
 	}
 }
 
@@ -397,6 +441,8 @@ func (m *ModsModel) runSearchQuery() tea.Cmd {
 
 func (m *ModsModel) installModCmd(projectID, title string) tea.Cmd {
 	m.cancelInstallDownload()
+	m.installSeq++
+	seq := m.installSeq
 	m.searchNotice = ""
 	m.installing = true
 	m.installErr = ""
@@ -410,6 +456,7 @@ func (m *ModsModel) installModCmd(projectID, title string) tea.Cmd {
 		defer cancel()
 		report, err := svc.InstallFabricModWithDeps(ctx, inst, projectID)
 		ch <- ModInstallDoneMsg{
+			Seq:       seq,
 			ProjectID: projectID,
 			Title:     title,
 			Report:    report,

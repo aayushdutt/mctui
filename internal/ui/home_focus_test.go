@@ -298,3 +298,22 @@ func TestAddInstanceRow(t *testing.T) {
 		t.Fatalf("expected NavigateToNewInstance, got %T", cmd())
 	}
 }
+
+// Scrolling the wheel onto "+ New instance" while the detail pane has focus
+// hands focus back to the list (the add row has no detail pane; focus used to
+// stay there with nothing selected and Enter doing nothing).
+func TestWheelOntoAddRowReturnsFocusToList(t *testing.T) {
+	restoreDark(t)
+	m := newHomeWith(t, fabricInstance(t))
+	sendKey(t, m, "tab")
+	if m.paneFocus != focusDetail {
+		t.Fatal("setup: tab should focus the detail pane")
+	}
+	m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	if !m.addRowSelected() {
+		t.Fatal("setup: the wheel should move onto the add row")
+	}
+	if m.paneFocus != focusList {
+		t.Error("focus stayed on the detail pane after scrolling onto the add row")
+	}
+}

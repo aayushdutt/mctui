@@ -41,7 +41,7 @@ func TestSettings_SubmitEmitsSettingsSaved(t *testing.T) {
 	m.jvmArgs.SetValue("-Xmx4G -Xms1G")
 	m.msaClientID.SetValue("  my-client-id  ")
 	m.snapshots = true
-	m.applyFocus(focusSettingsSave)
+	m.applyFocus(focusSettingsTheme) // Enter saves from any field
 
 	_, cmd := m.Update(keyEnter())
 	if cmd == nil {
@@ -68,7 +68,7 @@ func TestSettings_SubmitEmitsSettingsSaved(t *testing.T) {
 func TestSettings_JVMArgsSplitHandlesExtraSpaces(t *testing.T) {
 	m := NewSettingsModel(&config.Config{})
 	m.jvmArgs.SetValue("   -Xmx4G    -Xms1G   ")
-	m.applyFocus(focusSettingsSave)
+	m.applyFocus(focusSettingsTheme) // Enter saves from any field
 
 	_, cmd := m.Update(keyEnter())
 	saved, ok := cmd().(SettingsSaved)
@@ -83,7 +83,7 @@ func TestSettings_JVMArgsSplitHandlesExtraSpaces(t *testing.T) {
 func TestSettings_EmptyJavaPathSubmits(t *testing.T) {
 	m := NewSettingsModel(&config.Config{})
 	m.javaPath.SetValue("")
-	m.applyFocus(focusSettingsSave)
+	m.applyFocus(focusSettingsTheme) // Enter saves from any field
 
 	_, cmd := m.Update(keyEnter())
 	if cmd == nil {
@@ -104,7 +104,7 @@ func TestSettings_ValidJavaPathSubmits(t *testing.T) {
 	}
 	m := NewSettingsModel(&config.Config{})
 	m.javaPath.SetValue(p)
-	m.applyFocus(focusSettingsSave)
+	m.applyFocus(focusSettingsTheme) // Enter saves from any field
 
 	_, cmd := m.Update(keyEnter())
 	saved, ok := cmd().(SettingsSaved)
@@ -120,7 +120,7 @@ func TestSettings_InvalidJavaPathBlocksSubmit(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
 	m := NewSettingsModel(&config.Config{})
 	m.javaPath.SetValue(missing)
-	m.applyFocus(focusSettingsSave)
+	m.applyFocus(focusSettingsTheme) // Enter saves from any field
 
 	_, cmd := m.Update(keyEnter())
 	if m.saveErr == "" {
@@ -171,14 +171,63 @@ func TestSettings_EscNavigatesHome(t *testing.T) {
 
 func TestSettings_FocusCycleWraps(t *testing.T) {
 	m := NewSettingsModel(&config.Config{})
-	m.applyFocus(focusSettingsJavaPath)
+	if m.focus != focusSettingsTheme {
+		t.Fatalf("the form should open on the Theme row (not a text field), got %v", m.focus)
+	}
 
 	m.cycleFocus(-1)
-	if m.focus != focusSettingsSave {
-		t.Fatalf("shift back from first field should wrap to Save, got %v", m.focus)
+	if m.focus != focusSettingsMSAClientID {
+		t.Fatalf("back from the first row should wrap to the last, got %v", m.focus)
 	}
 	m.cycleFocus(1)
-	if m.focus != focusSettingsJavaPath {
-		t.Fatalf("forward from Save should wrap to the first field, got %v", m.focus)
+	if m.focus != focusSettingsTheme {
+		t.Fatalf("forward from the last row should wrap to the first, got %v", m.focus)
+	}
+}
+
+// With a non-text row focused (as when the form opens), ? opens help and :
+// the palette; in a text field they type.
+func TestSettings_HelpAndPaletteFromNonTextRow(t *testing.T) {
+	m := NewSettingsModel(&config.Config{})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if !m.help {
+		t.Fatal("? on the Theme row should open help")
+	}
+	m.help = false
+	m.applyFocus(focusSettingsJavaPath)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if m.help || m.javaPath.Value() != "?" {
+		t.Errorf("? in a text field should type (help=%v value=%q)", m.help, m.javaPath.Value())
+	}
+}
+
+// Esc with unsaved changes asks once; a second esc leaves. A clean form leaves
+// on the first esc.
+func TestSettings_EscWithUnsavedChangesAsksFirst(t *testing.T) {
+	m := NewSettingsModel(&config.Config{})
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc}); cmd == nil {
+		t.Fatal("esc on an unchanged form should leave")
+	}
+
+	m = NewSettingsModel(&config.Config{})
+	m.snapshots = !m.snapshots
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc}); cmd != nil || !m.discardArmed {
+		t.Fatal("the first esc with unsaved changes should ask, not leave")
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("a second esc should leave")
+	}
+	if _, ok := cmd().(NavigateToHome); !ok {
+		t.Fatalf("expected NavigateToHome, got %T", cmd())
+	}
+}
+
+// ↑ on the first row stays there (no wrap to the last); tab still wraps.
+func TestSettings_UpStopsAtTheTop(t *testing.T) {
+	m := NewSettingsModel(&config.Config{})
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.focus != focusSettingsTheme {
+		t.Errorf("↑ on the first row moved to %v", m.focus)
 	}
 }

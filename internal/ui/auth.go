@@ -49,7 +49,7 @@ type AuthModel struct {
 
 	// pendingLaunch is the instance the user was trying to launch when this auth
 	// screen opened (nil when opened from the Accounts menu). When set, the screen
-	// offers an "[o] play offline" escape hatch that launches it without signing in.
+	// offers an "o play offline" escape hatch that launches it without signing in.
 	pendingLaunch *core.Instance
 
 	spinner spinner.Model
@@ -212,8 +212,16 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// No text entry on this screen, so "?" always opens the key reference.
 			m.help = true
 			return m, nil
-		case "esc", "q":
+		case "esc":
 			return m, func() tea.Msg { return NavigateToHome{} }
+		case "r":
+			// Start over after a failed sign-in.
+			if m.state == AuthStateError {
+				m.err = nil
+				m.notice = ""
+				m.state = AuthStateInit
+				return m, m.Init()
+			}
 		case "o":
 			// Escape hatch: play the pending instance offline instead of signing in.
 			if m.pendingLaunch != nil {
@@ -307,13 +315,22 @@ func (m *AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AuthModel) View() string {
-	if m.help {
-		return boundToScreen(HelpOverlay("Accounts", m.helpGroups(), m.width, m.height), m.width, m.height)
+	base := m.baseView()
+	switch {
+	case m.help:
+		return Overlay(base, HelpCard("Accounts", m.helpGroups(), m.width, m.height), m.width, m.height)
+	case m.palette.Active:
+		return Overlay(base, m.palette.View(m.width, m.height), m.width, m.height)
 	}
-	if m.palette.Active {
-		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
-	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.authCard())
+	return base
+}
+
+// baseView renders the screen itself (overlays composite over it in View).
+func (m *AuthModel) baseView() string {
+	header := AppHeader(m.width, "", "Sign in")
+	bodyH := max(1, m.height-2)
+	return lipgloss.JoinVertical(lipgloss.Left, header, "",
+		lipgloss.Place(m.width, bodyH, lipgloss.Center, lipgloss.Center, m.authCard()))
 }
 
 // authCard renders the centered content for the current auth state.
@@ -347,8 +364,7 @@ func (m *AuthModel) authCard() string {
 
 	case AuthStateError:
 		bad := lipgloss.NewStyle().Bold(true).Foreground(Active.Error).Render(GlyphFail + " Sign-in failed")
-		body := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(fmt.Sprintf("%v", m.err))
-		panel := Panel("Error", body, w, Active.Error)
+		panel := lipgloss.NewStyle().Foreground(Active.TextDim).Width(w).Render(fmt.Sprintf("%v", m.err))
 		errHints := []KeyHint{{"esc", "back"}, {"?", "help"}}
 		if m.pendingLaunch != nil {
 			errHints = append([]KeyHint{{"o", "play offline"}}, errHints...)
@@ -358,7 +374,7 @@ func (m *AuthModel) authCard() string {
 
 	case AuthStateWaitingForUser:
 		if m.deviceCode == nil {
-			return authStatusLine("", "No device code — press [esc] to go back.")
+			return authStatusLine("", "No device code — press esc to go back.")
 		}
 		return m.authDeviceCard(w)
 	}
@@ -367,20 +383,20 @@ func (m *AuthModel) authCard() string {
 
 // authDeviceCard renders the two-step device-code sign-in flow.
 func (m *AuthModel) authDeviceCard(w int) string {
-	header := ScreenHeader("Microsoft sign-in", "Authorize mctui to use your Minecraft account")
 
 	url := lipgloss.NewStyle().Foreground(Active.SuccessAccent).Underline(true).Render(m.deviceCode.VerificationURI)
 	step1 := authStep("1", "Open this page in your browser", url)
 
 	code := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render(m.deviceCode.UserCode)
-	copyState := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("press [c] to copy")
+	copyState := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("c to copy")
 	if m.copied {
 		copyState = lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone + " copied")
 	}
 	step2 := authStep("2", "Enter this device code", code+"   "+copyState)
 
-	body := lipgloss.JoinVertical(lipgloss.Left, step1, "", step2)
-	panel := Panel("Sign in", body, w, Active.Primary)
+	intro := lipgloss.NewStyle().Foreground(Active.TextDim).Render("so mctui can launch Minecraft with your account")
+	body := lipgloss.JoinVertical(lipgloss.Left, intro, "", step1, "", step2)
+	panel := Card("Sign in with Microsoft", body, w, Active.Primary)
 
 	waiting := lipgloss.NewStyle().
 		Foreground(Active.TextSubtle).
@@ -392,7 +408,7 @@ func (m *AuthModel) authDeviceCard(w int) string {
 	cardHints = append(cardHints, KeyHint{"esc", "back"}, KeyHint{"?", "help"})
 	hints := KeyHints(w, cardHints...)
 
-	parts := []string{header, "", panel, "", waiting}
+	parts := []string{panel, "", waiting}
 	if m.notice != "" {
 		parts = append(parts, "", lipgloss.NewStyle().Foreground(Active.Warning).Render(GlyphWarn+" "+m.notice))
 	}

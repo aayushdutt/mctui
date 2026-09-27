@@ -127,6 +127,7 @@ type (
 
 	// ModInstallDoneMsg is sent when a Modrinth mod install (root + dependencies) finishes or fails.
 	ModInstallDoneMsg struct {
+		Seq       int                 // the install it reports on; a cancelled one's result is dropped
 		ProjectID string              // the user-selected root project
 		Title     string              // root project title (for status text)
 		Report    *mods.InstallReport // nil when Err is set before resolution

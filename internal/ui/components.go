@@ -2,7 +2,6 @@ package ui
 
 import (
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -22,15 +21,16 @@ import (
 func ThemeListDelegate(accent, accentSoft lipgloss.Color) list.DefaultDelegate {
 	d := list.NewDefaultDelegate()
 	s := &d.Styles
-	// Selected row: accent text + a thick left accent bar (┃). The thick border
-	// matches the shared selection idiom (kit.go SelectBar / rowMarker) so these
-	// bubbles lists highlight identically to the hand-rendered detail rows and
-	// overlay menus.
-	bar := lipgloss.ThickBorder()
-	s.SelectedTitle = s.SelectedTitle.Border(bar, false, false, false, true).
-		Foreground(accent).BorderLeftForeground(accent)
-	s.SelectedDesc = s.SelectedDesc.Border(bar, false, false, false, true).
-		Foreground(accentSoft).BorderLeftForeground(accent)
+	// Selected row: the accent › pointer on the title line (kit SelectMark /
+	// rowMarker) and a bright, bold title; the description stays quiet. The
+	// pointer is drawn as a one-glyph left "border" on the title only — a bar
+	// down both lines would break into dashes in terminals with line spacing.
+	// accentSoft is kept in the signature for callers but no longer used.
+	_ = accentSoft
+	s.SelectedTitle = s.SelectedTitle.Border(lipgloss.Border{Left: SelectMark}, false, false, false, true).
+		Foreground(Active.TextStrong).Bold(true).BorderLeftForeground(accent)
+	s.SelectedDesc = s.SelectedDesc.Border(lipgloss.Border{Left: " "}, false, false, false, true).
+		Foreground(Active.TextDim)
 	s.NormalTitle = s.NormalTitle.Foreground(Active.Text)
 	s.NormalDesc = s.NormalDesc.Foreground(Active.TextMuted)
 	s.DimmedTitle = s.DimmedTitle.Foreground(Active.TextMuted)
@@ -45,32 +45,59 @@ func ThemeListDelegate(accent, accentSoft lipgloss.Color) list.DefaultDelegate {
 // is a shared default.
 type ThemedListConfig struct {
 	Accent, AccentSoft lipgloss.Color
-	// StatusBar shows the "N items" bar under the list.
+	// StatusBar shows the list's own "N items" / filter status line. Pane titles
+	// already carry counts, so only a filterable list wants it (it's where an
+	// active filter is shown).
 	StatusBar bool
+	// ItemName / ItemNamePlural name the rows ("mod"/"mods"), used by the
+	// status bar and the empty state ("No mods."). Default "item"/"items".
+	ItemName, ItemNamePlural string
 	// Filter enables the "/" filter.
 	Filter bool
 	// SingleLine renders compact one-line rows (no description, no row spacing) —
 	// used for the category tree.
 	SingleLine bool
+	// Tight keeps the description line but drops the blank line between rows.
+	Tight bool
 }
 
 // NewThemedList builds a bubbles list dressed from the active theme with the
-// shared screen defaults (no title, quit keys disabled, themed chrome). It
-// replaces the ~8-line construction boilerplate repeated per list across the
-// mods and resource-packs screens.
+// shared screen defaults: no title, no built-in help line (every screen has one
+// footer; the list's own "↑/k up • ↓/j down • ? more" duplicated it, and its "?"
+// never worked), quit keys disabled, themed chrome.
 func NewThemedList(cfg ThemedListConfig) list.Model {
+	l, _ := newFocusableList(cfg, nil)
+	return l
+}
+
+// newFocusableList is [NewThemedList] for one pane of a multi-pane screen:
+// focused reports whether the pane has focus, and the list hides its selected
+// row while it doesn't. It also returns the delegate (for per-screen tweaks).
+func newFocusableList(cfg ThemedListConfig, focused func() bool) (list.Model, *styledTitleDelegate) {
 	del := ThemeListDelegate(cfg.Accent, cfg.AccentSoft)
 	if cfg.SingleLine {
 		del.ShowDescription = false
 		del.SetSpacing(0)
 	}
-	l := list.New([]list.Item{}, &styledTitleDelegate{DefaultDelegate: del}, 0, 0)
+	if cfg.Tight {
+		del.SetSpacing(0)
+	}
+	sd := &styledTitleDelegate{DefaultDelegate: del, focused: focused}
+	l := list.New([]list.Item{}, sd, 0, 0)
 	l.SetShowTitle(false)
+	l.SetShowHelp(false)
 	l.SetShowStatusBar(cfg.StatusBar)
+	if cfg.ItemName != "" {
+		l.SetStatusBarItemName(cfg.ItemName, cfg.ItemNamePlural)
+	}
 	l.SetFilteringEnabled(cfg.Filter)
 	l.DisableQuitKeybindings()
+	// Page with PgUp/PgDn only: the defaults (h/l/←/→/f/b/u/d) collide with
+	// screen keys — ←/→ switch panes, and letters are commands.
+	l.KeyMap.PrevPage.SetKeys("pgup")
+	l.KeyMap.NextPage.SetKeys("pgdown")
 	ThemeListChrome(&l)
-	return l
+	return l, sd
 }
 
 // ThemeListChrome styles a list's surrounding chrome — the filter input,
@@ -98,13 +125,4 @@ func ThemeTextInput(ti *textinput.Model) {
 	ti.TextStyle = lipgloss.NewStyle().Foreground(Active.Text)
 	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(Active.TextMuted)
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(Active.Primary)
-}
-
-// ThemeProgress builds a progress bar whose fill gradient comes from the active
-// theme instead of bubbles' default pink→purple.
-func ThemeProgress(width int) progress.Model {
-	return progress.New(
-		progress.WithGradient(string(Active.Primary), string(Active.Secondary)),
-		progress.WithWidth(width),
-	)
 }

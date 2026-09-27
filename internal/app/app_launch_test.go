@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/aayushdutt/mctui/internal/core"
@@ -292,5 +293,26 @@ func TestLaunch_EveryGateOutcomeReleasesTheGate(t *testing.T) {
 				t.Error("a new launch should be possible afterwards")
 			}
 		})
+	}
+}
+
+// ctrl+c with a game running asks for a second press too (it used to skip the
+// q guard and quit at once), and the prompt shows on whatever screen is open.
+func TestQuit_CtrlCWhileGameRunsNeedsSecondPress(t *testing.T) {
+	m, inst := newLaunchTestModel(t)
+	playingDetached(t, m, inst) // on the launch screen
+
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC}); cmd != nil || !m.quitArmed {
+		t.Fatal("first ctrl+c with a game running should ask, not quit")
+	}
+	if !strings.Contains(m.View(), "press again to quit") {
+		t.Error("the quit prompt should show on the launch screen")
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("a second ctrl+c should quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("a second ctrl+c should quit")
 	}
 }

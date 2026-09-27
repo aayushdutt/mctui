@@ -12,8 +12,10 @@ package ui
 const (
 	// homeSplitMinWidth is the breakpoint: at or above this content width the home
 	// screen renders the two-column master/detail layout; below it falls back to a
-	// single full-width list plus a one-line summary.
-	homeSplitMinWidth = 84
+	// single full-width list plus a one-line summary. 76 is the content width of
+	// an 80-column terminal (the app shell pads 2 each side), so the common
+	// 80x24 gets both columns.
+	homeSplitMinWidth = 76
 
 	// homeTitleLines is the StatusBar title row above the columns (screen title
 	// left, instance count right).

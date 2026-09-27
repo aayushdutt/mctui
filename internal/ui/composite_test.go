@@ -10,8 +10,8 @@ import (
 )
 
 // Compositing keeps the backdrop context visible but dimmed behind the overlay
-// box (spec M4.1).
-func TestComposite(t *testing.T) {
+// card (spec M4.1).
+func TestOverlay(t *testing.T) {
 	restoreDark(t)
 	// Force a color profile so the faint dimming actually emits SGR (the test
 	// binary is not a TTY, which otherwise downgrades to no-color).
@@ -21,12 +21,11 @@ func TestComposite(t *testing.T) {
 
 	const w, h = 60, 16
 
-	// A recognizable background and a centered overlay box.
+	// A recognizable background and a centered card.
 	background := strings.Repeat("INSTANCE-ALPHA INSTANCE-BETA INSTANCE-GAMMA\n", h)
-	box := Panel("Delete instance?", "Delete \"Survival World\"?", 34, Active.Error)
-	overlay := lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
+	card := Card("Delete instance?", "Delete \"Survival World\"?", 34, Active.Error)
 
-	out := Composite(background, overlay, w, h)
+	out := Overlay(background, card, w, h)
 	plain := ansi.Strip(out)
 
 	// Backdrop content survives (context not erased) …
@@ -58,10 +57,35 @@ func TestComposite(t *testing.T) {
 	// Wide runes (CJK/emoji) in the backdrop straddling the box edge must not
 	// desync the cell math — every composited row stays exactly `width` cells.
 	wideBg := strings.Repeat("生存世界 サバイバル 🎮 world\n", h)
-	wideOut := Composite(wideBg, overlay, w, h)
+	wideOut := Overlay(wideBg, card, w, h)
 	for i, line := range strings.Split(wideOut, "\n") {
 		if got := lipgloss.Width(line); got != w {
 			t.Fatalf("wide-rune composite row %d width = %d, want exactly %d", i, got, w)
+		}
+	}
+}
+
+// A card is exactly its width and is drawn with text and horizontal rules only:
+// no vertical box glyphs and no background colors, both of which break into
+// dashes/stripes in terminals that add line spacing.
+func TestCardUsesNoVerticalsOrBackgrounds(t *testing.T) {
+	restoreDark(t)
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	body := lipgloss.NewStyle().Bold(true).Render("Play") + " " +
+		lipgloss.NewStyle().Foreground(Active.TextDim).Render("offline")
+	card := Card("Command palette", body, 40, Active.Primary)
+	for i, line := range strings.Split(card, "\n") {
+		if w := lipgloss.Width(line); w != 40 {
+			t.Errorf("row %d is %d cells, want 40", i, w)
+		}
+		if strings.ContainsAny(ansi.Strip(line), "│┃╭╮╰╯") {
+			t.Errorf("row %d has a vertical box glyph: %q", i, ansi.Strip(line))
+		}
+		if strings.Contains(line, "\x1b[48;") {
+			t.Errorf("row %d paints a background", i)
 		}
 	}
 }

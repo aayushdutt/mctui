@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -12,20 +13,14 @@ import (
 // of its own — the root app applies the single AppShellStyle inset once
 // (app.View), and SetSize already receives the pre-padded contentSize.
 func (m *ResourcePacksModel) View() string {
-	if m.help {
-		return boundToScreen(HelpOverlay("Resource packs", m.helpGroups(), m.width, m.height), m.width, m.height)
-	}
-	if m.palette.Active {
-		return boundToScreen(m.palette.View(m.width, m.height), m.width, m.height)
-	}
-
-	// Unsupported instance version: no published catalog. Centered notice.
-	if !m.catalogSupported {
-		return m.unsupportedView()
-	}
-
-	if m.rpDialog == rpDialogConfirmClear {
-		return ConfirmDialog{
+	base := m.baseView()
+	switch {
+	case m.help:
+		return Overlay(base, HelpCard("Resource packs", m.helpGroups(), m.width, m.height), m.width, m.height)
+	case m.palette.Active:
+		return Overlay(base, m.palette.View(m.width, m.height), m.width, m.height)
+	case m.rpDialog == rpDialogConfirmClear:
+		return Overlay(base, ConfirmDialog{
 			Title:    "Clear your pack?",
 			Message:  fmt.Sprintf("Remove all %d tweak%s from this instance's pack?", m.sel.Count(), plural(m.sel.Count())),
 			Warning:  "This empties the cart (does not delete an already-applied pack).",
@@ -33,7 +28,17 @@ func (m *ResourcePacksModel) View() string {
 			Cancel:   "Keep",
 			Kind:     ConfirmDanger,
 			FocusYes: m.rpDialogFocusYes,
-		}.Render(m.width, m.height)
+		}.View(m.width), m.width, m.height)
+	}
+	return base
+}
+
+// baseView renders the screen itself (overlays composite over it in View).
+func (m *ResourcePacksModel) baseView() string {
+
+	// Unsupported instance version: no published catalog. Centered notice.
+	if !m.catalogSupported {
+		return m.unsupportedView()
 	}
 
 	header := m.headerBlock()
@@ -62,10 +67,9 @@ func (m *ResourcePacksModel) View() string {
 	}
 
 	helpItems := m.footerHelpItems()
-	contentInnerW := max(24, m.width-8)
-	help := lipgloss.JoinVertical(lipgloss.Left,
-		Rule(min(contentInnerW, 64)),
-		lipgloss.NewStyle().MarginTop(1).Render(rpRenderHelp(helpItems, m.width-6)))
+	// A blank line where the footer rule used to be keeps the height budget
+	// (footerHelpHeight) while matching every other screen's footer.
+	help := lipgloss.JoinVertical(lipgloss.Left, "", rpRenderHelp(helpItems, rpHelpBodyMaxWidth(m.width)))
 
 	// Bound to the content width so a stray sub-cell from a bubble list can't push
 	// a line past the frame (mirrors home's final MaxWidth guard).
@@ -94,34 +98,44 @@ func (m *ResourcePacksModel) unsupportedView() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 }
 
-// footerHelpItems returns the key hints shown at the bottom of the screen.
+// footerHelpItems returns the key hints for the current state and pane.
 func (m *ResourcePacksModel) footerHelpItems() []KeyHint {
-	return rpHelpItemsPick(m.height, m.width)
+	switch {
+	case m.applying:
+		return rpFooterItems(rpFooterApplying)
+	case m.loadErr != "":
+		return rpFooterItems(rpFooterLoadErr)
+	case m.rpFocus == rpPanelPacks && m.packs.FilterState() == list.Filtering:
+		return rpFooterItems(rpFooterFilter)
+	case m.searchMode && m.rpFocus == rpPanelPacks:
+		return rpFooterItems(rpFooterSearch)
+	case m.rpFocus == rpPanelCategories:
+		return rpFooterItems(rpFooterCategories)
+	case m.rpFocus == rpPanelCart:
+		return rpFooterItems(rpFooterCart)
+	default:
+		return rpFooterItems(rpFooterPacks)
+	}
 }
 
-// headerBlock renders the screen header (title + which catalog version is used,
-// cart size, and applied/dirty state).
+// headerBlock renders the screen header — the shared AppHeader with the cart
+// size and applied/dirty state flush right (plus which catalog version is used
+// when it differs from the instance's) — and its bottom margin.
 func (m *ResourcePacksModel) headerBlock() string {
-	contentInnerW := max(24, m.width-8)
-
-	// Cart summary + state, set flush-right against the title row when there's room.
 	n := m.sel.Count()
-	summary := lipgloss.NewStyle().Foreground(Active.SuccessAccent).
-		Render(fmt.Sprintf("%d tweak%s in your pack", n, plural(n)))
-	state := m.dirtyStateLabel()
-	rightLine := summary
-	if state != "" {
-		rightLine += lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("  ·  ") + state
+	dim := lipgloss.NewStyle().Foreground(Active.TextDim)
+	right := dim.Render(fmt.Sprintf("%d tweak%s", n, plural(n)))
+	if state := m.dirtyStateLabel(); state != "" {
+		right += dim.Render("  ·  ") + state
 	}
-
-	top := StatusBar(
-		lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render("Resource Packs"),
-		rightLine,
-		contentInnerW,
-	)
-	subtitle := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(m.instanceContextLine())
-
-	return lipgloss.JoinVertical(lipgloss.Left, top, subtitle, Rule(contentInnerW))
+	if m.catalogSupported && m.catalogVersion != "" && m.inst != nil && m.catalogVersion != m.inst.Version {
+		right = dim.Render("catalog "+m.catalogVersion+"  ·  ") + right
+	}
+	name := ""
+	if m.inst != nil {
+		name = m.inst.Name
+	}
+	return AppHeader(m.width, right, name, "Resource packs") + "\n"
 }
 
 // dirtyStateLabel describes whether the cart has unapplied changes.
@@ -206,6 +220,12 @@ func (m *ResourcePacksModel) categoriesPane() string {
 	return Zone("Categories", m.categories.View(), w, m.rpFocus == rpPanelCategories)
 }
 
+// rpPaneText renders a line of pane body text at the list rows' 2-cell gutter,
+// truncated to the pane.
+func rpPaneText(s string, w int) string {
+	return "  " + ansi.Truncate(s, max(1, w-2), "…")
+}
+
 // packsPane renders the middle pack list pane (checkbox rows). The title shows
 // the breadcrumb to the selected category, e.g. "Aesthetic › More Zombies".
 func (m *ResourcePacksModel) packsPane() string {
@@ -235,8 +255,7 @@ func (m *ResourcePacksModel) packsPane() string {
 		// budgets); a wrapping warning would push the pane past its height and clip
 		// the footer.
 		if warn := m.selectedCategoryWarning(); warn != "" {
-			text := ansi.Truncate(GlyphWarn+" "+warn, max(1, w), "…")
-			line := lipgloss.NewStyle().Foreground(Active.Warning).Render(text)
+			line := rpPaneText(lipgloss.NewStyle().Foreground(Active.Warning).Render(GlyphWarn+" "+warn), w)
 			inner = lipgloss.JoinVertical(lipgloss.Left, line, inner)
 		}
 	}
@@ -255,32 +274,30 @@ func (m *ResourcePacksModel) containerHint(cat rpCategoryItem, w int) string {
 	if cat.expanded {
 		lead = "Pick a subcategory below ↓"
 	}
-	listLine := ansi.Truncate(strings.Join(names, " · "), max(1, w), "…")
 	return lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.NewStyle().Foreground(Active.TextMuted).Render(lead),
+		rpPaneText(lipgloss.NewStyle().Foreground(Active.TextMuted).Render(lead), w),
 		"",
-		lipgloss.NewStyle().Foreground(Active.TextFaint).Render(listLine),
+		rpPaneText(lipgloss.NewStyle().Foreground(Active.TextFaint).Render(strings.Join(names, " · ")), w),
 	)
 }
 
-// cartPane renders the right cart pane with a Build & Apply call to action.
+// cartPane renders the right cart pane: the tweaks in your pack, the count on
+// the title (b build & apply is in the footer).
 func (m *ResourcePacksModel) cartPane() string {
 	n := m.sel.Count()
-	title := fmt.Sprintf("Your pack (%d)", n)
 	w := m.cartListW
 	if w < 4 {
 		w = 18
 	}
 
-	var inner string
+	inner := m.cart.View()
 	if n == 0 {
-		inner = lipgloss.JoinVertical(lipgloss.Left,
-			lipgloss.NewStyle().Foreground(Active.TextMuted).Render("No tweaks yet."),
-			lipgloss.NewStyle().Foreground(Active.TextFaint).Render("Pick packs in the middle pane."),
-		)
-	} else {
-		cta := lipgloss.NewStyle().Foreground(Active.SuccessAccent).Render("[b] Build & Apply")
-		inner = lipgloss.JoinVertical(lipgloss.Left, m.cart.View(), "", cta)
+		hint := lipgloss.NewStyle().Width(max(1, w-2))
+		inner = lipgloss.NewStyle().PaddingLeft(2).Render(lipgloss.JoinVertical(lipgloss.Left,
+			hint.Foreground(Active.TextMuted).Render("No tweaks yet."),
+			hint.Foreground(Active.TextFaint).Render("Pick packs in the middle pane."),
+		))
 	}
-	return Zone(title, inner, w, m.rpFocus == rpPanelCart)
+	count := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(fmt.Sprint(n))
+	return ZoneR("Your pack", count, inner, w, m.rpFocus == rpPanelCart)
 }

@@ -568,7 +568,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.launchLive {
 			m.launch = nil
 		}
-		bannerCmd := m.home.SetTransientBanner("Could not verify Microsoft session. Check your connection or press [o] for offline.")
+		bannerCmd := m.home.SetBanner(ui.BannerWarn, "Couldn't verify your Microsoft session. Check your connection, or press o to play offline.")
 		return m, tea.Batch(bannerCmd, m.loadInstances(), m.sessionRecheckCmd())
 
 	case ui.ActiveSessionCheckStarted:
@@ -633,7 +633,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				acc.MSARefreshToken = msg.refreshToken
 			}
 			if err := m.accounts.Save(); err != nil {
-				bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Refreshed session, but couldn't save: %v", err))
+				bannerCmd = m.home.SetBanner(ui.BannerWarn, fmt.Sprintf("Refreshed session, but couldn't save: %v", err))
 			}
 		}
 		if msg.launch != nil {
@@ -651,7 +651,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.PersistShowSnapshots:
 		m.cfg.ShowSnapshots = msg.Value
 		if err := m.cfg.Save(); err != nil {
-			return m, m.home.SetTransientBanner(fmt.Sprintf("Couldn't save snapshot preference: %v", err))
+			return m, m.home.SetBanner(ui.BannerWarn, fmt.Sprintf("Couldn't save snapshot preference: %v", err))
 		}
 		return m, nil
 
@@ -669,9 +669,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settings = nil
 		var bannerCmd tea.Cmd
 		if err := m.cfg.Save(); err != nil {
-			bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Applied for this session, but couldn't write config: %v", err))
+			bannerCmd = m.home.SetBanner(ui.BannerWarn, fmt.Sprintf("Applied for this session, but couldn't write config: %v", err))
 		} else {
-			bannerCmd = m.home.SetTransientBanner("Settings saved.")
+			bannerCmd = m.home.SetBanner(ui.BannerSuccess, "Settings saved.")
 		}
 		// MSA client ID may have changed; re-validate the active session.
 		return m, tea.Batch(bannerCmd, m.loadInstances(), m.sessionRecheckCmd())
@@ -682,9 +682,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Instance != nil {
 			var bannerCmd tea.Cmd
 			if err := m.instances.Update(msg.Instance); err != nil {
-				bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Couldn't save instance: %v", err))
+				bannerCmd = m.home.SetBanner(ui.BannerWarn, fmt.Sprintf("Couldn't save instance: %v", err))
 			} else {
-				bannerCmd = m.home.SetTransientBanner("Instance saved.")
+				bannerCmd = m.home.SetBanner(ui.BannerSuccess, "Instance saved.")
 			}
 			id := msg.Instance.ID
 			return m, tea.Batch(bannerCmd, m.loadInstancesSelecting(id), m.sessionRecheckCmd())
@@ -706,7 +706,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Instance != nil {
 			var bannerCmd tea.Cmd
 			if err := m.instances.Delete(msg.Instance.ID); err != nil {
-				bannerCmd = m.home.SetTransientBanner(fmt.Sprintf("Couldn't delete instance: %v", err))
+				bannerCmd = m.home.SetBanner(ui.BannerWarn, fmt.Sprintf("Couldn't delete instance: %v", err))
 			}
 			return m, tea.Batch(bannerCmd, m.loadInstances())
 		}
@@ -714,7 +714,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.InstanceCreated:
 		if err := m.instances.Create(msg.Instance); err != nil {
 			m.state = StateHome
-			bannerCmd := m.home.SetTransientBanner(fmt.Sprintf("Couldn't create instance: %v", err))
+			bannerCmd := m.home.SetBanner(ui.BannerWarn, fmt.Sprintf("Couldn't create instance: %v", err))
 			return m, tea.Batch(bannerCmd, m.loadInstances(), m.sessionRecheckCmd())
 		}
 		m.state = StateHome
@@ -810,6 +810,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.quitArmed = false
 		switch {
 		case key.Matches(msg, m.keys.ForceQuit):
+			// With a game running, quitting leaves it unmanaged and its playtime
+			// unrecorded: ask for a second press, like q (View shows the prompt).
+			if m.launchLive && !armed {
+				m.quitArmed = true
+				return m, nil
+			}
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Quit):
 			// Don't quit on `q` while home owns input — an overlay (typing `q` in
@@ -817,10 +823,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// containing "q").
 			if m.state == StateHome && !m.home.CapturesInput() {
 				if m.launchLive && !armed {
-					// The game would keep running unmanaged (and its playtime
-					// unrecorded): ask for a second q.
 					m.quitArmed = true
-					return m, m.home.SetTransientBanner("Minecraft is still running — press q again to quit (its playtime won't be recorded).")
+					return m, nil
 				}
 				return m, tea.Quit
 			}
@@ -1088,8 +1092,11 @@ func (m *Model) waitForLaunchStatus(id int, ch chan launch.Status) tea.Cmd {
 // view can push a line past the frame (e.g. an unwrapped hint on a narrow terminal).
 func (m *Model) View() string {
 	content := m.shellContent()
-	if cw, _ := m.contentSize(); cw > 0 {
-		content = ui.ClampWidth(content, cw)
+	if cw, ch := m.contentSize(); cw > 0 {
+		content = ui.ClampHeight(ui.ClampWidth(content, cw), ch)
+		if m.quitArmed {
+			content = ui.ReplaceLastLine(content, ch, ui.QuitWhilePlayingPrompt(cw))
+		}
 	}
 	return ui.AppShellStyle.Background(ui.Active.Background).Render(content)
 }

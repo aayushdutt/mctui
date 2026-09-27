@@ -103,7 +103,7 @@ func firstOrEmpty(s []string) string {
 }
 
 // TestDarkThemeIsDefault guards the default look: dark must be named "dark" and
-// preserve the original pre-theming hexes.
+// keep its signature colors.
 func TestDarkThemeIsDefault(t *testing.T) {
 	restoreDark(t)
 
@@ -120,7 +120,7 @@ func TestDarkThemeIsDefault(t *testing.T) {
 		got  lipgloss.Color
 		want lipgloss.Color
 	}{
-		{"Primary", Active.Primary, lipgloss.Color("#7C3AED")},
+		{"Primary", Active.Primary, lipgloss.Color("#A78BFA")},
 		{"Error", Active.Error, lipgloss.Color("#EF4444")},
 		{"Success", Active.Success, lipgloss.Color("#10B981")},
 	}
@@ -227,5 +227,61 @@ func TestOnColorFlips(t *testing.T) {
 	}
 	if got := OnColor(lipgloss.Color("#000000")); got != onLightText {
 		t.Errorf("OnColor(black) = %q, want light text %q", got, onLightText)
+	}
+}
+
+// typicalBackground is each theme's canonical terminal background, for contrast
+// checks (themes don't paint a background; this is what they're designed on).
+var typicalBackground = map[string]lipgloss.Color{
+	"dark":       "#1E1E1E",
+	"light":      "#FFFFFF",
+	"gruvbox":    "#282828",
+	"catppuccin": "#1e1e2e",
+	"dracula":    "#282a36",
+	"nord":       "#2e3440",
+}
+
+// Every theme's text roles must be readable for what they carry, and step down
+// in order: content (Text) ≥ 7:1; secondary copy and metadata (TextSubtle,
+// TextDim) ≥ 4.5:1; labels/hints (TextMuted) ≥ 3:1; decoration (TextFaint)
+// ≥ 2:1. The accent marks selection and focus, so it must read as text too.
+func TestThemeTextRolesAreReadableAndOrdered(t *testing.T) {
+	for _, name := range themeOrder {
+		p := themeRegistry[name]
+		bg, ok := typicalBackground[name]
+		if !ok {
+			t.Errorf("%s: add its typical background to typicalBackground", name)
+			continue
+		}
+		ratio := func(c lipgloss.Color) float64 {
+			r, ok := ContrastRatio(c, bg)
+			if !ok {
+				t.Fatalf("%s: %q is not a hex color", name, c)
+			}
+			return r
+		}
+		for _, chk := range []struct {
+			role string
+			c    lipgloss.Color
+			min  float64
+		}{
+			{"Text", p.Text, 7}, {"TextStrong", p.TextStrong, 7},
+			{"TextSubtle", p.TextSubtle, 4.5}, {"TextDim", p.TextDim, 4.5},
+			{"TextMuted", p.TextMuted, 3}, {"TextFaint", p.TextFaint, 2},
+			{"Primary", p.Primary, 4.5},
+		} {
+			if r := ratio(chk.c); r < chk.min {
+				t.Errorf("%s: %s %s is %.1f:1 on %s, want ≥ %.1f", name, chk.role, chk.c, r, bg, chk.min)
+			}
+		}
+		ramp := []struct {
+			role string
+			c    lipgloss.Color
+		}{{"TextSubtle", p.TextSubtle}, {"TextDim", p.TextDim}, {"TextMuted", p.TextMuted}, {"TextFaint", p.TextFaint}}
+		for i := 1; i < len(ramp); i++ {
+			if ratio(ramp[i].c) > ratio(ramp[i-1].c)+0.01 {
+				t.Errorf("%s: %s (%.1f) is more prominent than %s (%.1f)", name, ramp[i].role, ratio(ramp[i].c), ramp[i-1].role, ratio(ramp[i-1].c))
+			}
+		}
 	}
 }

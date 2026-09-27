@@ -11,21 +11,30 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// loaderDisplay returns a human label for an instance's loader, capitalized, with
-// the loader version appended when set (e.g. "Fabric 0.16.10").
-func loaderDisplay(inst *core.Instance) string {
-	name := inst.Loader
-	switch name {
+// loaderName returns the display name of a loader id ("fabric" → "Fabric",
+// "" → "Vanilla").
+func loaderName(loader string) string {
+	switch loader {
 	case "", "vanilla":
 		return "Vanilla"
 	case "fabric":
-		name = "Fabric"
+		return "Fabric"
 	case "forge":
-		name = "Forge"
+		return "Forge"
 	case "quilt":
-		name = "Quilt"
+		return "Quilt"
 	case "neoforge":
-		name = "NeoForge"
+		return "NeoForge"
+	}
+	return loader
+}
+
+// loaderDisplay returns a human label for an instance's loader, capitalized, with
+// the loader version appended when set (e.g. "Fabric 0.16.10").
+func loaderDisplay(inst *core.Instance) string {
+	name := loaderName(inst.Loader)
+	if name == "Vanilla" {
+		return name
 	}
 	if v := inst.LoaderVer; v != "" {
 		return name + " " + v
@@ -36,117 +45,108 @@ func loaderDisplay(inst *core.Instance) string {
 // kvRow renders one detail row: a fixed-width muted label column followed by a
 // foreground value. labelW right-pads the label so values align in a column.
 func kvRow(label, value string, labelW int) string {
-	lbl := lipgloss.NewStyle().Foreground(Active.TextMuted).Width(labelW).Render(label)
+	lbl := lipgloss.NewStyle().Foreground(Active.TextDim).Width(labelW).Render(label)
 	val := lipgloss.NewStyle().Foreground(Active.Text).Render(value)
 	return lipgloss.JoinHorizontal(lipgloss.Top, lbl, val)
 }
 
-// statusLabel maps the cached/download state to a glyph + label for the Overview
-// body. It is deliberately understated — neutral text, no semantic fill — since
-// the colored at-a-glance signal already lives in the top statusBadge; the
-// Overview card stays calm.
-func statusLabel(inst *core.Instance) string {
-	txt := lipgloss.NewStyle().Foreground(Active.TextSubtle)
-	if inst.IsFullyDownloaded {
-		return txt.Render(GlyphDone + " Ready (cached)")
+// statusBadge is the selected instance's state, shown flush right on the detail
+// pane's title line: "● Playing" / "● Ready" (green) or "↓ Not downloaded yet"
+// (dim — it's not a problem, the first launch downloads it).
+func (m *HomeModel) statusBadge(inst *core.Instance) string {
+	switch {
+	case inst.ID == m.playingID:
+		return lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDot + " Playing")
+	case inst.IsFullyDownloaded:
+		return lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDot + " Ready")
+	default:
+		return lipgloss.NewStyle().Foreground(Active.TextDim).Render("↓ Not downloaded yet")
 	}
-	return txt.Render(GlyphPending + " Needs download")
 }
 
-// statusBadge is the compact ▸ Ready / ↓ Needs download badge shown in the panel
-// title row, distinct from the verbose statusLabel used in the Overview rows.
-func statusBadge(inst *core.Instance) string {
-	if inst.IsFullyDownloaded {
-		return lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphPointer + " Ready")
+// playControls renders the pinned launch block at the top of the detail pane:
+//
+//	Play            ↵
+//	Play offline    o
+//
+// The primary action is bright and bold, the keys dim and aligned in one
+// column. It reads "Sign in & play" when launching routes
+// through sign-in (mirroring buildFooter / noOnlineSession) and "View game"
+// while the instance is running (Enter reopens its launch screen).
+func (m *HomeModel) playControls(inst *core.Instance) string {
+	key := lipgloss.NewStyle().Foreground(Active.TextMuted)
+	primary := lipgloss.NewStyle().Bold(true).Foreground(Active.TextStrong)
+	row := func(label, k string) string {
+		return label + strings.Repeat(" ", max(1, 16-lipgloss.Width(label))) + key.Render(k)
 	}
-	return lipgloss.NewStyle().Foreground(Active.Warning).Render("↓ Needs download")
-}
-
-// playControls renders the launch affordance shown at the top of the Overview
-// tab body:
-//
-//	▸ Play  Enter      Play offline  o
-//
-// It is intentionally understated (no filled pill) so the Overview reads as a
-// calm card: a faint marker, the action in plain bold text, and muted keys. The
-// primary label switches to "Login & play" when launching routes through
-// sign-in, mirroring buildFooter / noOnlineSession. Enter (from the list, or on
-// the focused Overview tab) launches via launchSelected; the offline key is the
-// lowercase `o` bound in defaultHomeKeyMap / shown in buildFooter.
-func (m *HomeModel) playControls() string {
-	mark := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(GlyphPointer + " ")
-	playKey := lipgloss.NewStyle().Foreground(Active.TextMuted).Render("  Enter")
-	if inst := m.SelectedInstance(); inst != nil && inst.ID == m.playingID {
-		// Its game is running: Enter reopens the launch screen.
-		label := lipgloss.NewStyle().Bold(true).Foreground(Active.Text).Render("View game")
-		return mark + label + playKey
+	if inst.ID == m.playingID {
+		return row(primary.Render("View game"), "↵")
 	}
 	action := "Play"
 	if m.noOnlineSession() {
-		action = "Login & play"
+		action = "Sign in & play"
 	}
-	label := lipgloss.NewStyle().Bold(true).Foreground(Active.Text).Render(action)
-	gap := "      "
-	offline := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render("Play offline")
-	offlineKey := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(" o")
-	return mark + label + playKey + gap + offline + offlineKey
+	offline := lipgloss.NewStyle().Foreground(Active.Text).Render("Play offline")
+	return lipgloss.JoinVertical(lipgloss.Left,
+		row(primary.Render(action), "↵"),
+		row(offline, "o"),
+	)
 }
 
-// tabStrip renders the facet selector under the pinned Play header, e.g.
+// tabStrip renders the facet selector with each list tab's count, e.g.
 //
-//	Overview   Mods   Resource packs
+//	Overview   Mods 4   Resource packs 0
 //
-// with the active tab accented/underlined and the rest muted. Navigation is via
-// the spatial ←/→ model (see the Update key switch), so the strip carries no
-// chevrons or number prefixes of its own.
-func (m *HomeModel) tabStrip() string {
-	active := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(Active.Primary)
-	inactive := lipgloss.NewStyle().Foreground(Active.TextMuted)
-	sep := lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("   ")
+// The active tab is bright, bold, and underlined (accent while the detail pane
+// has focus); the rest are dim with their counts. Navigation is ←/→.
+func (m *HomeModel) tabStrip(inst *core.Instance) string {
+	activeColor := Active.TextStrong
+	if m.paneFocus == focusDetail {
+		activeColor = Active.Primary
+	}
+	active := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(activeColor)
+	inactive := lipgloss.NewStyle().Foreground(Active.TextDim)
+	count := lipgloss.NewStyle().Foreground(Active.TextMuted)
 
 	parts := make([]string, 0, homeTabCount)
 	for i := homeTab(0); i < homeTabCount; i++ {
+		label := homeTabTitles[i]
+		n := ""
+		switch i {
+		case tabMods:
+			n = fmt.Sprintf(" %d", m.modCount(inst))
+		case tabResourcePacks:
+			n = fmt.Sprintf(" %d", len(m.instanceResourcePacks(inst)))
+		}
 		if i == m.activeTab {
-			parts = append(parts, active.Render(homeTabTitles[i]))
+			parts = append(parts, active.Render(label)+count.Render(n))
 		} else {
-			parts = append(parts, inactive.Render(homeTabTitles[i]))
+			parts = append(parts, inactive.Render(label)+count.Render(n))
 		}
 	}
-	return strings.Join(parts, sep)
+	return strings.Join(parts, "   ")
 }
 
-// detailBody renders the rich detail panel body for the selected instance: the
-// pinned Play header, the tab strip, a rule, then the active facet's read-only
-// body. innerW is the panel's inner content width (used to truncate values and
-// size rules).
+// detailBody renders the detail pane under its title: a dim identity line, the
+// pinned Play block, the tab strip, then the active tab's read-only body.
+// innerW is the pane width; colH the column height to fill.
 func (m *HomeModel) detailBody(inst *core.Instance, innerW, colH int) string {
 	if innerW < 8 {
 		innerW = 8
 	}
-
-	// Top zone (pinned): the cache-status badge right-aligned on its own line
-	// (instance name lives in the border title), the tab strip, then a divider.
-	// The Play action lives in the Overview tab body now (playControls), not
-	// pinned here.
+	dim := lipgloss.NewStyle().Foreground(Active.TextDim)
+	identity := "Minecraft " + inst.Version + "  ·  " + loaderDisplay(inst)
 	top := lipgloss.JoinVertical(lipgloss.Left,
-		StatusBar("", statusBadge(inst), innerW),
-		m.tabStrip(),
-		Rule(innerW),
+		"",
+		dim.Render(ansi.Truncate(identity, innerW, "…")),
+		"",
+		m.playControls(inst),
+		"",
+		m.tabStrip(inst),
 		"",
 	)
-	// Bottom zone (pinned to the panel floor): a divider + a context line for the
-	// active tab (counts / hints). Anchoring here is what uses the vertical space.
-	footer := lipgloss.JoinVertical(lipgloss.Left,
-		Rule(innerW),
-		m.tabFooter(inst, innerW),
-	)
 
-	// The body fills everything between the two pinned zones.
-	bodyH := colH - lipgloss.Height(top) - lipgloss.Height(footer)
-	if bodyH < 1 {
-		bodyH = 1
-	}
-
+	bodyH := max(1, colH-lipgloss.Height(top))
 	var body string
 	switch m.activeTab {
 	case tabMods:
@@ -157,139 +157,49 @@ func (m *HomeModel) detailBody(inst *core.Instance, innerW, colH int) string {
 		body = m.tabOverviewBody(inst, innerW, bodyH)
 	}
 	body = lipgloss.NewStyle().MaxHeight(bodyH).Render(body)
-	body = lipgloss.PlaceVertical(bodyH, lipgloss.Top, body)
 
-	// Clamp to innerW so no over-wide line (e.g. the tab strip or a long
-	// header/row) wraps inside the Panel and inflates the column height.
-	return lipgloss.NewStyle().MaxWidth(innerW).Render(
-		lipgloss.JoinVertical(lipgloss.Left, top, body, footer))
+	// Clamp to innerW so no over-wide line wraps and inflates the column height.
+	return lipgloss.NewStyle().MaxWidth(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, top, body))
 }
 
-// tabOverviewBody renders a player's at-a-glance card: the primary Play control
-// up top, then three labeled sections so the pane reads as structured rather
-// than a loose cluster:
+// tabOverviewBody renders the at-a-glance rows under the tabs:
 //
-//	▸ Play  Enter      Play offline  o
+//	Last played    12h ago
+//	Playtime       9h 40m
+//	Worlds         New World · just now
+//	               Hardcore Run · 3d ago
 //
-//	▸ Identity   version · loader (+ cache status when the pane is tall)
-//	▸ Content    Mods / Resource packs / Worlds counts
-//	▸ Activity   Playtime / Last played / Recent worlds (up to 3)
-//
-// The Play control is always shown (it is the tab's primary action — Enter on
-// the focused Overview launches it). The rest adapts to the available body
-// height so a section header is never left orphaned above a clipped body:
-//
-//   - bodyH ≥ 14 → full: status line under the hero + a blank between sections.
-//   - bodyH ≥ 11 → compact: section headers, no status line or blank rows.
-//   - otherwise  → dense: no headers, a packed count line, recency stats — so
-//     everything stays visible even in a short split pane.
-//
-// Dev/config detail (Path, Java) lives in the Edit screen, not here.
+// Labels dim, values bright, no section headers or rules — just aligned rows.
+// Recent worlds (newest first) fill whatever height is left, up to three.
 func (m *HomeModel) tabOverviewBody(inst *core.Instance, innerW, bodyH int) string {
-	const labelW = 16
-	body := lipgloss.NewStyle().PaddingLeft(2) // nest section bodies under the ▸ markers
-	play := m.playControls()                   // primary action, always at the top
-
-	// Shared pieces, used by every tier. Kept neutral (no accent) so the tab reads
-	// as a calm, low-contrast card.
-	ver := lipgloss.NewStyle().Bold(true).Foreground(Active.Text).Render(inst.Version)
-	ldr := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(loaderDisplay(inst))
-	dot := lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render("  ·  ")
-	hero := ansi.Truncate(ver+dot+ldr, max(1, innerW-2), "…")
-
-	modN := m.modCount(inst)
-	packN := len(m.instanceResourcePacks(inst))
-	worlds := m.instanceWorlds(inst)
-	worldN := len(worlds)
-
+	const labelW = 15
 	lastPlayed := "Never"
 	if !inst.LastPlayed.IsZero() {
 		lastPlayed = formatRelativeTime(inst.LastPlayed)
 	}
-	// Recency rows. Worlds is no longer its own tab; the list is sorted
-	// newest-first, so the Activity section surfaces the (up to) 3 most-recent
-	// worlds — "name · last-modified" — answering "what would I jump back into?"
-	// without the full list. The first carries the "Recent worlds" label; the rest
-	// are unlabeled continuation rows aligned under it. Shown in every height tier
-	// (clipped by the body's MaxHeight if the pane is very short).
-	activityRows := []string{
-		kvRow("Playtime", formatPlayTime(inst.PlayTime), labelW),
+	rows := []string{
 		kvRow("Last played", lastPlayed, labelW),
+		kvRow("Playtime", formatPlayTime(inst.PlayTime), labelW),
+	}
+	worlds := m.instanceWorlds(inst)
+	if len(worlds) == 0 {
+		rows = append(rows, kvRow("Worlds", "None yet", labelW))
 	}
 	for i, w := range worlds {
-		if i >= 3 {
+		if i >= 3 || len(rows) >= bodyH {
 			break
 		}
 		label := ""
 		if i == 0 {
-			label = "Recent worlds"
+			label = "Worlds"
 		}
 		val := w.Name
 		if !w.ModTime.IsZero() {
 			val += "  ·  " + formatRelativeTime(w.ModTime)
 		}
-		val = ansi.Truncate(val, max(1, innerW-labelW-2), "…")
-		activityRows = append(activityRows, kvRow(label, val, labelW))
+		rows = append(rows, kvRow(label, ansi.Truncate(val, max(1, innerW-labelW), "…"), labelW))
 	}
-
-	// Dense tier: no section headers, a packed count line, recency stats. Keeps
-	// the Play control and every stat visible when the pane is too short for the
-	// sectioned layout.
-	if bodyH < 11 {
-		countLine := strings.Join([]string{
-			statChip("Mods", modN), statChip("Packs", packN), statChip("Worlds", worldN),
-		}, "   ")
-		dense := append([]string{play, "", hero, statusLabel(inst), countLine}, activityRows...)
-		return lipgloss.JoinVertical(lipgloss.Left, dense...)
-	}
-
-	// Sectioned tiers.
-	roomy := bodyH >= 14
-	idLines := []string{hero}
-	if roomy {
-		idLines = append(idLines, statusLabel(inst))
-	}
-	identity := body.Render(lipgloss.JoinVertical(lipgloss.Left, idLines...))
-
-	content := body.Render(lipgloss.JoinVertical(lipgloss.Left,
-		kvRow("Mods", fmt.Sprintf("%d", modN), labelW),
-		kvRow("Resource packs", fmt.Sprintf("%d", packN), labelW),
-		kvRow("Worlds", fmt.Sprintf("%d", worldN), labelW),
-	))
-	activity := body.Render(lipgloss.JoinVertical(lipgloss.Left, activityRows...))
-
-	parts := []string{play, "", overviewHeader("Identity", innerW), identity}
-	sep := func() {
-		if roomy {
-			parts = append(parts, "")
-		}
-	}
-	sep()
-	parts = append(parts, overviewHeader("Content", innerW), content)
-	sep()
-	parts = append(parts, overviewHeader("Activity", innerW), activity)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
-}
-
-// overviewHeader is the Overview tab's understated section label — a muted title
-// and a faint rule, deliberately without SectionHeader's accent ▸ marker so the
-// tab reads as a calm, low-contrast card rather than a series of accented bands.
-func overviewHeader(title string, width int) string {
-	label := lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(title)
-	rest := width - lipgloss.Width(label) - 1
-	if rest < 1 {
-		return label
-	}
-	return label + " " + Rule(rest)
-}
-
-// statChip renders a "Label N" content count for the Overview card's dense
-// (short-pane) tier: a muted label and a plain bold count — kept neutral (no
-// accent) to match the rest of the subtle Overview.
-func statChip(label string, n int) string {
-	lbl := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(label + " ")
-	val := lipgloss.NewStyle().Bold(true).Foreground(Active.Text).Render(fmt.Sprintf("%d", n))
-	return lbl + val
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
 // detailRow is one row in a read-only detail preview: a label and an optional
@@ -350,6 +260,7 @@ func (m *HomeModel) focusDetailPane() {
 		return
 	}
 	m.paneFocus = focusDetail
+	m.delegate.unfocused = true
 }
 
 // focusListPane returns input focus to the instance list and restores Overview as
@@ -357,6 +268,7 @@ func (m *HomeModel) focusDetailPane() {
 // Overview, Esc, Tab).
 func (m *HomeModel) focusListPane() {
 	m.paneFocus = focusList
+	m.delegate.unfocused = false
 	m.activeTab = tabOverview
 }
 
@@ -434,20 +346,9 @@ func renderPreviewRow(r detailRow, innerW int) string {
 	return "  " + twoEndsRow(left, right, contentW)
 }
 
-// tabFooter is the pinned context line at the foot of the detail panel — counts
-// for list tabs, the action-hint legend for Overview.
-func (m *HomeModel) tabFooter(inst *core.Instance, innerW int) string {
-	dim := lipgloss.NewStyle().Foreground(Active.TextFaint)
-	switch m.activeTab {
-	case tabMods:
-		n := m.modCount(inst)
-		return dim.Render(ansi.Truncate(fmt.Sprintf("%d mod%s · ↵ open manager", n, plural(n)), innerW, "…"))
-	case tabResourcePacks:
-		n := len(m.instanceResourcePacks(inst))
-		return dim.Render(ansi.Truncate(fmt.Sprintf("%d pack%s · ↵ open manager", n, plural(n)), innerW, "…"))
-	default:
-		return dim.Render(ansi.Truncate("m mods · p packs · f folder · e edit · x more", innerW, "…"))
-	}
+// instanceCount is the Instances pane title's right side: the count, dim.
+func (m *HomeModel) instanceCount() string {
+	return lipgloss.NewStyle().Foreground(Active.TextMuted).Render(fmt.Sprintf("%d", len(m.instances)))
 }
 
 // twoEndsRow places left at the start and right flush to width, truncating left
@@ -481,7 +382,7 @@ func (m *HomeModel) renderColumns() string {
 
 	if m.compactLayout {
 		listW := max(1, m.width) // full terminal width; never wider than the pane
-		listPanel := Zone("Instances", m.list.View(), listW, true)
+		listPanel := ZoneR("Instances", m.instanceCount(), m.list.View(), listW, true)
 		summary := ""
 		if inst != nil {
 			summary = m.detailSummaryLine(inst, listW-2)
@@ -500,8 +401,9 @@ func (m *HomeModel) renderColumns() string {
 	case inst != nil:
 		detailInner = m.detailBody(inst, m.detailPaneW, colH)
 	case m.addRowSelected():
-		detailInner = lipgloss.NewStyle().Foreground(Active.TextMuted).
-			Render("Create a new instance.\n\n↵ opens the new-instance wizard.")
+		detailInner = lipgloss.NewStyle().Foreground(Active.TextDim).
+			Render("\nCreate an instance: pick a Minecraft version,\na loader, and a name.\n\n") +
+			KeyHints(m.detailPaneW, KeyHint{"↵", "new instance"})
 	default:
 		detailInner = lipgloss.NewStyle().Foreground(Active.TextMuted).Render("No instance selected.")
 	}
@@ -512,19 +414,15 @@ func (m *HomeModel) renderColumns() string {
 		listInner = lipgloss.PlaceVertical(colH, lipgloss.Top, listInner)
 	}
 
-	// The focused pane's Zone title gets the accent ┃ bar; the other stays muted,
-	// so the heavy stroke marks where arrow/Enter input lands.
-	listPanel := Zone("Instances", listInner, m.listPaneW, m.paneFocus == focusList)
+	// The focused pane's title is in the accent; the other stays muted.
+	listPanel := ZoneR("Instances", m.instanceCount(), listInner, m.listPaneW, m.paneFocus == focusList)
 
-	// The Zone title is JUST the instance name (truncated to the pane so it never
-	// overruns the rule). The status badge lives in the body, on the Play-header
-	// row — see detailBody.
-	detailTitle := "Details"
+	// The detail title is the instance's name, with its status flush right.
+	detailTitle, status := "", ""
 	if inst != nil {
-		// The Zone title has a 2-cell focus gutter; cap the name so it fits the pane.
-		detailTitle = ansi.Truncate(inst.Name, max(4, m.detailPaneW-2), "…")
+		detailTitle, status = inst.Name, m.statusBadge(inst)
 	}
-	detailPanel := Zone(detailTitle, detailInner, m.detailPaneW, m.paneFocus == focusDetail)
+	detailPanel := ZoneR(detailTitle, status, detailInner, m.detailPaneW, m.paneFocus == focusDetail)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, listPanel, "  ", detailPanel)
 }
@@ -532,33 +430,26 @@ func (m *HomeModel) renderColumns() string {
 // detailSummaryLine renders the condensed one-line summary shown in compact mode
 // for the selected instance, e.g.
 //
-//	1.21.4 · Fabric 0.16.10 · 12 mods · 2h ago · ✓ Ready
+//	● Ready · 1.21.4 · Fabric 0.16.10 · 12 mods · 2h ago
 //
 // truncated to width.
 func (m *HomeModel) detailSummaryLine(inst *core.Instance, width int) string {
 	if inst == nil {
 		return ""
 	}
-	sep := lipgloss.NewStyle().Foreground(Active.BorderSubtle).Render(" · ")
+	sep := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(" · ")
 
 	ver := lipgloss.NewStyle().Foreground(Active.Text).Render(inst.Version)
-	ldr := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(loaderDisplay(inst))
-	modN := lipgloss.NewStyle().Foreground(Active.TextMuted).
+	ldr := lipgloss.NewStyle().Foreground(Active.TextDim).Render(loaderDisplay(inst))
+	modN := lipgloss.NewStyle().Foreground(Active.TextDim).
 		Render(fmt.Sprintf("%d mods", m.modCount(inst)))
 
 	lastPlayed := "Never"
 	if !inst.LastPlayed.IsZero() {
 		lastPlayed = formatRelativeTime(inst.LastPlayed)
 	}
-	played := lipgloss.NewStyle().Foreground(Active.TextMuted).Render(lastPlayed)
+	played := lipgloss.NewStyle().Foreground(Active.TextDim).Render(lastPlayed)
 
-	var status string
-	if inst.IsFullyDownloaded {
-		status = lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone + " Ready")
-	} else {
-		status = lipgloss.NewStyle().Foreground(Active.Warning).Render(GlyphPending + " Needs download")
-	}
-
-	line := ver + sep + ldr + sep + modN + sep + played + sep + status
+	line := m.statusBadge(inst) + sep + ver + sep + ldr + sep + modN + sep + played
 	return ansi.Truncate(line, max(8, width), "…")
 }

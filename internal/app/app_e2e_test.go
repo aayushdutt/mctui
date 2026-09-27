@@ -100,15 +100,15 @@ func TestE2E_BootAndNavigateWizard(t *testing.T) {
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(120, 40))
 
 	// Boot: with no instances, Home shows the empty state.
-	waitForOutput(t, tm, "No instances yet")
+	waitForOutput(t, tm, "Create your first instance")
 
 	// Enter the new-instance wizard.
 	tm.Send(keyRunes("n"))
-	waitForOutput(t, tm, "Select Minecraft Version")
+	waitForOutput(t, tm, "Minecraft version")
 
 	// Esc backs out to Home.
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
-	waitForOutput(t, tm, "No instances yet")
+	waitForOutput(t, tm, "Create your first instance")
 
 	// "q" on Home quits.
 	tm.Send(keyRunes("q"))
@@ -122,7 +122,7 @@ func TestE2E_WizardCreatesInstance(t *testing.T) {
 	instancesDir := m.cfg.InstancesDir
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(120, 40))
 
-	waitForOutput(t, tm, "No instances yet")
+	waitForOutput(t, tm, "Create your first instance")
 
 	// Enter the wizard; it loads versions from the local test manifest. Wait on
 	// the version itself (not the title): teatest output is a stream, and the
@@ -159,31 +159,23 @@ func TestE2E_SettingsThemePersists(t *testing.T) {
 	configPath := filepath.Join(m.cfg.DataDir, "config.json")
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(120, 40))
 
-	waitForOutput(t, tm, "No instances yet")
+	waitForOutput(t, tm, "Create your first instance")
 
 	// Open Settings.
 	tm.Send(keyRunes("s"))
 	waitForOutput(t, tm, "Settings")
 
-	// Focus order: JavaPath, JVMArgs, Snapshots, Theme, MSAClientID, Save.
-	// Tab x3 -> Theme row.
-	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
-	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
-	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
-
-	// Right cycles the theme (live preview). Seeded at "dark" (idx 1 of
-	// auto,dark,light,...), so one Right -> "light".
+	// The form opens on the Theme row. Right cycles the theme (live preview).
+	// Seeded at "dark" (idx 1 of auto,dark,light,...), so one Right -> "light".
 	tm.Send(tea.KeyMsg{Type: tea.KeyRight})
 
-	// Tab x2 -> Save, then Enter submits.
-	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
-	tm.Send(tea.KeyMsg{Type: tea.KeyTab})
+	// Enter saves from any field.
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Saving returns to Home. (The empty-state Home view doesn't render the
 	// transient "Settings saved." banner, so assert the Home empty state instead;
 	// the persisted theme below proves the save actually ran.)
-	waitForOutput(t, tm, "No instances yet")
+	waitForOutput(t, tm, "Create your first instance")
 
 	tm.Send(keyRunes("q"))
 	tm.WaitFinished(t, teatest.WithFinalTimeout(waitDuration))
@@ -213,7 +205,7 @@ func TestE2E_HomeDeleteConfirm(t *testing.T) {
 
 		// Confirm with "y".
 		tm.Send(keyRunes("y"))
-		waitForOutput(t, tm, "No instances yet")
+		waitForOutput(t, tm, "Create your first instance")
 
 		tm.Send(keyRunes("q"))
 		tm.WaitFinished(t, teatest.WithFinalTimeout(waitDuration))

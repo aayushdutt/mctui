@@ -9,7 +9,7 @@ import (
 
 // Reasonable minimums where the two-column home layout fits chrome + footer +
 // a small list. Mirrors the resource-packs layout test bounds.
-const homeLayoutTestMinH, homeLayoutTestMinW = 24, 84
+const homeLayoutTestMinH, homeLayoutTestMinW = 24, homeSplitMinWidth
 
 // Two-column vertical budget: the list viewport plus the fixed chrome (title row,
 // gap, panel border) and the measured footer must never exceed the terminal
@@ -144,14 +144,49 @@ func TestHomeOverlaysFitTerminal(t *testing.T) {
 	}
 }
 
-// Desync guard: the footer height the budget uses must equal the rendered footer
-// height for the same model, across narrow widths where the help wraps.
+// Desync guard: the footer budget must cover the rendered footer in every
+// state, across narrow widths where the hints wrap differently.
 func TestHomeFooterHeightMatchesView(t *testing.T) {
 	for _, w := range []int{40, 52, 60, 72, 84, 100, 140} {
 		m := NewHomeModel()
 		m.SetSize(w, 40)
-		if got, want := m.homeFooterHeight(), lipgloss.Height(m.buildFooter()); got != want {
-			t.Fatalf("homeFooterHeight(w=%d)=%d, lipgloss.Height(buildFooter)=%d", w, got, want)
+		for _, items := range homeFooterVariants() {
+			rendered := lipgloss.Height(lipgloss.NewStyle().MarginTop(1).Render(KeyHints(w, items...)))
+			if budget := m.homeFooterHeight(); rendered > budget {
+				t.Fatalf("w=%d: footer %v is %d rows, budget %d", w, items, rendered, budget)
+			}
+		}
+		if got, want := m.homeFooterHeight(), lipgloss.Height(m.buildFooter()); got < want {
+			t.Fatalf("homeFooterHeight(w=%d)=%d < rendered footer %d", w, got, want)
+		}
+	}
+}
+
+// The screen fits in every footer state — including one reached without a
+// resize: the list is measured in one state (the only times it's re-measured
+// are resizes, banners, and notices) and then drawn in another.
+func TestHomeViewFitsInEveryFooterState(t *testing.T) {
+	restoreDark(t)
+	type state struct {
+		name  string
+		enter func(m *HomeModel)
+	}
+	states := []state{
+		{"list", func(m *HomeModel) { m.focusListPane(); m.list.Select(0) }},
+		{"add row", func(m *HomeModel) { m.focusListPane(); m.list.Select(len(m.list.Items()) - 1) }},
+		{"detail", func(m *HomeModel) { m.list.Select(0); m.focusDetailPane() }},
+	}
+	for w := 44; w <= 100; w += 2 {
+		for _, measured := range states {
+			for _, drawn := range states {
+				m := newHomeWith(t, fabricInstance(t))
+				measured.enter(m)
+				m.SetSize(w, 24)
+				drawn.enter(m)
+				if got := lipgloss.Height(m.View()); got > 24 {
+					t.Errorf("measured in %s, drawn in %s, at %dx24: view is %d rows", measured.name, drawn.name, w, got)
+				}
+			}
 		}
 	}
 }

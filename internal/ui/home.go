@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // HomeModel is the main instance list view
@@ -63,6 +64,10 @@ type HomeModel struct {
 	// Microsoft session hint from background check (MSA accounts only)
 	sessionRemote sessionRemoteLine
 
+	// delegate renders the Instances sidebar; kept so pane focus can dim its
+	// selection bar.
+	delegate *homeInstanceDelegate
+
 	// playingID is the instance whose game is running after the user left the
 	// launch screen ("" when none). Enter on it reopens the launch screen.
 	playingID string
@@ -80,6 +85,7 @@ type HomeModel struct {
 	// It auto-expires after homeBannerTTL via a tea.Tick keyed on bannerGen, so
 	// it survives unrelated keypresses instead of vanishing on the next key.
 	transientBanner string
+	bannerKind      BannerKind
 	bannerGen       int
 
 	// Delete confirmation state
@@ -278,27 +284,28 @@ type instanceItem struct {
 
 func (i instanceItem) Title() string { return i.instance.Name }
 
+// Description is the row's metadata line (see meta); the list uses it as the
+// item description.
 func (i instanceItem) Description() string {
-	loader := i.instance.Loader
-	if loader == "" || loader == "vanilla" {
-		loader = "Vanilla"
+	if i.playing {
+		// Lead with it so narrow columns truncate the details, not the state.
+		return fmt.Sprintf("%s Playing · %s · %s", GlyphDot, i.instance.Version, loaderName(i.instance.Loader))
 	}
+	return i.meta()
+}
 
+// meta is "version · Loader · last played", e.g. "1.21.4 · Fabric · 2h ago".
+func (i instanceItem) meta() string {
 	lastPlayed := "Never played"
 	if !i.instance.LastPlayed.IsZero() {
 		lastPlayed = formatRelativeTime(i.instance.LastPlayed)
 	}
-	if i.playing {
-		// Lead with it so narrow columns truncate the details, not the state.
-		return fmt.Sprintf("%s Playing • %s • %s", GlyphDot, i.instance.Version, loader)
-	}
-
-	return fmt.Sprintf("%s • %s • %s", i.instance.Version, loader, lastPlayed)
+	return fmt.Sprintf("%s · %s · %s", i.instance.Version, loaderName(i.instance.Loader), lastPlayed)
 }
 func (i instanceItem) FilterValue() string { return i.instance.Name }
 
-// addInstanceItem is the trailing action row in the instance list: a shared
-// "+ New instance" ActionButton (rendered by homeInstanceDelegate). It is not a
+// addInstanceItem is the trailing "+ New instance" row in the instance list
+// (rendered by homeInstanceDelegate like any other row). It is not a
 // real instance — selecting it and pressing Enter opens the new-instance wizard
 // (see Update). Its empty FilterValue keeps it out of search results.
 type addInstanceItem struct{}
@@ -325,7 +332,8 @@ func formatRelativeTime(t time.Time) string {
 func NewHomeModel() *HomeModel {
 	base := ThemeListDelegate(Active.Primary, Active.Secondary)
 
-	l := list.New([]list.Item{}, &homeInstanceDelegate{DefaultDelegate: base}, 0, 0)
+	delegate := &homeInstanceDelegate{DefaultDelegate: base}
+	l := list.New([]list.Item{}, delegate, 0, 0)
 	// The screen title now lives in the StatusBar row above the columns and the
 	// "Instances" label sits in the list panel border, so the list's internal
 	// title bar is turned off. The status bar is off too: the title row already
@@ -343,6 +351,7 @@ func NewHomeModel() *HomeModel {
 
 	m := &HomeModel{
 		list:          l,
+		delegate:      delegate,
 		keys:          defaultHomeKeyMap(),
 		loading:       true,
 		modCountCache: map[string]int{},
@@ -357,7 +366,8 @@ func NewHomeModel() *HomeModel {
 // per-entry screens, is not rebuilt on navigation — picks up the new palette.
 func (m *HomeModel) ApplyTheme() {
 	base := ThemeListDelegate(Active.Primary, Active.Secondary)
-	m.list.SetDelegate(&homeInstanceDelegate{DefaultDelegate: base})
+	m.delegate = &homeInstanceDelegate{DefaultDelegate: base, unfocused: m.delegate.unfocused}
+	m.list.SetDelegate(m.delegate)
 	ThemeListChrome(&m.list)
 }
 
@@ -497,12 +507,28 @@ func (m *HomeModel) noticeView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
-// SetTransientBanner shows a short notice above the footer and returns a command
-// that clears it after homeBannerTTL. The banner no longer vanishes on the next
-// keypress; callers should run the returned cmd (batch it with theirs). An empty
-// string clears immediately and returns nil.
+// BannerKind styles a transient banner by what it says.
+type BannerKind int
+
+const (
+	BannerInfo    BannerKind = iota // guidance ("Press q to quit.") — quiet
+	BannerSuccess                   // it worked ("Settings saved.") — ✓ green
+	BannerWarn                      // it didn't ("Couldn't save …") — ▲ amber
+)
+
+// SetTransientBanner shows a short guidance notice above the footer (see
+// [HomeModel.SetBanner]).
 func (m *HomeModel) SetTransientBanner(s string) tea.Cmd {
+	return m.SetBanner(BannerInfo, s)
+}
+
+// SetBanner shows a short notice above the footer, styled by kind, and returns
+// a command that clears it after homeBannerTTL. The banner doesn't vanish on
+// the next keypress; callers should run the returned cmd (batch it with
+// theirs). An empty string clears immediately and returns nil.
+func (m *HomeModel) SetBanner(kind BannerKind, s string) tea.Cmd {
 	m.transientBanner = s
+	m.bannerKind = kind
 	m.bannerGen++
 	m.applyListSize()
 	if s == "" {
@@ -512,6 +538,19 @@ func (m *HomeModel) SetTransientBanner(s string) tea.Cmd {
 	return tea.Tick(homeBannerTTL, func(time.Time) tea.Msg {
 		return homeBannerExpireMsg{gen: gen}
 	})
+}
+
+// bannerView renders the transient banner in its kind's style.
+func (m *HomeModel) bannerView() string {
+	text := ansi.Truncate(m.transientBanner, max(1, m.width-2), "…")
+	switch m.bannerKind {
+	case BannerSuccess:
+		return lipgloss.NewStyle().Foreground(Active.Success).Render(GlyphDone + " " + text)
+	case BannerWarn:
+		return lipgloss.NewStyle().Foreground(Active.Warning).Render(GlyphWarn + " " + text)
+	default:
+		return lipgloss.NewStyle().Foreground(Active.TextSubtle).Render(text)
+	}
 }
 
 // SetPlaying marks the instance whose game is running ("" clears it). The
@@ -593,99 +632,126 @@ func (m *HomeModel) launchSelected(offline bool) tea.Cmd {
 	return func() tea.Msg { return NavigateToLaunch{Instance: inst, Offline: false} }
 }
 
-// buildFooter renders the block below the instance list: the auth/status line and
-// the two-tier key-hint help. It does NOT include the transient banner (that sits
-// between the list and this block and is accounted for separately). View and
-// applyListSize both render through this helper so the measured footer height
-// always matches what's drawn, preventing the list from overflowing the footer at
-// narrow widths where the help wraps to extra lines.
-func (m *HomeModel) buildFooter() string {
-	// Auth line: avoid "signed in" when Microsoft session is invalid or unverified.
-	authStatus := "Not signed in"
-	authWarn := false
-	if m.accounts != nil {
-		if acc := m.accounts.GetActive(); acc != nil {
-			switch acc.Type {
-			case core.AccountTypeMSA:
-				switch m.sessionRemote {
-				case sessionRemoteInvalid:
-					authStatus = fmt.Sprintf("%s — Microsoft sign-in required [a]", acc.Name)
-					authWarn = true
-				case sessionRemoteUncertain:
-					authStatus = fmt.Sprintf("%s — can't verify session (network?) [a]", acc.Name)
-					authWarn = true
-				case sessionRemoteChecking:
-					authStatus = fmt.Sprintf("Checking Microsoft session for %s…", acc.Name)
-				default:
-					authStatus = fmt.Sprintf("Signed in as %s", acc.Name)
-				}
-			case core.AccountTypeOffline:
-				authStatus = fmt.Sprintf("Offline: %s", acc.Name)
-			default:
-				authStatus = fmt.Sprintf("Account: %s", acc.Name)
-			}
-		}
-	}
+// accountStatus is the home header's right side: who's signed in and whether
+// the Microsoft session is usable — "● Steve" (green), "▲ Steve · sign-in
+// expired" (amber), "Not signed in" (dim), … — or, while an online launch
+// waits on the session check, what it's doing.
+func (m *HomeModel) accountStatus() string {
+	dim := lipgloss.NewStyle().Foreground(Active.TextDim)
+	name := lipgloss.NewStyle().Foreground(Active.Text)
+	dot := func(c lipgloss.Color, g string) string { return lipgloss.NewStyle().Foreground(c).Render(g) + " " }
 
 	if m.gatingName != "" {
-		authStatus = fmt.Sprintf("Verifying Microsoft session to play %s…", m.gatingName)
-		authWarn = false
+		return dim.Render("Verifying Microsoft session…")
 	}
-
-	// One footer line: the top six context-relevant hints, always ending in
-	// `? help`. Everything else lives in the `?` overlay and the `:` palette, so
-	// the bar stays a single line instead of an eleven-binding wall. In detail
-	// focus the arrows drive the panel rows, so advertise that vocabulary instead.
-	var items []KeyHint
-	if m.paneFocus == focusDetail {
-		items = []KeyHint{
-			{"↑↓", "select"},
-			{"↵", "open"},
-			{"←→", "tabs"},
-			{"tab", "list"},
-			{":", "palette"},
-			{"?", "help"},
-		}
-	} else {
-		launchLabel := "play"
-		if inst := m.SelectedInstance(); inst != nil && inst.ID == m.playingID {
-			launchLabel = "view game"
-		} else if m.noOnlineSession() {
-			launchLabel = "login & play"
-		}
-		items = []KeyHint{
-			{"↵", launchLabel},
-			{"n", "new"},
-			{"x", "actions"},
-			{":", "palette"},
-			{"/", "filter"},
-			{"?", "help"},
-		}
+	if m.accounts == nil {
+		return dim.Render("Not signed in")
 	}
-
-	help := KeyHints(m.width, items...)
-
-	statusColor := Active.Primary
-	statusGlyph := GlyphDot
-	if authWarn {
-		statusColor = Active.Warning
-		statusGlyph = GlyphWarn
+	acc := m.accounts.GetActive()
+	if acc == nil {
+		return dim.Render("Not signed in")
 	}
-	// One blank line separates the list/columns from the status; the hints sit
-	// directly under it. Keeps the whole footer to three rows (gap · status · hints).
-	status := lipgloss.NewStyle().
-		Foreground(statusColor).
-		MarginTop(1).
-		Render(statusGlyph + " " + authStatus)
-
-	return lipgloss.JoinVertical(lipgloss.Left, status, help)
+	switch acc.Type {
+	case core.AccountTypeMSA:
+		switch m.sessionRemote {
+		case sessionRemoteInvalid:
+			return dot(Active.Warning, GlyphWarn) + name.Render(acc.Name) + dim.Render(" · sign-in expired")
+		case sessionRemoteUncertain:
+			return dot(Active.Warning, GlyphWarn) + name.Render(acc.Name) + dim.Render(" · can't verify session")
+		case sessionRemoteChecking:
+			return dot(Active.TextMuted, GlyphPending) + name.Render(acc.Name) + dim.Render(" · checking…")
+		default:
+			return dot(Active.Success, GlyphDot) + name.Render(acc.Name)
+		}
+	case core.AccountTypeOffline:
+		return name.Render(acc.Name) + dim.Render(" · offline")
+	default:
+		return name.Render(acc.Name)
+	}
 }
 
-// homeFooterHeight measures the real footer (auth line + wrapped key hints) plus
-// the transient-banner row when present. Measuring keeps the layout budget in sync
-// with what View draws so narrow-width help wrapping can't overflow the screen.
+// buildFooter renders the block below the columns: a blank line, then one line
+// of context-relevant key hints ending in "? help" (everything else lives in
+// the ? overlay and the : palette). It does NOT include notices or the
+// transient banner (they sit above it and are budgeted separately).
+func (m *HomeModel) buildFooter() string {
+	return lipgloss.NewStyle().MarginTop(1).Render(KeyHints(m.width, m.footerItems()...))
+}
+
+// footerItems picks the footer for the current state — one of
+// homeFooterVariants.
+func (m *HomeModel) footerItems() []KeyHint {
+	switch m.list.FilterState() {
+	case list.Filtering:
+		return homeFilteringFooter() // letters type into the filter
+	case list.FilterApplied:
+		if m.paneFocus != focusDetail {
+			return homeFilterAppliedFooter()
+		}
+	}
+	if m.paneFocus == focusDetail {
+		if m.activeTab == tabOverview {
+			return homeDetailFooter("play")
+		}
+		return homeDetailFooter("open")
+	}
+	if m.addRowSelected() {
+		return homeAddRowFooter()
+	}
+	launchLabel := "play"
+	if inst := m.SelectedInstance(); inst != nil && inst.ID == m.playingID {
+		launchLabel = "view game"
+	} else if m.noOnlineSession() {
+		launchLabel = "sign in & play"
+	}
+	return homeListFooter(launchLabel)
+}
+
+func homeFilteringFooter() []KeyHint {
+	return []KeyHint{{"↵", "apply filter"}, {"esc", "cancel"}}
+}
+
+func homeFilterAppliedFooter() []KeyHint {
+	return []KeyHint{{"↵", "play"}, {"esc", "clear filter"}, {"/", "edit filter"}, {"?", "help"}}
+}
+
+func homeDetailFooter(open string) []KeyHint {
+	return []KeyHint{{"←→", "tabs"}, {"↵", open}, {"esc", "list"}, {":", "palette"}, {"?", "help"}}
+}
+
+func homeAddRowFooter() []KeyHint {
+	return []KeyHint{{"↵", "new instance"}, {"/", "search"}, {":", "commands"}, {"?", "help"}}
+}
+
+func homeListFooter(launchLabel string) []KeyHint {
+	return []KeyHint{{"↵", launchLabel}, {"o", "offline"}, {"n", "new"}, {"/", "search"}, {":", "commands"}, {"?", "help"}}
+}
+
+// homeFooterVariants is every footer home can show. The layout budgets the
+// tallest (they wrap differently on narrow screens), so a state change — a
+// session turning invalid, moving onto "+ New instance" — never pushes the
+// last line off the screen.
+func homeFooterVariants() [][]KeyHint {
+	return [][]KeyHint{
+		homeFilteringFooter(),
+		homeFilterAppliedFooter(),
+		homeDetailFooter("play"),
+		homeDetailFooter("open"),
+		homeAddRowFooter(),
+		homeListFooter("play"),
+		homeListFooter("view game"),
+		homeListFooter("sign in & play"),
+	}
+}
+
+// homeFooterHeight is the footer budget: the tallest footer variant plus the
+// transient-banner row and any notice. Measuring keeps the layout in sync with
+// what View draws, so narrow-width hint wrapping can't overflow the screen.
 func (m *HomeModel) homeFooterHeight() int {
-	footerLines := lipgloss.Height(m.buildFooter())
+	footerLines := 0
+	for _, items := range homeFooterVariants() {
+		footerLines = max(footerLines, footerHelpHeight(items, m.width))
+	}
 	if m.transientBanner != "" {
 		footerLines++
 	}
@@ -861,6 +927,10 @@ func (m *HomeModel) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	m.compactLayout = width < homeSplitMinWidth
+	if m.compactLayout && m.paneFocus == focusDetail {
+		// One column: the detail pane isn't drawn, so focus can't stay there.
+		m.focusListPane()
+	}
 	if !m.compactLayout {
 		m.listPaneW, m.detailPaneW = homeSplitWidths(width)
 	} else {
@@ -882,9 +952,29 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Don't fail silently: the list would otherwise just stay on its last
 			// state (or "Loading…") with no explanation.
 			m.loading = false
-			return m, m.SetTransientBanner("Couldn't load instances: " + msg.Error.Error())
+			return m, m.SetBanner(BannerWarn, "Couldn't load instances: "+msg.Error.Error())
 		}
 		return m, m.SetInstances(msg.Instances, msg.SelectID)
+
+	case tea.MouseMsg:
+		// The wheel scrolls the instance list (when nothing modal is open).
+		if m.HasOverlay() || m.list.FilterState() == list.Filtering || len(m.instances) == 0 {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.list.CursorUp()
+		case tea.MouseButtonWheelDown:
+			m.list.CursorDown()
+		default:
+			return m, nil
+		}
+		// Another instance — or the "+ New instance" row, which has no detail
+		// pane to stay in — hands focus back to the list.
+		if inst := m.SelectedInstance(); inst == nil || inst.ID != m.lastSelID {
+			m.resetDetailFocus()
+		}
+		return m, nil
 
 	case homeBannerExpireMsg:
 		// Clear only if no newer banner has superseded this tick.
@@ -936,10 +1026,10 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirmDelete = false
 				m.deleteTarget = nil
 				return m, nil
-			case "n", "N", "esc", "q":
+			}
+			if ConfirmCancels(msg.String()) {
 				m.confirmDelete = false
 				m.deleteTarget = nil
-				return m, nil
 			}
 			return m, nil
 		}
@@ -1009,11 +1099,19 @@ func (m *HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.focusListPane()
 				return m, nil
-			case "up", "k", "down", "j":
+			case "up", "k", "down", "j", "pgup", "pgdown", "home", "end", "g", "G":
+				// List movement keys would move the (unfocused) instance list.
 				return m, nil
 			case "enter":
 				return m, m.activateDetailTab()
+			case "/":
+				// Search is the list's: go back to it and start filtering there.
+				m.focusListPane()
 			}
+		}
+		// With no instances the list isn't drawn — a filter would be invisible.
+		if len(m.instances) == 0 && msg.String() == "/" {
+			return m, nil
 		}
 
 		switch {
@@ -1112,126 +1210,23 @@ func (m *HomeModel) View() string {
 			Render("Loading instances…")
 	}
 
-	if len(m.instances) == 0 {
-		// Delightful empty state with project intro
-		title := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(Active.Primary).
-			Render(BrandGlyph + "  mctui")
-
-		tagline := lipgloss.NewStyle().
-			Foreground(Active.TextSubtle).
-			Italic(true).
-			Render("A terminal-based Minecraft launcher")
-
-		// Minecraft-title-screen wink: the process's splash line under the wordmark.
-		splash := SplashLine()
-
-		// Size the rule to the content (cap it so it stays a tidy underline).
-		ruleW := m.width / 3
-		if ruleW > 40 {
-			ruleW = 40
-		}
-		if ruleW < 12 {
-			ruleW = 12
-		}
-		divider := Rule(ruleW)
-
-		emptyMsg := lipgloss.NewStyle().
-			Foreground(Active.Text).
-			MarginTop(1).
-			Render("No instances yet. Let's get started!")
-
-		tips := lipgloss.NewStyle().
-			MarginTop(1).
-			Render(KeyHints(
-				ruleW,
-				KeyHint{"n", "new instance"},
-				KeyHint{"a", "add account"},
-				KeyHint{"s", "settings"},
-				KeyHint{"q", "quit"},
-			))
-
-		content := lipgloss.JoinVertical(
-			lipgloss.Center,
-			title,
-			tagline,
-			splash,
-			"",
-			divider,
-			"",
-			emptyMsg,
-			tips,
-		)
-		// Notices must show here too: with no instances (e.g. a config pointing
-		// at another data folder was just reset) this is the only screen.
-		notice := m.noticeView()
-		placeH := m.height
-		if notice != "" {
-			placeH = max(1, m.height-lipgloss.Height(notice))
-		}
-
-		// Center the content
-		centered := lipgloss.Place(
-			m.width,
-			placeH,
-			lipgloss.Center,
-			lipgloss.Center,
-			content,
-		)
-		if notice != "" {
-			return lipgloss.JoinVertical(lipgloss.Left, notice, centered)
-		}
-		return centered
+	// The screen (empty state or instance list) is the backdrop every overlay
+	// composites over — so ? and : work (and show) on the empty state too.
+	baseView := m.emptyView()
+	if len(m.instances) > 0 {
+		baseView = m.listView()
 	}
 
-	footer := m.buildFooter()
-
-	// Title row: screen title left, instance count right (replaces the list's
-	// internal title bar).
-	titleW := m.width
-	if !m.compactLayout {
-		titleW = m.listPaneW + homeColumnGap + m.detailPaneW
-	}
-	screenTitle := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).
-		Render(BrandGlyph + " Minecraft Instances")
-	countLabel := lipgloss.NewStyle().Foreground(Active.TextMuted).
-		Render(fmt.Sprintf("%d instance%s", len(m.instances), plural(len(m.instances))))
-	titleRow := StatusBar(screenTitle, countLabel, titleW)
-
-	columns := m.renderColumns()
-
-	aboveStatus := []string{titleRow, "", columns}
-	if n := m.noticeView(); n != "" {
-		aboveStatus = append(aboveStatus, n)
-	}
-	if m.transientBanner != "" {
-		aboveStatus = append(aboveStatus, lipgloss.NewStyle().
-			Foreground(Active.Warning).
-			Render(GlyphWarn+" "+m.transientBanner))
-	}
-	aboveStatus = append(aboveStatus, footer)
-
-	baseView := lipgloss.JoinVertical(lipgloss.Left, aboveStatus...)
-
-	// Overlays composite over a dimmed copy of the instance list so context (which
-	// instance you're deleting / jumping to) stays visible behind the modal.
-	if m.help {
-		return Composite(baseView, HelpOverlay("Home", m.helpGroups(), m.width, m.height), m.width, m.height)
-	}
-
-	// Command palette (mutually exclusive with the other overlays).
-	if m.palette.Active {
-		return Composite(baseView, m.palette.View(m.width, m.height), m.width, m.height)
-	}
-
-	// Per-instance actions popup.
-	if m.actionsPopup && m.actionsTarget != nil {
-		return Composite(baseView, m.renderActionsPopup(), m.width, m.height)
-	}
-
-	// Delete confirmation.
-	if m.confirmDelete && m.deleteTarget != nil {
+	// Overlays composite over a dimmed copy of the screen so context (which
+	// instance you're deleting / jumping to) stays visible behind the card.
+	switch {
+	case m.help:
+		return Overlay(baseView, HelpCard("Home", m.helpGroups(), m.width, m.height), m.width, m.height)
+	case m.palette.Active:
+		return Overlay(baseView, m.palette.View(m.width, m.height), m.width, m.height)
+	case m.actionsPopup && m.actionsTarget != nil:
+		return Overlay(baseView, m.renderActionsPopup(), m.width, m.height)
+	case m.confirmDelete && m.deleteTarget != nil:
 		dialog := ConfirmDialog{
 			Title:    "Delete instance?",
 			Message:  fmt.Sprintf("Delete %q?\n%s", m.deleteTarget.Name, m.deleteSummary(m.deleteTarget)),
@@ -1240,13 +1235,68 @@ func (m *HomeModel) View() string {
 			Cancel:   "Cancel",
 			Kind:     ConfirmDanger,
 			FocusYes: m.deleteFocusYes,
-		}.Render(m.width, m.height)
-		return Composite(baseView, dialog, m.width, m.height)
+		}.View(m.width)
+		return Overlay(baseView, dialog, m.width, m.height)
 	}
 
 	// Bound the rendered width to the terminal so a too-narrow pane can never
 	// produce a line wider than m.width (which would wrap and corrupt the frame).
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(baseView)
+}
+
+// emptyView is the no-instances welcome screen.
+func (m *HomeModel) emptyView() string {
+	wordmark := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render("mctui")
+	tagline := lipgloss.NewStyle().Foreground(Active.TextDim).Render("A Minecraft launcher for your terminal")
+	// Minecraft-title-screen wink: the process's splash line under the wordmark.
+	splash := SplashLine()
+
+	cta := lipgloss.NewStyle().Bold(true).Foreground(Active.Primary).Render("↵") + "  " +
+		lipgloss.NewStyle().Bold(true).Foreground(Active.TextStrong).Render("Create your first instance")
+	more := KeyHints(m.width, KeyHint{"a", "sign in"}, KeyHint{"s", "settings"}, KeyHint{"?", "help"}, KeyHint{"q", "quit"})
+
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		wordmark, tagline, splash, "", "", cta, "", more)
+
+	header := AppHeader(m.width, m.accountStatus(), "Instances")
+	// Notices must show here too: with no instances (e.g. a config pointing
+	// at another data folder was just reset) this is the only screen.
+	top := []string{header}
+	if notice := m.noticeView(); notice != "" {
+		top = append(top, "", notice)
+	}
+	if m.transientBanner != "" {
+		top = append(top, "", m.bannerView())
+	}
+	head := lipgloss.JoinVertical(lipgloss.Left, top...)
+	centered := lipgloss.Place(m.width, max(1, m.height-lipgloss.Height(head)), lipgloss.Center, lipgloss.Center, content)
+	return lipgloss.JoinVertical(lipgloss.Left, head, centered)
+}
+
+// listView is the instance list + detail screen.
+func (m *HomeModel) listView() string {
+	footer := m.buildFooter()
+
+	// Title row: screen title left, instance count right (replaces the list's
+	// internal title bar).
+	titleW := m.width
+	if !m.compactLayout {
+		titleW = m.listPaneW + homeColumnGap + m.detailPaneW
+	}
+	titleRow := AppHeader(titleW, m.accountStatus(), "Instances")
+
+	columns := m.renderColumns()
+
+	aboveStatus := []string{titleRow, "", columns}
+	if n := m.noticeView(); n != "" {
+		aboveStatus = append(aboveStatus, n)
+	}
+	if m.transientBanner != "" {
+		aboveStatus = append(aboveStatus, m.bannerView())
+	}
+	aboveStatus = append(aboveStatus, footer)
+
+	return lipgloss.JoinVertical(lipgloss.Left, aboveStatus...)
 }
 
 // boundToScreen clamps a rendered string to the terminal envelope so modals

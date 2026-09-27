@@ -23,26 +23,27 @@ func init() {
 
 func c(hex string) lipgloss.Color { return lipgloss.Color(hex) }
 
-// darkTheme is the original palette — the default. Its hexes match the
-// pre-theming UI exactly so existing users see no change.
+// darkTheme is the default palette. One violet accent, bright enough to read as
+// text and as the selection bar (#7C3AED was 2.9:1 on a dark terminal); the gray
+// ramp steps down evenly from content to hints to decoration.
 var darkTheme = Palette{
 	Name: "dark",
 
-	Primary:      c("#7C3AED"),
+	Primary:      c("#A78BFA"),
 	PrimaryDeep:  c("#6D28D9"),
-	Secondary:    c("#A78BFA"),
+	Secondary:    c("#C4B5FD"),
 	AccentSoft:   c("#C4B5FD"),
 	AccentSofter: c("#E9D5FF"),
 
 	Background: c(""),
 
-	TextStrong: c("#F4F4F5"),
-	Text:       c("#FAFAFA"),
+	TextStrong: c("#FAFAFA"),
+	Text:       c("#E4E4E7"),
 	Title:      c("#E4E4E7"),
 	TextSubtle: c("#A1A1AA"),
-	TextDim:    c("#71717A"),
-	TextMuted:  c("#52525B"),
-	TextFaint:  c("#626262"),
+	TextDim:    c("#8E8E97"),
+	TextMuted:  c("#71717A"),
+	TextFaint:  c("#5E5E66"),
 
 	Border:       c("#78716C"),
 	BorderSubtle: c("#3F3F46"),
@@ -80,12 +81,12 @@ var lightTheme = Palette{
 	Title:      c("#3F3F46"),
 	TextSubtle: c("#52525B"),
 	TextDim:    c("#71717A"),
-	TextMuted:  c("#A1A1AA"),
+	TextMuted:  c("#8A8A93"),
 	TextFaint:  c("#A1A1AA"),
 
-	Border:       c("#D4D4D8"),
-	BorderSubtle: c("#E4E4E7"),
-	BorderFaint:  c("#F4F4F5"),
+	Border:       c("#A1A1AA"),
+	BorderSubtle: c("#D4D4D8"),
+	BorderFaint:  c("#E4E4E7"),
 
 	Success:       c("#047857"),
 	SuccessAccent: c("#059669"),
@@ -155,8 +156,8 @@ var catppuccinTheme = Palette{
 	Text:       c("#cdd6f4"),
 	Title:      c("#bac2de"),
 	TextSubtle: c("#a6adc8"),
-	TextDim:    c("#7f849c"),
-	TextMuted:  c("#6c7086"),
+	TextDim:    c("#9399b2"),
+	TextMuted:  c("#7f849c"),
 	TextFaint:  c("#585b70"),
 
 	Border:       c("#585b70"),
@@ -219,7 +220,7 @@ var draculaTheme = Palette{
 var nordTheme = Palette{
 	Name: "nord",
 
-	Primary:      c("#b48ead"),
+	Primary:      c("#c6a3bf"),
 	PrimaryDeep:  c("#5e81ac"),
 	Secondary:    c("#88c0d0"),
 	AccentSoft:   c("#b48ead"),
@@ -233,7 +234,7 @@ var nordTheme = Palette{
 	TextSubtle: c("#c0c8d4"),
 	TextDim:    c("#9aa3b2"),
 	TextMuted:  c("#7b8494"),
-	TextFaint:  c("#4c566a"),
+	TextFaint:  c("#616e88"),
 
 	Border:       c("#4c566a"),
 	BorderSubtle: c("#434c5e"),

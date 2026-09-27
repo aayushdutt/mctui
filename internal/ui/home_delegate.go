@@ -10,59 +10,53 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Pill-style "new" badge (distinct from instance title typography). Built per
-// call from the active theme so a theme switch recolors them.
-func newBadgeNormal() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Background(Active.BorderSubtle).
-		Foreground(Active.Title).
-		Padding(0, 1)
-}
-
-func newBadgeSelected() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Background(Active.PrimaryDeep).
-		Foreground(Active.Text).
-		Padding(0, 1)
-}
-
-func newBadgeDimmed() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Background(Active.BorderFaint).
-		Foreground(Active.TextMuted).
-		Padding(0, 1)
-}
-
 const titleEllipsis = "…"
 
-// homeInstanceDelegate wraps the default list delegate so never-played instances get a separate "new" badge.
+// rowGutter is the width of the leading selection gutter every instance row
+// reserves: the [SelectMark] pointer plus a space on the selected row's first
+// line, two blanks everywhere else — so all row text starts in the same column.
+const rowGutter = 2
+
+// homeInstanceDelegate renders the Instances sidebar. Each instance is two
+// lines — name, then "version · loader · last played" — and the selected row
+// is marked only by the accent [SelectMark] pointer before its name (bright,
+// bold name; the metadata stays quiet). No icons, pills, or colored text: color
+// is reserved for the bar, the "Playing" state, and filter matches.
 type homeInstanceDelegate struct {
 	list.DefaultDelegate
+
+	// unfocused hides the selection while keyboard focus is in the detail pane,
+	// so only the focused pane shows a selected row (the detail pane's title
+	// already names the instance).
+	unfocused bool
+}
+
+// bar returns the 2-cell gutter for a row's first line.
+func (d *homeInstanceDelegate) bar(selected bool) string {
+	if !selected {
+		return strings.Repeat(" ", rowGutter)
+	}
+	return selectMark(Active.Primary) + " "
 }
 
 func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	width := m.Width()
+	if width <= rowGutter {
+		return
+	}
+	textW := width - rowGutter
+	filtering := m.FilterState() == list.Filtering
+	selected := index == m.Index() && !filtering && !d.unfocused
+	// While typing an empty filter every row dims (nothing is selectable yet).
+	dimmed := filtering && m.FilterValue() == ""
+
 	if _, ok := item.(addInstanceItem); ok {
-		// Trailing "+ New instance" action row: the shared ActionButton (fills when
-		// it's the cursor row), inset by two cells to align with the detail tabs'
-		// +Add buttons. Buttons fill on focus instead of taking the list's ┃ bar,
-		// matching the project's selection idiom.
-		selected := index == m.Index()
-		tw := m.Width()
-		if tw < 1 {
-			return
+		// "+ New instance": an ordinary row that takes the same bar when selected.
+		style := lipgloss.NewStyle().Foreground(Active.TextMuted)
+		if selected {
+			style = style.Foreground(Active.TextStrong).Bold(true)
 		}
-		// Shrink the label, then drop the inset, and finally ANSI-truncate, so the
-		// pill never exceeds the list width — otherwise the enclosing Panel wraps it
-		// and the column overflows the terminal. Pill overhead ("+ " + one pad cell
-		// each side) is 4 cells.
-		inset, label := "  ", "New instance"
-		if lipgloss.Width(inset)+lipgloss.Width(label)+4 > tw {
-			label = "New"
-		}
-		if lipgloss.Width(inset)+lipgloss.Width(label)+4 > tw {
-			inset = ""
-		}
-		_, _ = fmt.Fprint(w, ansi.Truncate(inset+ActionButton(label, selected), tw, ""))
+		_, _ = fmt.Fprint(w, d.bar(selected)+style.Render(ansi.Truncate("+ New instance", textW, titleEllipsis)))
 		return
 	}
 	ii, ok := item.(instanceItem)
@@ -71,90 +65,41 @@ func (d *homeInstanceDelegate) Render(w io.Writer, m list.Model, index int, item
 		return
 	}
 
-	s := &d.Styles
-	name := ii.instance.Name
-	desc := ii.Description()
-	showBadge := ii.instance.LastPlayed.IsZero()
-
-	if m.Width() <= 0 {
-		return
-	}
-
-	textwidth := m.Width() - s.NormalTitle.GetPaddingLeft() - s.NormalTitle.GetPaddingRight()
-	badgeReserve := 0
-	if showBadge {
-		badgeReserve = lipgloss.Width(newBadgeNormal().Render("new")) + 1
-	}
-	// Reserve the 2-cell block swatch + one separating space (prepended below).
-	const swatchReserve = 3
-
-	title := ansi.Truncate(name, textwidth-badgeReserve-swatchReserve, titleEllipsis)
-	if d.ShowDescription {
-		var lines []string
-		for i, line := range strings.Split(desc, "\n") {
-			if i >= d.Height()-1 {
-				break
-			}
-			lines = append(lines, ansi.Truncate(line, textwidth, titleEllipsis))
-		}
-		desc = strings.Join(lines, "\n")
-	}
-
-	var (
-		isSelected   = index == m.Index()
-		emptyFilter  = m.FilterState() == list.Filtering && m.FilterValue() == ""
-		isFiltered   = m.FilterState() == list.Filtering || m.FilterState() == list.FilterApplied
-		matchedRunes []int
-	)
-
-	if isFiltered {
-		matchedRunes = m.MatchesForItem(index)
-	}
-
-	joinTitle := func(titleLine string, badge lipgloss.Style) string {
-		t := titleLine
-		if showBadge {
-			return lipgloss.JoinHorizontal(lipgloss.Left, t, " ", badge.Render("new"))
-		}
-		return t
-	}
-
-	var titleOut, descOut string
-
+	// Title: the name, plus a quiet "new" tag for never-played instances.
+	titleStyle := lipgloss.NewStyle().Foreground(Active.Text)
 	switch {
-	case emptyFilter:
-		t := s.DimmedTitle.Render(title)
-		titleOut = joinTitle(t, newBadgeDimmed())
-		descOut = s.DimmedDesc.Render(desc)
-
-	case isSelected && m.FilterState() != list.Filtering:
-		if isFiltered {
-			unmatched := s.SelectedTitle.Inline(true)
-			matched := unmatched.Inherit(s.FilterMatch)
-			title = lipgloss.StyleRunes(title, matchedRunes, matched, unmatched)
-		}
-		t := s.SelectedTitle.Render(title)
-		titleOut = joinTitle(t, newBadgeSelected())
-		descOut = s.SelectedDesc.Render(desc)
-
-	default:
-		if isFiltered {
-			unmatched := s.NormalTitle.Inline(true)
-			matched := unmatched.Inherit(s.FilterMatch)
-			title = lipgloss.StyleRunes(title, matchedRunes, matched, unmatched)
-		}
-		t := s.NormalTitle.Render(title)
-		titleOut = joinTitle(t, newBadgeNormal())
-		descOut = s.NormalDesc.Render(desc)
+	case selected:
+		titleStyle = titleStyle.Foreground(Active.TextStrong).Bold(true)
+	case dimmed:
+		titleStyle = titleStyle.Foreground(Active.TextMuted)
+	}
+	tag := ""
+	if ii.instance.LastPlayed.IsZero() && !ii.playing {
+		tag = "  " + lipgloss.NewStyle().Foreground(Active.Secondary).Render("new")
+	}
+	name := ansi.Truncate(ii.instance.Name, textW-lipgloss.Width(tag), titleEllipsis)
+	title := titleStyle.Render(name)
+	if m.FilterState() != list.Unfiltered {
+		matched := titleStyle.Inline(true).Inherit(d.Styles.FilterMatch)
+		title = lipgloss.StyleRunes(name, m.MatchesForItem(index), matched, titleStyle.Inline(true))
 	}
 
-	// Prepend the per-instance block swatch (foreground-only, no contrast risk).
-	// It gets its own color independent of the row's selection styling.
-	titleOut = InstanceSwatch(ii.instance.ID) + " " + titleOut
+	// Meta: "1.21.4 · Fabric · 2h ago", or the Playing state leading in accent.
+	metaStyle := lipgloss.NewStyle().Foreground(Active.TextDim)
+	if dimmed {
+		metaStyle = metaStyle.Foreground(Active.TextFaint)
+	}
+	meta := metaStyle.Render(ansi.Truncate(ii.meta(), textW, titleEllipsis))
+	if ii.playing {
+		lead := GlyphDot + " Playing"
+		rest := ansi.Truncate(" · "+ii.instance.Version+" · "+loaderName(ii.instance.Loader), max(0, textW-lipgloss.Width(lead)), titleEllipsis)
+		meta = lipgloss.NewStyle().Foreground(Active.Success).Render(lead) + metaStyle.Render(rest)
+	}
 
+	gutter := d.bar(selected)
 	if d.ShowDescription {
-		_, _ = fmt.Fprintf(w, "%s\n%s", titleOut, descOut)
+		_, _ = fmt.Fprintf(w, "%s%s%s\n%s%s", gutter, title, tag, strings.Repeat(" ", rowGutter), meta)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%s", titleOut)
+	_, _ = fmt.Fprintf(w, "%s%s%s", gutter, title, tag)
 }
