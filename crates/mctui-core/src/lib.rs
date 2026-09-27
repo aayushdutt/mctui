@@ -13,6 +13,7 @@ pub mod config;
 pub mod facets;
 pub mod fsutil;
 pub mod instance;
+pub mod java;
 pub mod net;
 pub mod paths;
 

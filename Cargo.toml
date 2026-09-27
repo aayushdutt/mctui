@@ -15,6 +15,8 @@ anyhow = "1"
 bytes = "1"
 crossterm = "0.29"
 dirs = "7"
+# One deflate backend for both: flate2 for .tar.gz, zip for .zip.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 futures-util = "0.3"
 insta = "1.48"
 jiff = { version = "0.2", features = ["serde"] }
@@ -26,6 +28,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.11"
 sha2 = "0.11"
+tar = { version = "0.4.46", default-features = false }
 tempfile = "3"
 terminal-colorsaurus = "1"
 thiserror = "2"
@@ -35,6 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
 wiremock = "0.6"
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

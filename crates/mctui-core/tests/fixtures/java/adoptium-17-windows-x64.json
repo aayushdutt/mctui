@@ -1,0 +1,54 @@
+[
+  {
+    "binaries": [
+      {
+        "architecture": "x64",
+        "download_count": 360847,
+        "heap_size": "normal",
+        "image_type": "jre",
+        "installer": {
+          "checksum": "fd45e1710b0fe80c08a5141109cc0128e45cefe8c15c3639ce13c564df634031",
+          "checksum_link": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.msi.sha256.txt",
+          "download_count": 173313,
+          "link": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.msi",
+          "metadata_link": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.msi.json",
+          "name": "OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.msi",
+          "signature_link": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.msi.sig",
+          "size": 31633408
+        },
+        "jvm_impl": "hotspot",
+        "os": "windows",
+        "package": {
+          "checksum": "bc21a93923103cdaac93ee337b0ae4365e739fde36df823dd456bc67c8a9d352",
+          "checksum_link": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.zip.sha256.txt",
+          "download_count": 187534,
+          "link": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.zip",
+          "metadata_link": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.zip.json",
+          "name": "OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.zip",
+          "signature_link": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_windows_hotspot_17.0.20.1_1.zip.sig",
+          "size": 43780109
+        },
+        "project": "jdk",
+        "scm_ref": "jdk-17.0.20.1+1_adopt",
+        "updated_at": "2026-08-24T09:03:59Z"
+      }
+    ],
+    "download_count": 4289171,
+    "id": "RE_kwDOFjpjCs4WPKu9.RMQfFhNGgOTV3A==",
+    "release_link": "https://github.com/adoptium/temurin17-binaries/releases/tag/jdk-17.0.20.1%2B1",
+    "release_name": "jdk-17.0.20.1+1",
+    "release_type": "ga",
+    "timestamp": "2026-08-19T13:28:29Z",
+    "updated_at": "2026-09-01T12:04:47Z",
+    "vendor": "eclipse",
+    "version_data": {
+      "build": 1,
+      "major": 17,
+      "minor": 0,
+      "openjdk_version": "17.0.20.1+1",
+      "patch": 1,
+      "security": 20,
+      "semver": "17.0.20+101"
+    }
+  }
+]

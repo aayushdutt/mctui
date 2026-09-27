@@ -9,10 +9,12 @@ publish = false
 
 [dependencies]
 bytes.workspace = true
+flate2.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
 sha1.workspace = true
 sha2.workspace = true
+tar.workspace = true
 tokio.workspace = true
 dirs.workspace = true
 jiff.workspace = true
@@ -21,6 +23,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true
