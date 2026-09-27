@@ -1,0 +1,17 @@
+---
+source: crates/mctui/src/home/tests.rs
+expression: h.text()
+---
+
+  mctui                                                                ● Steve
+
+    / s                 2 of 3      Snapshot Test            ↓ Not downloaded
+                                    Minecraft 25w14a  ·  Fabric
+    Survival 1.21       2h ago
+                                      ▶ Play  ↵      Play offline  o
+    Snapshot Test          new
+                                     Overview   Mods 0   Resource packs 0
+
+                                    Never         Never         0
+
+   ↵  apply filter    esc  cancel

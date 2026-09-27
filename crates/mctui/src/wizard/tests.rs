@@ -100,14 +100,14 @@ fn step(step: Step) -> ui::Target {
 fn version_row(id: &str) -> ui::Target {
     ui::Target::Row {
         list: super::versions::LIST,
-        key: id.to_owned(),
+        key: id.into(),
     }
 }
 
 fn loader_row(key: &str) -> ui::Target {
     ui::Target::Row {
         list: super::loaders::LIST,
-        key: key.to_owned(),
+        key: key.into(),
     }
 }
 

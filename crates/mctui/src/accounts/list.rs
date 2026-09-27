@@ -16,6 +16,9 @@ use crate::ui::list::List;
 use crate::ui::widgets::{self, ButtonKind, Tone};
 use crate::ui::{Canvas, Hint, Target, text};
 
+/// The list's section label. The crumb already says "Accounts"; this says
+/// what's in it: the profiles you can play as, Microsoft or offline.
+const LABEL: &str = "Profiles";
 /// The "+ Add Microsoft account" row. Account ids are hex, so it can't clash.
 const ADD: &str = "+";
 /// The widest the list grows: wider, and names drift away from their state.
@@ -152,7 +155,7 @@ impl AccountList {
 
     fn render_empty(cv: &mut Canvas<'_>, area: Rect) {
         let t = *cv.theme();
-        widgets::section(cv, area, "Accounts", None, true);
+        widgets::section(cv, area, LABEL, None, true);
         let (x, w) = (area.x, area.width);
         let lines = text::wrap(
             "Sign in with Microsoft to play online, or add an offline profile.",
@@ -377,7 +380,7 @@ impl Screen for AccountList {
         }
         let title = Rect::new(area.x + 2, area.y, area.width.saturating_sub(4), 1);
         let count = data.accounts.accounts.len().to_string();
-        widgets::section(cv, title, "Accounts", Some(&count), true);
+        widgets::section(cv, title, LABEL, Some(&count), true);
         let rows_area = Rect {
             y: area.y + 2,
             height: area.height.saturating_sub(2),

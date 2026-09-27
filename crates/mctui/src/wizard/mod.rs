@@ -17,7 +17,7 @@ use mctui_core::mojang::{self, Fetched, Manifest};
 use ratatui::layout::Rect;
 
 use self::loaders::{FabricCheck, FabricStatus, LoaderChoice};
-use self::versions::{Filter, Versions};
+use self::versions::Versions;
 use crate::app::{Action, Banner};
 use crate::data::Data;
 use crate::msg::Msg;
@@ -25,8 +25,8 @@ use crate::overlay::HelpGroup;
 use crate::screen::{Ctx, Handled, Mouse, Screen};
 use crate::services::Services;
 use crate::task::Tasks;
+use crate::ui::filter::{Filter, FilterKey};
 use crate::ui::form::{Control, Field, Form, FormEvent};
-use crate::ui::input::TextInput;
 use crate::ui::list::List;
 use crate::ui::{self, Canvas, Hint, widgets};
 
@@ -111,7 +111,7 @@ impl Wizard {
         let mut versions = Versions::new(data.config.show_snapshots);
         versions.fetch(services, tasks, now);
         let mut loaders = List::new(loaders::LIST);
-        loaders.set_keys(LoaderChoice::ALL.map(|c| c.key().to_owned()).to_vec());
+        loaders.set_keys(LoaderChoice::ALL.map(LoaderChoice::key));
         Self {
             page: Page::Version,
             versions,
@@ -251,8 +251,8 @@ impl Wizard {
     // Keys.
 
     fn version_key(&mut self, key: KeyEvent, cx: &mut Ctx<'_>) -> Handled {
-        if matches!(self.versions.filter, Filter::Editing(_)) {
-            return self.filter_key(key);
+        if let Some(event) = self.versions.filter.handle_key(key) {
+            return self.filtered(event);
         }
         if key
             .modifiers
@@ -267,8 +267,7 @@ impl Wizard {
         match key.code {
             KeyCode::Enter => self.choose_version(cx),
             KeyCode::Char('/') if loaded => {
-                let query = TextInput::new(self.versions.filter.query());
-                self.versions.filter = Filter::Editing(query);
+                self.versions.filter.edit();
                 Handled::Consumed
             }
             KeyCode::Char(' ') if loaded => self.toggle_all(cx),
@@ -285,23 +284,14 @@ impl Wizard {
         }
     }
 
-    /// Keys while typing a filter: they edit it, except ↵ (keep it), esc
-    /// (drop it) and ↑↓ (move through the matches).
-    fn filter_key(&mut self, key: KeyEvent) -> Handled {
+    /// What a key did to the filter being typed.
+    fn filtered(&mut self, event: FilterKey) -> Handled {
         let versions = &mut self.versions;
-        let Filter::Editing(input) = &mut versions.filter else {
-            return Handled::Ignored;
-        };
-        match key.code {
-            KeyCode::Esc => versions.clear_filter(),
-            KeyCode::Enter => versions.commit_filter(),
-            KeyCode::Up => return Handled::changed(versions.list.step(-1)),
-            KeyCode::Down => return Handled::changed(versions.list.step(1)),
-            _ => {
-                if input.handle_key(key) == Some(true) {
-                    versions.requery();
-                }
-            }
+        match event {
+            FilterKey::Changed => versions.requery(),
+            FilterKey::Cleared => versions.refresh(),
+            FilterKey::Step(delta) => return Handled::changed(versions.list.step(delta)),
+            FilterKey::Committed | FilterKey::Consumed => {}
         }
         Handled::Consumed
     }
@@ -390,7 +380,7 @@ impl Wizard {
     // Mouse.
 
     fn version_click(&mut self, key: &str, double: bool, cx: &mut Ctx<'_>) -> Handled {
-        self.versions.commit_filter();
+        self.versions.filter.commit();
         self.versions.list.select_key(key);
         if double {
             return self.choose_version(cx);
@@ -452,7 +442,7 @@ impl Wizard {
         let key = Hint::key;
         let versions = &self.versions;
         let applied = matches!(versions.filter, Filter::Applied(_));
-        if matches!(versions.filter, Filter::Editing(_)) {
+        if versions.filter.is_editing() {
             return vec![
                 key(KeyCode::Enter, "apply filter"),
                 key(KeyCode::Esc, "cancel"),
@@ -561,7 +551,7 @@ impl Screen for Wizard {
 
     fn captures_text(&self) -> bool {
         match &self.page {
-            Page::Version => matches!(self.versions.filter, Filter::Editing(_)),
+            Page::Version => self.versions.filter.is_editing(),
             Page::Loader => false,
             Page::Name(form) => form.captures_text(),
         }
@@ -628,15 +618,15 @@ impl Screen for Wizard {
 
     fn handle_paste(&mut self, text: &str, cx: &mut Ctx<'_>) -> Handled {
         match &mut self.page {
-            Page::Version => {
-                let Filter::Editing(input) = &mut self.versions.filter else {
-                    return Handled::Ignored;
-                };
-                if input.insert(text) {
-                    self.versions.requery();
+            Page::Version => match self.versions.filter.paste(text) {
+                Some(changed) => {
+                    if changed {
+                        self.versions.requery();
+                    }
+                    Handled::Consumed
                 }
-                Handled::Consumed
-            }
+                None => Handled::Ignored,
+            },
             Page::Loader => Handled::Ignored,
             Page::Name(form) => {
                 let event = form.handle_paste(text);

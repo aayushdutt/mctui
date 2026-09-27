@@ -82,13 +82,12 @@ impl OfflineProfile {
             FormEvent::Moved | FormEvent::Edited(_) => Handled::Consumed,
             FormEvent::Submit => self.add(data),
             FormEvent::Cancel if self.form.is_dirty() => {
-                Handled::Action(Action::Confirm(Box::new(Question {
+                let unsaved = "The offline profile hasn't been added.";
+                let question = Question {
                     title: "Discard this profile?".into(),
-                    message: "The offline profile hasn't been added.".into(),
-                    yes: "Discard",
-                    danger: None,
-                    on_yes: Action::Close,
-                })))
+                    ..Question::discard(unsaved, Action::Close)
+                };
+                Handled::Action(question.into())
             }
             FormEvent::Cancel => Handled::Action(Action::Close),
         }

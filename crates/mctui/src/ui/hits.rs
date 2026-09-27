@@ -4,6 +4,8 @@
 //! mouse. Input handling then resolves a pointer position against the last
 //! frame's map, so what you click is always exactly what you saw.
 
+use std::rc::Rc;
+
 use crossterm::event::KeyCode;
 use ratatui::layout::{Position, Rect};
 
@@ -24,7 +26,7 @@ pub enum Target {
     /// A row of a [`super::list::List`], by the list's id and the row's key.
     Row {
         list: &'static str,
-        key: String,
+        key: Rc<str>,
     },
     Home(home::Target),
     /// The launch screen's buttons and log.
@@ -36,10 +38,7 @@ pub enum Target {
 impl Target {
     /// Whether this is a list row, where a double-click means "open".
     pub fn is_row(&self) -> bool {
-        matches!(
-            self,
-            Target::Row { .. } | Target::Home(home::Target::Row(_))
-        )
+        matches!(self, Target::Row { .. })
     }
 }
 

@@ -9,7 +9,7 @@ use super::WizardMsg;
 use crate::msg::Msg;
 use crate::services::Services;
 use crate::task::{Task, Tasks};
-use crate::ui::input::TextInput;
+use crate::ui::filter::Filter;
 use crate::ui::list::List;
 
 /// The version list's id, for its rows' click targets.
@@ -28,25 +28,6 @@ impl Fetch {
         match self {
             Fetch::Running { started, .. } => Some(*started),
             Fetch::Idle | Fetch::Failed => None,
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub(super) enum Filter {
-    #[default]
-    Off,
-    /// Typing a query; keys go to the field.
-    Editing(TextInput),
-    /// A query narrows the list; keys work as usual.
-    Applied(TextInput),
-}
-
-impl Filter {
-    pub(super) fn query(&self) -> &str {
-        match self {
-            Filter::Off => "",
-            Filter::Editing(q) | Filter::Applied(q) => q.as_str(),
         }
     }
 }
@@ -146,8 +127,7 @@ impl Versions {
         let keys = self
             .rows
             .iter()
-            .map(|r| manifest.versions[r.index].id.clone())
-            .collect();
+            .map(|r| manifest.versions[r.index].id.as_str());
         self.list.set_keys(keys);
     }
 
@@ -170,18 +150,6 @@ impl Versions {
                 .filter(|v| self.all || v.kind == VersionKind::Release)
                 .count()
         })
-    }
-
-    /// Stops typing into the filter, keeping what was typed.
-    pub(super) fn commit_filter(&mut self) {
-        if let Filter::Editing(input) = &mut self.filter {
-            let query = std::mem::take(input);
-            self.filter = if query.as_str().trim().is_empty() {
-                Filter::Off
-            } else {
-                Filter::Applied(query)
-            };
-        }
     }
 
     pub(super) fn clear_filter(&mut self) {

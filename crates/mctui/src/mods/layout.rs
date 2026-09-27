@@ -3,10 +3,8 @@
 use ratatui::layout::Rect;
 
 use super::Pane;
+use crate::ui::SPLIT_MIN_WIDTH;
 
-/// At or above this body width Installed and Discover sit side by side;
-/// below it one pane shows at a time. 76 is an 80-column terminal's body.
-pub const SPLIT_MIN_WIDTH: u16 = 76;
 /// At or above this body width the selected result's details get a column
 /// of their own instead of a block under the results.
 pub const THREE_MIN_WIDTH: u16 = 118;
@@ -33,6 +31,8 @@ pub struct Layout {
     pub details: Option<Rect>,
 }
 
+/// Whether one pane shows at a time, rather than Installed and Discover side
+/// by side.
 pub fn compact(body: Rect) -> bool {
     body.width < SPLIT_MIN_WIDTH
 }

@@ -336,7 +336,7 @@ impl Mods {
             }
         }
         d.list
-            .set_keys(d.hits.iter().map(|h| h.project_id.clone()).collect());
+            .set_keys(d.hits.iter().map(|h| h.project_id.as_str()));
         if !more {
             d.list.select(0);
         }
@@ -447,7 +447,7 @@ impl Mods {
                 self.installed.listing = None;
                 self.installed
                     .list
-                    .set_keys(mods.iter().map(|m| m.file.clone()).collect());
+                    .set_keys(mods.iter().map(|m| m.file.as_str()));
                 self.installed.mods = Some(mods);
                 Handled::Consumed
             }

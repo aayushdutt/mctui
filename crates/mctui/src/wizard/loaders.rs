@@ -14,9 +14,6 @@ use crate::task::{Task, Tasks};
 /// The loader list's id, for its rows' click targets.
 pub(super) const LIST: &str = "wizard.loaders";
 
-/// The mods a new Fabric instance can come with.
-pub(super) const STARTER_MODS: [&str; 4] = ["Fabric API", "Mod Menu", "Sodium", "Lithium"];
-
 /// A row of the loader step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LoaderChoice {

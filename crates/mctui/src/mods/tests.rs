@@ -17,7 +17,7 @@ use super::{DEBOUNCE, Mods, Msg, Pane, Target};
 use crate::app::tests::Harness;
 use crate::data::Data;
 use crate::screen::Screen as _;
-use crate::task::Tasks;
+use crate::task::Spawner;
 use crate::{testing, ui};
 
 // --- A mock Modrinth ----------------------------------------------------------
@@ -272,7 +272,7 @@ fn debounce(h: &mut Harness) {
 fn row(list: &'static str, key: &str) -> ui::Target {
     ui::Target::Row {
         list,
-        key: key.to_owned(),
+        key: key.into(),
     }
 }
 
@@ -603,7 +603,7 @@ fn never_panics_at_any_size() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let testing::Fixture { dir: _dir, data } = testing::fixture();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let tasks = Tasks::new(tx, runtime.handle().clone()).for_screen(1);
+    let tasks = Spawner::new(tx, runtime.handle().clone()).for_screen(1);
     let client = modrinth::Client::with_base_url(Http::new().unwrap(), "");
     let mut mods = Mods::new(&data.instances[0], tasks.clone(), client);
     let found = serde_json::from_value(fixture("search-sodium.json")).unwrap();

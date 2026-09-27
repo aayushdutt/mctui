@@ -8,22 +8,20 @@ use std::time::Instant;
 use crossterm::event::KeyCode;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+use mctui_core::modrinth::STARTER_MODS;
 use mctui_core::mojang::{VersionEntry, VersionKind};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use super::loaders::{FabricStatus, LoaderChoice, STARTER_MODS};
-use super::versions::{Fetch, Filter};
+use super::loaders::{FabricStatus, LoaderChoice};
+use super::versions::Fetch;
 use super::{Page, Step, Target, Wizard};
 use crate::theme::Theme;
 use crate::ui::form::{self, Form};
-use crate::ui::input::TextInput;
 use crate::ui::widgets::{self, ButtonKind, Tone};
 use crate::ui::{self, Canvas, text};
 
-/// At or above this body width the summary gets a pane of its own.
-const SPLIT_MIN_WIDTH: u16 = 76;
 /// The narrowest the name step's pane may be beside the summary: its form's
 /// label column, a field, and the help in two lines.
 const FORM_MIN_WIDTH: u16 = 60;
@@ -51,7 +49,8 @@ pub(super) struct Layout {
     pub line: Option<Rect>,
 }
 
-/// Where things go on `step`. The name step's form needs more room than a
+/// Where things go on `step`: the summary gets a pane of its own from
+/// [`ui::SPLIT_MIN_WIDTH`] up. The name step's form needs more room than a
 /// list, so it gives up the summary pane sooner.
 pub(super) fn layout(body: Rect, step: Step) -> Layout {
     let steps = Rect {
@@ -64,7 +63,7 @@ pub(super) fn layout(body: Rect, step: Step) -> Layout {
     let side_w = (u32::from(body.width) * 34 / 100).clamp(SIDE_MIN.into(), SIDE_MAX.into()) as u16;
     let main_w = body.width.saturating_sub(side_w + GAP).min(MAIN_MAX);
     let fits = match step {
-        Step::Version | Step::Loader => body.width >= SPLIT_MIN_WIDTH,
+        Step::Version | Step::Loader => body.width >= ui::SPLIT_MIN_WIDTH,
         Step::Name => main_w >= FORM_MIN_WIDTH,
     };
     if !fits {
@@ -263,28 +262,14 @@ impl Wizard {
         let t = *cv.theme();
         let versions = &self.versions;
         let head = heading(pane);
-        let total = versions.total();
-        let shown = versions.rows.len();
-        let count = if shown == total {
-            total.to_string()
-        } else {
-            format!("{shown} of {total}")
-        };
-        let count = match &versions.filter {
-            Filter::Editing(input) => {
-                filter_field(cv, pane, head, input, &count);
-                None
-            }
-            Filter::Applied(input) => {
-                let query = text::truncate(input.as_str(), 16);
-                Some(format!("{count}   “{query}”"))
-            }
-            Filter::Off => Some(count),
-        };
-        if let Some(count) = count {
-            let label = list_label(versions.all);
-            widgets::section(cv, head, label, Some(&count), true);
-            let after = head.x + (text::width(label) + 3 + text::width(&count)) as u16;
+        let row = Rect { height: 1, ..pane };
+        let label = list_label(versions.all);
+        let counts = (versions.rows.len(), versions.total());
+        let placeholder = "filter versions";
+        if let Some(after) = versions
+            .filter
+            .heading(cv, row, label, counts, true, placeholder)
+        {
             snapshot_toggle(cv, head, after, versions.all);
         }
 
@@ -480,9 +465,9 @@ impl Wizard {
         ];
         // The starter mods, one under another.
         match summary.starter {
-            Some(true) => rows.extend(STARTER_MODS.iter().enumerate().map(|(i, name)| {
+            Some(true) => rows.extend(STARTER_MODS.iter().enumerate().map(|(i, starter)| {
                 let label = if i == 0 { "Starter mods" } else { "" };
-                (label, Line::styled(*name, Style::new().fg(t.text)))
+                (label, Line::styled(starter.title, Style::new().fg(t.text)))
             })),
             Some(false) => {
                 let none = Line::styled("None", Style::new().fg(t.dim));
@@ -614,23 +599,6 @@ fn failed(cv: &mut Canvas<'_>, at: Rect) {
         Some("r"),
         ButtonKind::Primary,
         retry,
-    );
-}
-
-/// The heading row as a filled filter field, the count flush right.
-fn filter_field(cv: &mut Canvas<'_>, pane: Rect, head: Rect, input: &TextInput, count: &str) {
-    let t = *cv.theme();
-    cv.band(Rect::new(pane.x, head.y, pane.width, 1), t.selection);
-    let count = Line::styled(count.to_owned(), Style::new().fg(t.subtle));
-    let right = cv.line_right(head, head.y, &count);
-    cv.text(head.x, head.y, "/", 1, Style::new().fg(t.accent).bold());
-    let field = Rect::new(head.x + 2, head.y, right.x.saturating_sub(head.x + 4), 1);
-    input.render(
-        cv,
-        field,
-        Style::new().fg(t.strong),
-        "filter versions",
-        true,
     );
 }
 

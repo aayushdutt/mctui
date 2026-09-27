@@ -12,16 +12,13 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use super::layout::{self, Layout};
-use super::{Facets, Filter, Home, Pane, Row, Tab, Target};
+use super::{Facets, Home, Pane, Row, Tab, Target};
 use crate::data::Data;
 use crate::format;
 use crate::play;
 use crate::theme::Theme;
 use crate::ui::widgets::{self, ButtonKind};
 use crate::ui::{self, Canvas, text};
-
-/// Each list row takes this many lines: the row and a blank line after it.
-pub const ROW_PITCH: u16 = 2;
 
 impl Home {
     pub(super) fn draw(&self, cv: &mut Canvas<'_>, data: &Data) {
@@ -54,98 +51,40 @@ impl Home {
             .iter()
             .filter(|r| matches!(r, Row::Instance { .. }))
             .count();
-        let total = data.instances.len();
-        let count = if shown == total {
-            total.to_string()
-        } else {
-            format!("{shown} of {total}")
-        };
-        let title = Rect::new(pane.x + 2, pane.y, pane.width.saturating_sub(4), 1);
-        match &self.filter {
-            Filter::Editing(input) => {
-                // The title row becomes a filled search field.
-                cv.band(pane, t.selection);
-                let right = cv.line_right(
-                    title,
-                    pane.y,
-                    &Line::styled(count, Style::new().fg(t.subtle)),
-                );
-                cv.text(title.x, pane.y, "/", 1, Style::new().fg(t.accent).bold());
-                let field = Rect::new(title.x + 2, pane.y, right.x.saturating_sub(title.x + 4), 1);
-                input.render(
-                    cv,
-                    field,
-                    Style::new().fg(t.strong),
-                    "search instances",
-                    true,
-                );
-            }
-            Filter::Applied(input) => {
-                let query = text::truncate(input.as_str(), 16);
-                widgets::section(
-                    cv,
-                    title,
-                    "Instances",
-                    Some(&format!("{count}   “{query}”")),
-                    focused,
-                );
-            }
-            Filter::Off => widgets::section(cv, title, "Instances", Some(&count), focused),
-        }
+        let counts = (shown, data.instances.len());
+        let row = Rect { height: 1, ..pane };
+        self.filter
+            .heading(cv, row, "Instances", counts, focused, "search instances");
 
-        let body = layout::list_rows(lay);
+        let rows = layout::list_rows(lay);
         if self.rows.is_empty() {
             cv.text(
-                body.x + 2,
-                body.y,
+                rows.x + 2,
+                rows.y,
                 "No matches",
-                body.width,
+                rows.width,
                 Style::new().fg(t.muted),
             );
             return;
         }
-        let visible = self.visible_rows();
-        let more = Style::new().fg(t.faint);
-        if self.offset > 0 {
-            let text = format!("↑ {} more", self.offset);
-            cv.text(
-                body.x + 2,
-                body.y.saturating_sub(1),
-                &text,
-                body.width,
-                more,
-            );
-        }
-        for (i, row) in self.rows.iter().enumerate().skip(self.offset).take(visible) {
-            let y = body.y + (i - self.offset) as u16 * ROW_PITCH;
-            let area = Rect::new(body.x, y, body.width, 1);
-            let target = ui::Target::Home(Target::Row(row.key()));
-            let hovered = cv.hovered(&target);
-            Self::render_row(cv, area, row, focused && i == self.selected, hovered, data);
-            cv.click(area, target);
-        }
-        let below = self.rows.len().saturating_sub(self.offset + visible);
-        if below > 0 {
-            cv.text(
-                body.x + 2,
-                body.bottom(),
-                &format!("↓ {below} more"),
-                body.width,
-                more,
-            );
-        }
+        self.list
+            .render(cv, rows, focused, |cv, inner, i, selected, hovered| {
+                if let Some(row) = self.rows.get(i) {
+                    Self::render_row(cv, inner, row, selected, hovered, data);
+                }
+            });
     }
 
+    /// One row's content, in the area inside its band.
     fn render_row(
         cv: &mut Canvas<'_>,
-        area: Rect,
+        inner: Rect,
         row: &Row,
         selected: bool,
         hovered: bool,
         data: &Data,
     ) {
         let t = *cv.theme();
-        let inner = widgets::row(cv, area, selected, hovered);
         let name_style = widgets::row_label(&t, selected, hovered);
 
         let (index, positions) = match row {

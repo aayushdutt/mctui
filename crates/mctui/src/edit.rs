@@ -60,13 +60,8 @@ impl EditInstance {
             FormEvent::Moved | FormEvent::Edited(_) => Handled::Consumed,
             FormEvent::Submit => self.save(cx),
             FormEvent::Cancel if self.form.is_dirty() => {
-                Handled::Action(Action::Confirm(Box::new(Question {
-                    title: "Discard changes?".into(),
-                    message: format!("Your changes to “{}” haven't been saved.", self.name),
-                    yes: "Discard",
-                    danger: None,
-                    on_yes: Action::Close,
-                })))
+                let unsaved = format!("Your changes to “{}” haven't been saved.", self.name);
+                Handled::Action(Question::discard(unsaved, Action::Close).into())
             }
             FormEvent::Cancel => Handled::Action(Action::Close),
         }

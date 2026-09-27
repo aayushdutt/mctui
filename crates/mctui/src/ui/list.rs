@@ -4,10 +4,7 @@
 //! frame you saw) survives the rows being rebuilt — a refresh, a filter.
 //! ↑↓ / jk move and stop at the ends; pgup/pgdn page; g/G or home/end jump.
 
-#![expect(
-    dead_code,
-    reason = "the wizard, mods, packs and accounts screens use it"
-)]
+use std::rc::Rc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
@@ -22,7 +19,8 @@ const PITCH: u16 = 2;
 pub struct List {
     /// Which list this is, so its rows' click targets are its own.
     id: &'static str,
-    keys: Vec<String>,
+    /// Shared with the rows' click targets, so drawing a frame copies none.
+    keys: Vec<Rc<str>>,
     selected: usize,
     offset: usize,
     /// Rows the list may draw in, set by the last layout.
@@ -38,18 +36,14 @@ impl List {
     }
 
     /// Replaces the rows, keeping the same key selected if it's still there.
-    pub fn set_keys(&mut self, keys: Vec<String>) {
-        let before = self.selected_key().map(str::to_owned);
-        self.keys = keys;
+    pub fn set_keys<K: Into<Rc<str>>>(&mut self, keys: impl IntoIterator<Item = K>) {
+        let before = self.keys.get(self.selected).cloned();
+        self.keys = keys.into_iter().map(Into::into).collect();
         self.selected = before
             .and_then(|k| self.keys.iter().position(|x| *x == k))
             .unwrap_or(0)
             .min(self.keys.len().saturating_sub(1));
         self.scroll_into_view();
-    }
-
-    pub fn len(&self) -> usize {
-        self.keys.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -61,14 +55,14 @@ impl List {
     }
 
     pub fn selected_key(&self) -> Option<&str> {
-        self.keys.get(self.selected).map(String::as_str)
+        self.keys.get(self.selected).map(|k| &**k)
     }
 
     /// Selects the row with `key`. Returns whether the selection moved.
     pub fn select_key(&mut self, key: &str) -> bool {
         self.keys
             .iter()
-            .position(|k| k == key)
+            .position(|k| **k == *key)
             .is_some_and(|i| self.select(i))
     }
 
@@ -86,17 +80,17 @@ impl List {
     }
 
     /// The click target for the row with `key`.
-    pub fn target(&self, key: &str) -> Target {
+    fn target(&self, key: &Rc<str>) -> Target {
         Target::Row {
             list: self.id,
-            key: key.to_owned(),
+            key: Rc::clone(key),
         }
     }
 
     /// If `target` is one of this list's rows, its key.
     pub fn key_of<'t>(&self, target: &'t Target) -> Option<&'t str> {
         match target {
-            Target::Row { list, key } if *list == self.id => Some(key),
+            Target::Row { list, key } if *list == self.id => Some(&**key),
             _ => None,
         }
     }
@@ -193,7 +187,7 @@ mod tests {
     fn list(n: usize, height: u16) -> List {
         let mut list = List::new("test");
         list.set_height(height);
-        list.set_keys((0..n).map(|i| i.to_string()).collect());
+        list.set_keys((0..n).map(|i| i.to_string()));
         list
     }
 
@@ -219,9 +213,9 @@ mod tests {
     fn selection_follows_its_key_through_a_rebuild() {
         let mut l = list(5, 20);
         l.select_key("3");
-        l.set_keys(vec!["9".into(), "3".into()]);
+        l.set_keys(["9", "3"]);
         assert_eq!(l.selected_key(), Some("3"));
-        l.set_keys(vec!["7".into()]);
+        l.set_keys(["7"]);
         assert_eq!(l.selected_key(), Some("7"), "falls back to the first row");
     }
 
@@ -229,7 +223,7 @@ mod tests {
     fn click_targets_belong_to_their_list() {
         let a = List::new("a");
         let b = List::new("b");
-        let target = a.target("x");
+        let target = a.target(&Rc::from("x"));
         assert_eq!(a.key_of(&target), Some("x"));
         assert_eq!(b.key_of(&target), None);
         assert!(target.is_row());

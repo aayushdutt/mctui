@@ -4,7 +4,6 @@
 //! the search field and the buttons, each a single row.
 
 use mctui_core::modrinth::{SearchHit, Side};
-use mctui_core::net::Progress;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -160,9 +159,9 @@ impl Mods {
         } else {
             let count = (!d.hits.is_empty()).then(|| {
                 if d.hits.len() < d.total {
-                    format!("{} of {}", d.hits.len(), thousands(d.total))
+                    format!("{} of {}", d.hits.len(), format::thousands(d.total))
                 } else {
-                    thousands(d.total)
+                    format::thousands(d.total)
                 }
             });
             widgets::section(cv, label, "Discover", count.as_deref(), focused);
@@ -184,27 +183,18 @@ impl Mods {
 
     /// The search field: a filled row with `/` (its key) and the query.
     fn draw_field(&self, cv: &mut Canvas<'_>, row: Rect) {
-        let t = *cv.theme();
         let focused = self.focus == Focus::Search;
         let target = ui::Target::Mods(Target::Search);
-        let bg = match (focused, cv.hovered(&target)) {
-            (true, _) => t.selection,
-            (false, true) => t.surface_hi,
-            (false, false) => t.surface,
-        };
-        cv.band(row, bg);
-        let slash = if focused {
-            Style::new().fg(t.accent).bold()
-        } else {
-            Style::new().fg(t.muted)
-        };
-        cv.text(row.x + 2, row.y, "/", 1, slash);
-        let input = Rect::new(row.x + 4, row.y, row.width.saturating_sub(6), 1);
-        let style = Style::new().fg(if focused { t.strong } else { t.text });
-        self.discover
-            .input
-            .render(cv, input, style, "Search Modrinth", focused);
-        cv.click(row, target);
+        let input = &self.discover.input;
+        widgets::search(
+            cv,
+            row,
+            input,
+            "Search Modrinth",
+            None,
+            focused,
+            Some(target),
+        );
     }
 
     /// The running install (what it's doing, then its progress bar), or the
@@ -224,15 +214,12 @@ impl Mods {
         let right = install
             .progress
             .map_or(Rect::new(area.right(), area.y, 0, 1), |p| {
-                let files = format!(
-                    "{} of {}",
-                    p.files_done,
-                    format::count(p.files_total, "file")
-                );
+                let files = format::count_of_total(p.files_done, p.files_total, "file");
                 let right = if p.bytes_total == 0 {
                     files
                 } else {
-                    format!("{}{SEP}{files}", amount(p.bytes_done, p.bytes_total))
+                    let bytes = format::size_of_total(p.bytes_done, p.bytes_total);
+                    format!("{bytes}{SEP}{files}")
                 };
                 cv.line_right(area, area.y, &Line::styled(right, Style::new().fg(t.muted)))
             });
@@ -248,7 +235,7 @@ impl Mods {
             ..area
         };
         if let Some(p) = install.progress {
-            widgets::progress(cv, bar, ratio(p));
+            widgets::progress(cv, bar, widgets::download_ratio(p));
         } else {
             let muted = Style::new().fg(t.muted);
             cv.text(bar.x, bar.y, "Checking dependencies…", bar.width, muted);
@@ -361,7 +348,7 @@ impl Mods {
             ),
             _ => {
                 let fg = if selected { t.subtle } else { t.dim };
-                Line::styled(downloads(hit.downloads), Style::new().fg(fg))
+                Line::styled(format::compact(hit.downloads), Style::new().fg(fg))
             }
         };
         let right = cv.line_right(row, row.y, &accessory);
@@ -545,7 +532,7 @@ fn stats(hit: &SearchHit, cv: &Canvas<'_>) -> Vec<String> {
     let updated = format::relative(hit.date_modified, cv.cx.now, &cv.cx.tz)
         .replacen("Just now", "just now", 1);
     vec![
-        format!("{} downloads", downloads(hit.downloads)),
+        format!("{} downloads", format::compact(hit.downloads)),
         format!("Updated {updated}"),
     ]
 }
@@ -577,74 +564,9 @@ fn button_width(label: &str, key: Option<&str>) -> u16 {
     (text::width(label) + key + 4) as u16
 }
 
-/// "231.7M", "12.3K", "999".
-fn downloads(n: u64) -> String {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "one decimal of a download count"
-    )]
-    let per = |unit: u64| n as f64 / unit as f64;
-    match n {
-        1_000_000_000.. => format!("{:.1}B", per(1_000_000_000)),
-        1_000_000.. => format!("{:.1}M", per(1_000_000)),
-        1_000.. => format!("{:.1}K", per(1_000)),
-        _ => n.to_string(),
-    }
-}
-
-/// "5,056".
-fn thousands(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// "1.2 of 3.4 MB", in the total's unit.
-fn amount(done: u64, total: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = 1024 * 1024;
-    #[expect(clippy::cast_precision_loss, reason = "one decimal of a size")]
-    let per = |bytes: u64, unit: u64| bytes as f64 / unit as f64;
-    if total >= MIB {
-        format!("{:.1} of {:.1} MB", per(done, MIB), per(total, MIB))
-    } else {
-        format!("{} of {} KB", done / KIB, total.div_ceil(KIB))
-    }
-}
-
-/// How far along a download is: by bytes when their total is known.
-fn ratio(p: Progress) -> f64 {
-    #[expect(clippy::cast_precision_loss, reason = "a ratio for a progress bar")]
-    let ratio = |done: u64, total: u64| done as f64 / total as f64;
-    match (p.bytes_total, p.files_total) {
-        (0, 0) => 0.0,
-        (0, files) => ratio(p.files_done as u64, files as u64),
-        (bytes, _) => ratio(p.bytes_done, bytes),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn numbers_are_compact() {
-        assert_eq!(downloads(999), "999");
-        assert_eq!(downloads(12_345), "12.3K");
-        assert_eq!(downloads(146_600_000), "146.6M");
-        assert_eq!(downloads(1_200_000_000), "1.2B");
-        assert_eq!(thousands(5056), "5,056");
-        assert_eq!(thousands(34), "34");
-        assert_eq!(thousands(1_234_567), "1,234,567");
-        assert_eq!(amount(310_000, 3_500_000), "0.3 of 3.3 MB");
-        assert_eq!(amount(2048, 10_000), "2 of 10 KB");
-    }
 
     #[test]
     fn meta_reads_like_words_and_packs_whole_parts() {

@@ -20,7 +20,8 @@ use crate::fuzzy;
 use crate::overlay::{HelpGroup, MenuItem, PaletteItem};
 use crate::play;
 use crate::screen::{Ctx, Handled, Mouse, Screen};
-use crate::ui::input::TextInput;
+use crate::ui::filter::{Filter, FilterKey};
+use crate::ui::list::List;
 use crate::ui::{self, Canvas, Hint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,18 +59,17 @@ impl Tab {
     }
 }
 
-/// A list row by identity, so a click or a selection survives the list
-/// being rebuilt (a reload, a filter) underneath it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RowKey {
-    Instance(String),
-    New,
-}
+/// The instance list's id, for its rows' click targets.
+pub const LIST: &str = "home";
 
-/// Home's clickable parts.
+/// "+ New instance"'s key. The other rows are keyed by instance id, so a
+/// click or a selection survives the list being rebuilt (a reload, a filter)
+/// underneath it; ids are folder names, which can't hold a `/`.
+const NEW: &str = "/new";
+
+/// Home's clickable parts, besides the list's rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
-    Row(RowKey),
     List,
     Detail,
     Tab(Tab),
@@ -94,37 +94,10 @@ enum Row {
 }
 
 impl Row {
-    fn key(&self) -> RowKey {
+    fn key(&self) -> &str {
         match self {
-            Row::Instance { id, .. } => RowKey::Instance(id.clone()),
-            Row::New => RowKey::New,
-        }
-    }
-
-    fn is(&self, key: &RowKey) -> bool {
-        match (self, key) {
-            (Row::Instance { id, .. }, RowKey::Instance(k)) => id == k,
-            (Row::New, RowKey::New) => true,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-enum Filter {
-    #[default]
-    Off,
-    /// Typing a query; keys go to the field.
-    Editing(TextInput),
-    /// A query narrows the list; keys work as usual.
-    Applied(TextInput),
-}
-
-impl Filter {
-    fn query(&self) -> &str {
-        match self {
-            Filter::Off => "",
-            Filter::Editing(q) | Filter::Applied(q) => q.as_str(),
+            Row::Instance { id, .. } => id,
+            Row::New => NEW,
         }
     }
 }
@@ -140,10 +113,8 @@ struct Facets {
 #[derive(Debug)]
 pub struct Home {
     rows: Vec<Row>,
-    /// Index into `rows`.
-    selected: usize,
-    /// First row drawn.
-    offset: usize,
+    /// The rows' selection and scroll, by their keys.
+    list: List,
     focus: Pane,
     tab: Tab,
     filter: Filter,
@@ -157,8 +128,7 @@ impl Home {
     pub fn new(data: &Data, splash: &'static str) -> Self {
         let mut home = Self {
             rows: Vec::new(),
-            selected: 0,
-            offset: 0,
+            list: List::new(LIST),
             focus: Pane::List,
             tab: Tab::Overview,
             filter: Filter::Off,
@@ -184,10 +154,7 @@ impl Home {
     /// Rebuilds the visible rows (after a data or filter change), keeping the
     /// same instance selected wherever it moved to.
     fn refresh(&mut self, data: &Data) {
-        // Read the selection from the rows, not through `data`: the rows'
-        // indices belong to the data they were built from, which may be gone.
-        let before = self.rows.get(self.selected).map(Row::key);
-        let on_new = before == Some(RowKey::New) && !data.instances.is_empty();
+        let on_new = self.list.selected_key() == Some(NEW) && !data.instances.is_empty();
 
         let query = self.filter.query();
         self.rows = fuzzy::rank(query, data.instances.iter().map(|i| i.name.as_str()))
@@ -203,53 +170,49 @@ impl Home {
             self.rows.push(Row::New);
         }
 
-        self.selected = before
-            .and_then(|key| self.row_index(&key))
-            .or_else(|| on_new.then(|| self.rows.len().saturating_sub(1)))
-            .unwrap_or(0);
-        self.after_select(data);
-    }
-
-    fn row_index(&self, key: &RowKey) -> Option<usize> {
-        self.rows.iter().position(|r| r.is(key))
+        self.list.set_keys(self.rows.iter().map(Row::key));
+        // A filter hid "+ New instance": stay at the end of the list.
+        if on_new && self.list.selected_key() != Some(NEW) {
+            self.list.select(usize::MAX);
+        }
+        self.load_facets(data);
     }
 
     /// The body area changed (resize, a banner appeared).
     pub fn set_body(&mut self, body: Rect) {
         self.body = body;
-        if layout::layout(body).compact() {
+        let lay = layout::layout(body);
+        if lay.compact() {
             self.focus = Pane::List;
         }
-        self.scroll_into_view();
+        self.list.set_height(layout::list_rows(&lay).height);
     }
 
     /// Whether keys are going into a text field (so `?`, `:` and `q` type).
     pub fn captures_text(&self) -> bool {
-        matches!(self.filter, Filter::Editing(_))
+        self.filter.is_editing()
     }
 
     pub fn selected_instance<'d>(&self, data: &'d Data) -> Option<&'d Instance> {
-        match self.rows.get(self.selected)? {
+        match self.rows.get(self.list.selected())? {
             Row::Instance { index, .. } => data.instances.get(*index),
             Row::New => None,
         }
     }
 
-    /// Moves the selection to `row`. Picking another instance returns focus to
-    /// the list, so the detail pane never shows stale focus.
-    fn select(&mut self, row: usize, data: &Data) -> bool {
-        let row = row.min(self.rows.len().saturating_sub(1));
-        if row == self.selected {
-            return false;
+    /// Follows up a movement: picking another instance returns focus to the
+    /// list, so the detail pane never shows stale focus, and reads its facts.
+    /// A movement only did something if the selection `moved`.
+    fn after_move(&mut self, moved: bool, data: &Data) -> Handled {
+        if moved {
+            self.focus_list();
+            self.load_facets(data);
         }
-        self.selected = row;
-        self.focus = Pane::List;
-        self.tab = Tab::Overview;
-        self.after_select(data);
-        true
+        Handled::changed(moved)
     }
 
-    fn after_select(&mut self, data: &Data) {
+    /// Reads the selected instance's facts off disk, the first time.
+    fn load_facets(&mut self, data: &Data) {
         if let Some(inst) = self.selected_instance(data)
             && !self.facets.contains_key(&inst.id)
         {
@@ -260,51 +223,26 @@ impl Home {
             };
             self.facets.insert(inst.id.clone(), facets);
         }
-        self.scroll_into_view();
     }
 
-    /// How many rows fit in the list at once.
-    fn visible_rows(&self) -> usize {
-        let height = layout::list_rows(&layout::layout(self.body)).height;
-        usize::from(height.div_ceil(view::ROW_PITCH)).max(1)
-    }
-
-    /// Adjusts the scroll so the selected row is visible, without leaving
-    /// empty space below the last row.
-    fn scroll_into_view(&mut self) {
-        let visible = self.visible_rows();
-        let max_offset = self.rows.len().saturating_sub(visible);
-        self.offset = self
-            .offset
-            .max((self.selected + 1).saturating_sub(visible))
-            .min(self.selected)
-            .min(max_offset);
-    }
-
-    fn step(&mut self, delta: isize, data: &Data) -> bool {
-        let row = self.selected.saturating_add_signed(delta);
-        self.select(row, data)
-    }
-
-    fn page(&self) -> isize {
-        isize::try_from(self.visible_rows()).unwrap_or(1)
+    fn scroll(&mut self, down: bool, data: &Data) -> Handled {
+        let moved = self.list.step(if down { 1 } else { -1 });
+        self.after_move(moved, data)
     }
 
     fn on_paste(&mut self, text: &str, data: &Data) -> bool {
-        match &mut self.filter {
-            Filter::Editing(input) => {
-                if input.insert(text) {
-                    self.refresh(data);
-                }
-                true
-            }
-            _ => false,
+        let Some(changed) = self.filter.paste(text) else {
+            return false;
+        };
+        if changed {
+            self.refresh(data);
         }
+        true
     }
 
     fn on_key(&mut self, key: KeyEvent, data: &Data) -> Handled {
-        if matches!(self.filter, Filter::Editing(_)) {
-            return self.filter_key(key, data);
+        if let Some(event) = self.filter.handle_key(key) {
+            return self.filtered(event, data);
         }
         if key
             .modifiers
@@ -331,7 +269,7 @@ impl Home {
                 _ => {}
             }
         }
-        if let Some(handled) = self.navigate(key.code, data) {
+        if let Some(handled) = self.navigate(key, data) {
             return handled;
         }
 
@@ -347,7 +285,7 @@ impl Home {
             KeyCode::Char('/') => {
                 if !data.instances.is_empty() {
                     self.focus_list();
-                    self.filter = Filter::Editing(TextInput::new(self.filter.query()));
+                    self.filter.edit();
                 }
                 return Handled::Consumed;
             }
@@ -370,34 +308,23 @@ impl Home {
         Handled::Action(action)
     }
 
-    /// Keys while typing a filter: they edit it, except Enter (keep it), Esc
-    /// (drop it) and ↑↓ (move through the matches).
-    fn filter_key(&mut self, key: KeyEvent, data: &Data) -> Handled {
-        let Filter::Editing(input) = &mut self.filter else {
-            return Handled::Ignored;
-        };
-        match key.code {
-            KeyCode::Esc => self.filter = Filter::Off,
-            KeyCode::Enter => {
-                self.commit_filter(data);
-                return Handled::Consumed;
+    /// What a key did to the filter being typed.
+    fn filtered(&mut self, event: FilterKey, data: &Data) -> Handled {
+        match event {
+            FilterKey::Step(delta) => {
+                let moved = self.list.step(delta);
+                return self.after_move(moved, data);
             }
-            KeyCode::Up => return moved(self.step(-1, data)),
-            KeyCode::Down => return moved(self.step(1, data)),
-            _ => {
-                if input.handle_key(key) != Some(true) {
-                    return Handled::Consumed;
-                }
-            }
+            FilterKey::Changed | FilterKey::Committed | FilterKey::Cleared => self.refresh(data),
+            FilterKey::Consumed => {}
         }
-        self.refresh(data);
         Handled::Consumed
     }
 
     /// Moving between and within panes.
-    fn navigate(&mut self, code: KeyCode, data: &Data) -> Option<Handled> {
+    fn navigate(&mut self, key: KeyEvent, data: &Data) -> Option<Handled> {
         let split = !layout::layout(self.body).compact();
-        let handled = match code {
+        let handled = match key.code {
             KeyCode::Right | KeyCode::Char('l' | ']') if split => {
                 match self.focus {
                     Pane::List => self.focus_detail(data),
@@ -421,66 +348,62 @@ impl Home {
                 }
                 Handled::Consumed
             }
-            KeyCode::Up | KeyCode::Char('k') => moved(self.step(-1, data)),
-            KeyCode::Down | KeyCode::Char('j') => moved(self.step(1, data)),
-            KeyCode::PageUp => moved(self.step(-self.page(), data)),
-            KeyCode::PageDown => moved(self.step(self.page(), data)),
-            KeyCode::Home | KeyCode::Char('g') => moved(self.select(0, data)),
-            KeyCode::End | KeyCode::Char('G') => moved(self.select(usize::MAX, data)),
-            _ => return None,
+            _ => {
+                let moved = self.list.handle_key(key)?;
+                self.after_move(moved, data)
+            }
         };
         Some(handled)
     }
 
     /// Stops typing into the filter, keeping what was typed.
     pub fn commit_filter(&mut self, data: &Data) {
-        if let Filter::Editing(input) = &mut self.filter {
-            let query = std::mem::take(input);
-            self.filter = if query.as_str().trim().is_empty() {
-                Filter::Off
-            } else {
-                Filter::Applied(query)
-            };
+        if self.filter.commit() {
             self.refresh(data);
         }
     }
 
-    fn on_mouse(&mut self, target: &Target, mouse: Mouse, data: &Data) -> Handled {
+    /// A click stops typing into the filter, keeping what was typed; the
+    /// wheel doesn't.
+    fn pointer(&mut self, mouse: Mouse, data: &Data) {
         if !matches!(mouse, Mouse::Scroll { .. }) {
             self.commit_filter(data);
         }
+    }
+
+    /// The pointer on the row keyed `key`.
+    fn on_row(&mut self, key: &str, mouse: Mouse, data: &Data) -> Handled {
+        self.pointer(mouse, data);
+        if let Mouse::Scroll { down } = mouse {
+            return self.scroll(down, data);
+        }
+        let moved = self.list.select_key(key);
+        if self.list.selected_key() != Some(key) {
+            // Gone since the frame it was clicked on.
+            return Handled::Ignored;
+        }
+        self.after_move(moved, data);
+        self.focus_list();
+        let inst = self.selected_instance(data);
+        match (mouse, inst) {
+            (Mouse::Click { double: true }, Some(inst)) => {
+                Handled::Action(Action::launch(inst, false))
+            }
+            (Mouse::Click { double: true }, None) => {
+                Handled::Action(Action::Open(Route::NewInstance))
+            }
+            (Mouse::RightClick(at), Some(inst)) => Handled::Action(Action::ActionsMenu {
+                id: inst.id.clone(),
+                anchor: Some(at),
+            }),
+            _ => Handled::Consumed,
+        }
+    }
+
+    fn on_mouse(&mut self, target: &Target, mouse: Mouse, data: &Data) -> Handled {
+        self.pointer(mouse, data);
         match (target, mouse) {
-            (Target::Row(_) | Target::List, Mouse::Scroll { down }) => {
-                moved(self.step(if down { 1 } else { -1 }, data))
-            }
-            (Target::Row(key), Mouse::Click { double }) => {
-                let Some(row) = self.row_index(key) else {
-                    return Handled::Ignored;
-                };
-                self.select(row, data);
-                self.focus_list();
-                if double {
-                    return match self.selected_instance(data) {
-                        Some(inst) => Handled::Action(Action::launch(inst, false)),
-                        None => Handled::Action(Action::Open(Route::NewInstance)),
-                    };
-                }
-                Handled::Consumed
-            }
-            (Target::Row(key), Mouse::RightClick(at)) => {
-                let Some(row) = self.row_index(key) else {
-                    return Handled::Ignored;
-                };
-                self.select(row, data);
-                self.focus_list();
-                match self.selected_instance(data) {
-                    Some(inst) => Handled::Action(Action::ActionsMenu {
-                        id: inst.id.clone(),
-                        anchor: Some(at),
-                    }),
-                    None => Handled::Consumed,
-                }
-            }
+            (Target::List, Mouse::Scroll { down }) => self.scroll(down, data),
             (Target::List, Mouse::Click { .. }) => {
                 self.focus_list();
                 Handled::Consumed
@@ -717,9 +640,8 @@ impl Home {
             self.filter = Filter::Off;
             self.refresh(data);
         }
-        if let Some(row) = self.row_index(&RowKey::Instance(id.to_owned())) {
-            self.select(row, data);
-        }
+        let moved = self.list.select_key(id);
+        self.after_move(moved, data);
     }
 
     /// The `x` card / right-click menu for an instance.
@@ -797,9 +719,12 @@ impl Screen for Home {
     }
 
     fn handle_mouse(&mut self, target: &ui::Target, mouse: Mouse, cx: &mut Ctx<'_>) -> Handled {
-        match target {
-            ui::Target::Home(target) => self.on_mouse(target, mouse, cx.data),
-            _ => Handled::Ignored,
+        if let Some(key) = self.list.key_of(target) {
+            self.on_row(key, mouse, cx.data)
+        } else if let ui::Target::Home(target) = target {
+            self.on_mouse(target, mouse, cx.data)
+        } else {
+            Handled::Ignored
         }
     }
 
@@ -814,11 +739,6 @@ impl Screen for Home {
     fn render(&self, cv: &mut Canvas<'_>, data: &Data) {
         self.draw(cv, data);
     }
-}
-
-/// A movement key did something only if the selection moved.
-fn moved(changed: bool) -> Handled {
-    Handled::changed(changed)
 }
 
 /// The letter keys that act on the selected instance.

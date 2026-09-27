@@ -28,7 +28,7 @@ use crate::resource_packs::ResourcePacks;
 use crate::screen::{Command, Ctx, Handled, Mouse, Screen, ScreenId};
 use crate::services::Services;
 use crate::settings::Settings;
-use crate::task::{Event, Tasks};
+use crate::task::{Event, Spawner};
 use crate::theme::{Terminal, Theme};
 use crate::ui::{self, Canvas, Cx, Hits, Target, text};
 use crate::wizard::Wizard;
@@ -106,6 +106,15 @@ impl Action {
             offline,
         })
     }
+
+    /// Opens `url` in the browser and says `done`; if the browser won't open,
+    /// the app's warning replaces it.
+    pub fn open_in_browser(url: impl Into<String>, done: impl Into<String>) -> Self {
+        Self::Many(vec![
+            Self::Banner(Banner::info(done)),
+            Self::OpenUrl(url.into()),
+        ])
+    }
 }
 
 /// A yes/no question for [`Action::Confirm`].
@@ -117,6 +126,26 @@ pub struct Question {
     /// A caution line; makes the dialog destructive (red).
     pub danger: Option<String>,
     pub on_yes: Action,
+}
+
+impl Question {
+    /// "Discard changes?", asked before leaving a form with unsaved edits:
+    /// `message` says what would be lost, and `on_yes` leaves.
+    pub fn discard(message: impl Into<String>, on_yes: Action) -> Self {
+        Self {
+            title: "Discard changes?".into(),
+            message: message.into(),
+            yes: "Discard",
+            danger: None,
+            on_yes,
+        }
+    }
+}
+
+impl From<Question> for Action {
+    fn from(question: Question) -> Self {
+        Self::Confirm(Box::new(question))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,7 +222,7 @@ pub struct App {
     /// Screens opened over home, top last.
     stack: Vec<(ScreenId, Box<dyn Screen>)>,
     next_id: ScreenId,
-    tasks: Tasks,
+    spawner: Spawner,
     services: Services,
     overlay: Option<Overlay>,
     /// The screen the overlay belongs to; it closes when that screen stops
@@ -212,9 +241,11 @@ pub struct App {
     hits: Hits,
     /// The last left click, for spotting double-clicks on the same thing.
     last_click: Option<(Instant, Target)>,
-    /// Where the chrome and screen go, and what the footer offers; recomputed
-    /// whenever state changes, reused by every frame until then.
+    /// Where the chrome and screen go, the header's crumbs and what the
+    /// footer offers; recomputed whenever state changes, reused by every
+    /// frame until then.
     chrome: Chrome,
+    crumbs: Vec<String>,
     footer: Vec<ui::Hint>,
     notice_lines: Vec<String>,
     quit: bool,
@@ -239,7 +270,7 @@ impl App {
         data: Data,
         notices: Vec<String>,
         terminal: Terminal,
-        (tasks, services): (Tasks, Services),
+        (spawner, services): (Spawner, Services),
         size: Rect,
     ) -> Self {
         let home = Home::new(&data, splash());
@@ -251,7 +282,7 @@ impl App {
             home,
             stack: Vec::new(),
             next_id: HOME + 1,
-            tasks,
+            spawner,
             services,
             overlay: None,
             overlay_owner: HOME,
@@ -264,6 +295,7 @@ impl App {
             hits: Hits::default(),
             last_click: None,
             chrome: Chrome::default(),
+            crumbs: Vec::new(),
             footer: Vec::new(),
             notice_lines: Vec::new(),
             quit: false,
@@ -282,7 +314,7 @@ impl App {
     /// Starts the background work a fresh run begins with: checking the
     /// active account's session.
     pub fn start(&mut self) {
-        let tasks = self.tasks.for_screen(APP);
+        let tasks = self.spawner.for_screen(APP);
         self.checks
             .check_active(&mut self.data, &tasks, &self.services);
     }
@@ -367,7 +399,7 @@ impl App {
                 .1
                 .as_mut()
         };
-        let tasks = self.tasks.for_screen(id);
+        let tasks = self.spawner.for_screen(id);
         let mut cx = Ctx {
             data: &mut self.data,
             services: &self.services,
@@ -745,7 +777,7 @@ impl App {
                 anchor,
             } => self.show_overlay(Overlay::Menu(Menu::new(title, items, anchor))),
             Action::Account(change) => {
-                let tasks = self.tasks.for_screen(APP);
+                let tasks = self.spawner.for_screen(APP);
                 if let Some(banner) =
                     self.checks
                         .apply(change, &mut self.data, &tasks, &self.services)
@@ -793,14 +825,14 @@ impl App {
             },
             Route::Accounts => Box::new(AccountList::new(&self.data)),
             Route::SignIn { then } => {
-                let tasks = self.tasks.for_screen(self.next_id);
+                let tasks = self.spawner.for_screen(self.next_id);
                 let then = then.as_deref().cloned();
                 Box::new(SignIn::new(then, &self.data, &self.services, &tasks))
             }
             Route::OfflineProfile => Box::new(OfflineProfile::new()),
             Route::NewInstance => {
                 // Its background work reports to the id it's about to get.
-                let tasks = self.tasks.for_screen(self.next_id);
+                let tasks = self.spawner.for_screen(self.next_id);
                 Box::new(Wizard::new(&self.data, &self.services, &tasks))
             }
             // A game already running only needs showing (or refusing), and
@@ -820,14 +852,14 @@ impl App {
             Route::Mods(id) => match self.data.instance(id) {
                 Some(inst) => Box::new(Mods::new(
                     inst,
-                    self.tasks.for_screen(self.next_id),
+                    self.spawner.for_screen(self.next_id),
                     self.services.modrinth.clone(),
                 )),
                 None => return,
             },
             Route::ResourcePacks(id) => match self.data.instance(id) {
                 Some(inst) => {
-                    let tasks = self.tasks.for_screen(self.next_id);
+                    let tasks = self.spawner.for_screen(self.next_id);
                     Box::new(ResourcePacks::new(inst, &self.services, &tasks))
                 }
                 None => return,
@@ -853,7 +885,7 @@ impl App {
             game.unseen = false;
         } else {
             self.sessions += 1;
-            let tasks = self.tasks.for_screen(APP);
+            let tasks = self.spawner.for_screen(APP);
             let session = Session::start(
                 self.sessions,
                 id,
@@ -1041,8 +1073,8 @@ impl App {
         }
     }
 
-    /// Recomputes the chrome and footer after a state change, and tells the
-    /// active screen its new body.
+    /// Recomputes the chrome, crumbs and footer after a state change, and
+    /// tells the active screen its new body.
     fn relayout(&mut self) {
         // A little air around everything: 1 row top and bottom, 2 columns each side.
         let area = self.size;
@@ -1051,12 +1083,27 @@ impl App {
         } else {
             area
         };
-        self.footer = self.active().hints(&self.data);
         self.notice_lines = notice_lines(&self.notices, inner.width);
+        self.crumbs = self.active().crumbs(&self.data);
+        // A screen's footer depends on its body (a pane that no longer fits),
+        // and the body on the footer's height: lay out with the last footer's
+        // height, then again only if the new footer's differs.
+        let guess = self.place(inner, self.chrome.footer.height);
+        self.set_active_body(guess.body);
+        self.footer = self.active().hints(&self.data);
         // The footer never crowds out the header: on a tiny terminal it gets
         // what's left, or nothing.
         let footer_h =
             ui::hints_height(&self.footer, inner.width).min(inner.height.saturating_sub(3));
+        self.chrome = self.place(inner, footer_h);
+        if self.chrome.body != guess.body {
+            self.set_active_body(self.chrome.body);
+        }
+    }
+
+    /// Where the chrome and the screen go in `inner`, under a footer
+    /// `footer_h` rows tall.
+    fn place(&self, inner: Rect, footer_h: u16) -> Chrome {
         let notices_h = self.notice_lines.len() as u16;
         let banner_h = u16::from(self.banner.is_some());
         let footer = Rect::new(
@@ -1078,7 +1125,7 @@ impl App {
             notices_h,
         );
         let body_top = inner.y + 2;
-        self.chrome = Chrome {
+        Chrome {
             header: Rect {
                 height: 1.min(inner.height),
                 ..inner
@@ -1092,12 +1139,12 @@ impl App {
             notices,
             banner,
             footer,
-        };
-        let body = self.chrome.body;
+        }
+    }
+
+    fn set_active_body(&mut self, body: Rect) {
         let id = self.active_id();
         self.with_screen(id, |s, _| s.set_body(body));
-        // The body may have changed the footer (a pane that no longer fits).
-        self.footer = self.active().hints(&self.data);
     }
 
     /// Draws a frame. Returns its clickable regions and where the cursor goes.
@@ -1107,10 +1154,12 @@ impl App {
         let chrome = self.chrome;
         let t = self.theme;
 
-        let crumbs = self.active().crumbs(&self.data);
-        let crumbs: Vec<&str> = crumbs.iter().map(String::as_str).collect();
         let account = self.account_status();
-        cv.header(chrome.header, &crumbs, Some((account, Target::Account)));
+        cv.header(
+            chrome.header,
+            &self.crumbs,
+            Some((account, Target::Account)),
+        );
         let screen = self.active();
         cv.clipped(chrome.body, |cv| screen.render(cv, &self.data));
 

@@ -571,14 +571,10 @@ fn steps(cv: &mut Canvas<'_>, area: Rect, session: &Session, step: Option<Step>)
 fn progress(cv: &mut Canvas<'_>, area: Rect, step: Step) {
     let t = *cv.theme();
     let (ratio, detail) = match step {
-        Step::Libraries(p) | Step::Assets(p) => (ratio(p), files(p)),
+        Step::Libraries(p) | Step::Assets(p) => (widgets::download_ratio(p), files(p)),
         Step::InstallingJava(InstallProgress::Downloading { major, done, total }) => (
             done as f64 / total.max(1) as f64,
-            format!(
-                "Java {major} · {} of {}",
-                format::size(done),
-                format::size(total)
-            ),
+            format!("Java {major} · {}", format::size_of_total(done, total)),
         ),
         Step::InstallingJava(InstallProgress::Extracting { major }) => {
             (1.0, format!("unpacking Java {major}"))
@@ -586,7 +582,7 @@ fn progress(cv: &mut Canvas<'_>, area: Rect, step: Step) {
         Step::StarterMods(p) => {
             let per = 1.0 / STARTER_MODS.len() as f64;
             (
-                per * (p.index as f64 + ratio(p.download)),
+                per * (p.index as f64 + widgets::download_ratio(p.download)),
                 p.starter.title.to_owned(),
             )
         }
@@ -613,23 +609,12 @@ fn progress(cv: &mut Canvas<'_>, area: Rect, step: Step) {
     );
 }
 
-fn ratio(p: Progress) -> f64 {
-    if p.bytes_total > 0 {
-        p.bytes_done as f64 / p.bytes_total as f64
-    } else {
-        p.files_done as f64 / p.files_total.max(1) as f64
-    }
-}
-
+/// How much of a step's download is done: bytes when their total is known.
 fn files(p: Progress) -> String {
     if p.bytes_total > 0 {
-        format!(
-            "{} of {}",
-            format::size(p.bytes_done),
-            format::size(p.bytes_total)
-        )
+        format::size_of_total(p.bytes_done, p.bytes_total)
     } else {
-        format!("{} of {} files", p.files_done, p.files_total)
+        format::count_of_total(p.files_done, p.files_total, "file")
     }
 }
 

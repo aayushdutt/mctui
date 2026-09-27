@@ -3,6 +3,7 @@
 
 use std::time::{Duration, Instant};
 
+use mctui_core::net::Progress;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -12,8 +13,14 @@ use super::{Canvas, Target, text};
 use crate::theme;
 
 /// An uppercase section label with an optional count: `INSTANCES   6`.
-/// Accent while its pane has focus.
-pub fn section(cv: &mut Canvas<'_>, area: Rect, label: &str, count: Option<&str>, focused: bool) {
+/// Accent while its pane has focus. Returns the x after what it drew.
+pub fn section(
+    cv: &mut Canvas<'_>,
+    area: Rect,
+    label: &str,
+    count: Option<&str>,
+    focused: bool,
+) -> u16 {
     let t = *cv.theme();
     let fg = if focused { t.accent } else { t.muted };
     let label = label.to_uppercase();
@@ -24,9 +31,12 @@ pub fn section(cv: &mut Canvas<'_>, area: Rect, label: &str, count: Option<&str>
         area.width,
         Style::new().fg(fg).bold(),
     );
-    if let Some(count) = count {
-        let room = area.right().saturating_sub(end + 3);
-        cv.text(end + 3, area.y, count, room, Style::new().fg(t.muted));
+    match count {
+        Some(count) => {
+            let room = area.right().saturating_sub(end + 3);
+            cv.text(end + 3, area.y, count, room, Style::new().fg(t.muted))
+        }
+        None => end,
     }
 }
 
@@ -197,6 +207,15 @@ pub fn tabs(
     }
 }
 
+/// A field's band: the selection while focused, brighter under the pointer.
+fn field_bg(t: &theme::Theme, focused: bool, hovered: bool) -> Color {
+    match (focused, hovered) {
+        (true, _) => t.selection,
+        (false, true) => t.surface_hi,
+        (false, false) => t.surface,
+    }
+}
+
 /// A one-row text field: the text on a filled band, the cursor when focused.
 pub fn field(
     cv: &mut Canvas<'_>,
@@ -208,13 +227,8 @@ pub fn field(
 ) {
     let t = *cv.theme();
     let hovered = target.as_ref().is_some_and(|target| cv.hovered(target));
-    let bg = match (focused, hovered) {
-        (true, _) => t.selection,
-        (false, true) => t.surface_hi,
-        (false, false) => t.surface,
-    };
     let area = Rect { height: 1, ..area };
-    cv.band(area, bg);
+    cv.band(area, field_bg(&t, focused, hovered));
     let inner = Rect {
         x: area.x + 1,
         width: area.width.saturating_sub(2),
@@ -223,6 +237,48 @@ pub fn field(
     input.render(cv, inner, Style::new().fg(t.strong), placeholder, focused);
     if let Some(target) = target {
         cv.click(area, target);
+    }
+}
+
+/// A search field filling `row` (a pane's width): its key `/`, the query, and
+/// a count flush right, the text inset 2 columns like the pane's rows. Quiet
+/// until focused.
+pub fn search(
+    cv: &mut Canvas<'_>,
+    row: Rect,
+    input: &TextInput,
+    placeholder: &str,
+    count: Option<&str>,
+    focused: bool,
+    target: Option<Target>,
+) {
+    let t = *cv.theme();
+    let row = Rect {
+        height: row.height.min(1),
+        ..row
+    };
+    let hovered = target.as_ref().is_some_and(|target| cv.hovered(target));
+    cv.band(row, field_bg(&t, focused, hovered));
+    let inner = Rect::new(row.x + 2, row.y, row.width.saturating_sub(4), 1);
+    // The query stops 2 columns short of the count.
+    let end = match count {
+        Some(count) => {
+            let count = Line::styled(count, Style::new().fg(t.subtle));
+            cv.line_right(inner, inner.y, &count).x.saturating_sub(2)
+        }
+        None => inner.right(),
+    };
+    let key = if focused {
+        Style::new().fg(t.accent).bold()
+    } else {
+        Style::new().fg(t.muted)
+    };
+    cv.text(inner.x, inner.y, "/", 1, key);
+    let field = Rect::new(inner.x + 2, inner.y, end.saturating_sub(inner.x + 2), 1);
+    let style = Style::new().fg(if focused { t.strong } else { t.text });
+    input.render(cv, field, style, placeholder, focused);
+    if let Some(target) = target {
+        cv.click(row, target);
     }
 }
 
@@ -302,6 +358,16 @@ pub fn progress(cv: &mut Canvas<'_>, area: Rect, ratio: f64) {
         area.width,
         Style::new().fg(t.subtle),
     );
+}
+
+/// How far along a download is, for [`progress`]: by bytes when their total
+/// is known, else by files.
+pub fn download_ratio(p: Progress) -> f64 {
+    if p.bytes_total > 0 {
+        p.bytes_done as f64 / p.bytes_total as f64
+    } else {
+        p.files_done as f64 / p.files_total.max(1) as f64
+    }
 }
 
 /// How often the spinner advances.

@@ -12,6 +12,7 @@ use ratatui::text::{Line, Span};
 use super::browser::{Browser, CartRow, PackRow, Search, Work};
 use super::layout::{self, Mode};
 use super::{Command, PANE, Pane, ResourcePacks, State, TAB, target};
+use crate::format;
 use crate::theme::Theme;
 use crate::ui::widgets::{self, ButtonKind};
 use crate::ui::{self, Canvas, text};
@@ -366,38 +367,20 @@ fn packs(cv: &mut Canvas<'_>, pane: Rect, b: &Browser, mode: Mode) {
 
 /// While searching, the packs pane's title is the search field.
 fn search_field(cv: &mut Canvas<'_>, pane: Rect, b: &Browser, search: &Search) {
-    let t = *cv.theme();
     let row = Rect::new(pane.x, pane.y, pane.width, 1);
-    let button = Command::Search.button();
-    let bg = if search.typing {
-        t.selection
-    } else if cv.hovered(&button) {
-        t.surface_hi
-    } else {
-        t.surface
-    };
-    cv.band(row, bg);
-    let title = title_row(pane);
     let found = match b.result_rows.len() {
         0 => "no matches".to_owned(),
-        1 => "1 pack".to_owned(),
-        n => format!("{n} packs"),
+        n => format::count(n, "pack"),
     };
-    let count = cv.line_right(
-        title,
-        row.y,
-        &Line::styled(found, Style::new().fg(t.subtle)),
-    );
-    cv.text(title.x, row.y, "/", 1, Style::new().fg(t.accent).bold());
-    let field = Rect::new(title.x + 2, row.y, count.x.saturating_sub(title.x + 4), 1);
-    search.input.render(
+    widgets::search(
         cv,
-        field,
-        Style::new().fg(t.strong),
+        row,
+        &search.input,
         "Search every pack",
+        Some(&found),
         search.typing,
+        Some(Command::Search.button()),
     );
-    cv.click(row, button);
 }
 
 /// A pack's row: its label, and its state on the right.

@@ -226,7 +226,7 @@ impl Browser {
             &mut nodes,
         );
         self.categories
-            .set_keys(nodes.iter().map(|n| n.key.clone()).collect());
+            .set_keys(nodes.iter().map(|n| n.key.as_str()));
         self.nodes = nodes;
 
         let rows = self.selected_category().map_or_else(Vec::new, |category| {
@@ -260,7 +260,7 @@ impl Browser {
 
         self.cart_rows = self.cart_rows();
         self.basket
-            .set_keys(self.cart_rows.iter().map(CartRow::key).collect());
+            .set_keys(self.cart_rows.iter().map(CartRow::key));
         self.skip_group(true);
     }
 
@@ -590,8 +590,8 @@ impl Browser {
     }
 }
 
-fn keys(rows: &[PackRow]) -> Vec<String> {
-    rows.iter().map(|row| row.id.clone()).collect()
+fn keys(rows: &[PackRow]) -> impl Iterator<Item = &str> {
+    rows.iter().map(|row| row.id.as_str())
 }
 
 /// The category at `path` (top-level index first).

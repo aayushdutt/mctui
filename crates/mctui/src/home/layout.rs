@@ -2,10 +2,7 @@
 
 use ratatui::layout::Rect;
 
-/// At or above this body width home shows the list and detail side by side;
-/// below it, one full-width list and a summary line. 76 is the body width of
-/// an 80-column terminal, so the common 80×24 gets both columns.
-pub const SPLIT_MIN_WIDTH: u16 = 76;
+use crate::ui::SPLIT_MIN_WIDTH;
 
 const LIST_MIN: u16 = 30;
 const LIST_MAX: u16 = 46;
@@ -25,6 +22,8 @@ impl Layout {
     }
 }
 
+/// The list and the selection's details side by side; narrower than
+/// [`SPLIT_MIN_WIDTH`], one full-width list and a summary line.
 pub fn layout(body: Rect) -> Layout {
     if body.width < SPLIT_MIN_WIDTH {
         let list_h = body.height.saturating_sub(2);
@@ -62,13 +61,13 @@ pub fn layout(body: Rect) -> Layout {
     }
 }
 
-/// Where the list's rows go: below the title and a blank line, keeping the
-/// last line free for the "↓ N more" hint.
+/// Where the list's rows go: below the title and a blank line.
 pub fn list_rows(layout: &Layout) -> Rect {
     let pane = layout.list;
+    let top = 2.min(pane.height);
     Rect {
-        y: pane.y + 2.min(pane.height),
-        height: pane.height.saturating_sub(3),
+        y: pane.y + top,
+        height: pane.height - top,
         ..pane
     }
 }

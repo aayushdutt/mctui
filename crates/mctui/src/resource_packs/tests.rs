@@ -123,7 +123,7 @@ fn eventually(mut done: impl FnMut() -> bool) {
 fn row(list: &'static str, key: &str) -> crate::ui::Target {
     crate::ui::Target::Row {
         list,
-        key: key.to_owned(),
+        key: key.into(),
     }
 }
 
@@ -580,6 +580,8 @@ pub(crate) fn screenshots(save: &dyn Fn(&str, &mut Harness)) {
     h.press(KeyCode::Char('/'));
     h.type_text("hearts");
     save("packs-search", &mut h);
+    h.press(KeyCode::Enter);
+    save("packs-search-results", &mut h);
     press_all(&mut h, &[KeyCode::Esc, KeyCode::Char('b')]);
     save("packs-building", &mut h);
     h.press(KeyCode::Esc);

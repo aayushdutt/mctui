@@ -1,0 +1,17 @@
+---
+source: crates/mctui/src/home/tests.rs
+expression: h.text()
+---
+
+  mctui                                                                ● Steve
+
+    INSTANCES   3                   New instance
+    ↑ 1 more                        Pick a Minecraft version, a loader, and a
+    Snapshot Test          new
+                                      Create instance  ↵
+    Creative Build      3d ago
+
+    + New instance
+
+
+   ↵  new instance    /  search    :  commands    ?  help

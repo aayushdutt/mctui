@@ -7,6 +7,7 @@
 //! colour. Structure comes from whitespace; emphasis from single-row tints —
 //! the selection band, chips, keycaps and buttons.
 
+pub mod filter;
 pub mod form;
 pub mod hits;
 pub mod input;
@@ -33,6 +34,11 @@ pub const CHECK: &str = "✓";
 pub const CROSS: &str = "✗";
 pub const WARN: &str = "▲";
 pub const PENDING: &str = "○";
+
+/// At or above this body width, screens with two panes show both side by
+/// side; below it they collapse to one. 76 is the body of an 80-column
+/// terminal, so the common 80×24 gets both.
+pub const SPLIT_MIN_WIDTH: u16 = 76;
 
 /// Read-only state a frame is drawn against.
 #[derive(Debug, Clone)]
@@ -189,7 +195,7 @@ impl<'a> Canvas<'a> {
     /// The one header every screen starts with: the wordmark and a breadcrumb
     /// trail on the left, optional context flush right. When both don't fit,
     /// the right side goes and the trail is truncated.
-    pub fn header(&mut self, row: Rect, crumbs: &[&str], right: Option<(Line<'_>, Target)>) {
+    pub fn header(&mut self, row: Rect, crumbs: &[String], right: Option<(Line<'_>, Target)>) {
         let t = self.cx.theme;
         let mut spans = vec![Span::styled("mctui", Style::new().fg(t.accent).bold())];
         for (i, crumb) in crumbs.iter().enumerate() {
@@ -199,7 +205,7 @@ impl<'a> Canvas<'a> {
             } else {
                 t.dim
             };
-            spans.push(Span::styled(*crumb, Style::new().fg(fg)));
+            spans.push(Span::styled(crumb.as_str(), Style::new().fg(fg)));
         }
         let left = Line::from(spans);
         if let Some((right, target)) = right

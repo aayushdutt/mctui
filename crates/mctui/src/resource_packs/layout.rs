@@ -3,12 +3,10 @@
 use ratatui::layout::Rect;
 
 use super::Pane;
+use crate::ui::SPLIT_MIN_WIDTH;
 
 /// At or above this body width all three panes sit side by side.
 pub const WIDE_MIN: u16 = 100;
-/// At or above this body width the categories stay beside one view that
-/// switches between the packs and your pack; below it, one pane at a time.
-pub const SPLIT_MIN: u16 = 76;
 const GAP: u16 = 2;
 /// Rows the selected pack's details take under the packs list, gap included.
 const DETAILS_H: u16 = 8;
@@ -19,7 +17,8 @@ const DETAILS_MIN: u16 = 20;
 pub enum Mode {
     /// Categories, packs and your pack side by side.
     Wide,
-    /// Categories, and the packs or your pack.
+    /// Categories, and one view that switches between the packs and your
+    /// pack ([`SPLIT_MIN_WIDTH`] and up).
     Split,
     /// One pane at a time.
     Single,
@@ -29,7 +28,7 @@ impl Mode {
     pub fn of(body: Rect) -> Self {
         match body.width {
             WIDE_MIN.. => Mode::Wide,
-            SPLIT_MIN.. => Mode::Split,
+            SPLIT_MIN_WIDTH.. => Mode::Split,
             _ => Mode::Single,
         }
     }

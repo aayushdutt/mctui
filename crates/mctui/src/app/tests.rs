@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::home;
-use crate::task::Tasks;
+use crate::task::Spawner;
 use crate::testing;
 use crate::theme;
 
@@ -63,7 +63,7 @@ impl Harness {
         let _ = data.accounts.save(&data.dir);
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (tx, events) = tokio::sync::mpsc::unbounded_channel();
-        let tasks = Tasks::new(tx, runtime.handle().clone());
+        let spawner = Spawner::new(tx, runtime.handle().clone());
         let server = online.then(|| runtime.block_on(wiremock::MockServer::start()));
         let services = testing::services(server.as_ref().map(wiremock::MockServer::uri), &data.dir);
         let terminal = crate::theme::Terminal::default();
@@ -71,7 +71,7 @@ impl Harness {
             data,
             notices,
             terminal,
-            (tasks, services),
+            (spawner, services),
             Rect::new(0, 0, w, h),
         );
         app.set_splash("Blazingly monospaced!");
@@ -241,7 +241,10 @@ impl Harness {
 
 /// A list row by instance name (the fixture's ids are its names).
 fn row(name: &str) -> Target {
-    Target::Home(home::Target::Row(home::RowKey::Instance(name.to_owned())))
+    Target::Row {
+        list: home::LIST,
+        key: name.into(),
+    }
 }
 
 #[test]
@@ -664,7 +667,7 @@ fn clicking_the_account_while_typing_opens_accounts() {
     h.press(KeyCode::Char('/'));
     h.type_text("sur");
     h.click(&Target::Account);
-    assert!(h.text().contains("ACCOUNTS"), "opened the accounts");
+    assert!(h.text().contains("PROFILES"), "opened the accounts");
     h.press(KeyCode::Esc);
     assert!(h.text().contains("“sur”"), "the filter kept what was typed");
 }

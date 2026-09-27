@@ -1,0 +1,17 @@
+---
+source: crates/mctui/src/home/tests.rs
+expression: h.text()
+---
+
+  mctui                                                                ● Steve
+
+    INSTANCES   3                   Survival 1.21                     ● Ready
+                                    Minecraft 1.21.4  ·  Fabric 0.16.10
+    Survival 1.21       2h ago
+                                      ▶ Play  ↵      Play offline  o
+    Snapshot Test          new
+                                     Overview   Mods 3   Resource packs 0
+    Creative Build      3d ago
+    ↓ 1 more                        4h 12m        2h ago        2
+
+   ↵  play    o  offline    n  new    /  search    :  commands    ?  help

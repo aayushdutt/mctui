@@ -139,7 +139,7 @@ fn saved(h: &Harness) -> Accounts {
 fn row(id: &str) -> Target {
     Target::Row {
         list: "accounts",
-        key: id.to_owned(),
+        key: id.into(),
     }
 }
 
@@ -239,7 +239,7 @@ fn offline_profiles_need_a_valid_unused_name() {
     h.press(KeyCode::Backspace);
     h.press(KeyCode::Enter);
     assert_eq!(h.banner(), Some("Added the offline profile “ab_2”."));
-    assert!(h.text().contains("ACCOUNTS"), "back on the list");
+    assert!(h.text().contains("PROFILES"), "back on the list");
     assert_eq!(active(&h), Some("Steve"), "the active account stays");
     let added = saved(&h)
         .accounts
@@ -285,7 +285,7 @@ fn signs_in_with_microsoft() {
     assert_eq!(saved(&h).active_id.as_deref(), Some(JEB_ID), "saved");
     let text = h.text();
     assert!(
-        text.contains("ACCOUNTS") && text.contains("● jeb_"),
+        text.contains("PROFILES") && text.contains("● jeb_"),
         "{text}"
     );
 }
@@ -334,7 +334,7 @@ fn esc_cancels_a_sign_in_in_progress() {
     h.press(KeyCode::Char('n'));
     h.settle();
     h.press(KeyCode::Esc);
-    assert!(h.text().contains("ACCOUNTS"), "back on the list");
+    assert!(h.text().contains("PROFILES"), "back on the list");
 
     std::thread::sleep(Duration::from_millis(30));
     let polls = h.requests("/token");

@@ -40,7 +40,7 @@ use tokio::sync::mpsc;
 use crate::app::App;
 use crate::data::Data;
 use crate::services::Services;
-use crate::task::{Event, Tasks};
+use crate::task::{Event, Spawner};
 use crate::term::Tui;
 use crate::theme::Terminal;
 
@@ -85,10 +85,10 @@ async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Re
     let size = tui.size()?;
     let (tx, mut events) = mpsc::unbounded_channel();
     spawn_input_reader(tx.clone());
-    let tasks = Tasks::new(tx, tokio::runtime::Handle::current());
+    let spawner = Spawner::new(tx, tokio::runtime::Handle::current());
     let services = Services::new(Http::new()?, &data.dir);
     let area = Rect::new(0, 0, size.width, size.height);
-    let mut app = App::new(data, notices, terminal, (tasks, services), area);
+    let mut app = App::new(data, notices, terminal, (spawner, services), area);
     app.start();
     let tz = TimeZone::system();
     let mut prof = RenderProf::from_env();

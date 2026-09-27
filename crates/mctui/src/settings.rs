@@ -75,16 +75,13 @@ impl Settings {
             FormEvent::Moved | FormEvent::Edited(_) => Handled::Consumed,
             FormEvent::Submit => self.save(cx),
             FormEvent::Cancel if self.form.is_dirty() => {
-                Handled::Action(Action::Confirm(Box::new(Question {
-                    title: "Discard changes?".into(),
-                    message: "Your changes to settings haven't been saved.".into(),
-                    yes: "Discard",
-                    danger: None,
-                    on_yes: Action::Many(vec![
-                        Action::SetTheme(self.original_theme.clone()),
-                        Action::Close,
-                    ]),
-                })))
+                // Discarding undoes the theme's preview too.
+                let leave = Action::Many(vec![
+                    Action::SetTheme(self.original_theme.clone()),
+                    Action::Close,
+                ]);
+                let unsaved = "Your changes to settings haven't been saved.";
+                Handled::Action(Question::discard(unsaved, leave).into())
             }
             FormEvent::Cancel => Handled::Action(Action::Close),
         }

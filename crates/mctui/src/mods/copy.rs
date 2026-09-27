@@ -25,15 +25,10 @@ pub(super) fn mod_page(m: &InstalledMod) -> Option<String> {
     Some(modrinth::project_page(project))
 }
 
-/// Opens a mod's page in the browser, and says so (if the browser won't
-/// open, the app's warning replaces this).
+/// Opens a mod's page in the browser, and says so.
 pub(super) fn open_page(url: String, title: &str) -> Action {
-    Action::Many(vec![
-        Action::Banner(Banner::info(format!(
-            "Opened {title} on Modrinth in your browser."
-        ))),
-        Action::OpenUrl(url),
-    ])
+    let done = format!("Opened {title} on Modrinth in your browser.");
+    Action::open_in_browser(url, done)
 }
 
 /// What went wrong with a search, and what to do about it.

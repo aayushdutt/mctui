@@ -1,7 +1,10 @@
-//! Human-readable times and sizes.
+//! Human-readable times, sizes and counts.
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+
+const KIB: u64 = 1024;
+const MIB: u64 = 1024 * 1024;
 
 /// "Just now", "5m ago", "3h ago", "2d ago", then a date ("Jan 2", or
 /// "Jan 2, 2025" outside the current year).
@@ -37,18 +40,29 @@ pub fn play_time(secs: u64) -> String {
 
 /// "1.2 MB", "412 KB", "80 B".
 pub fn size(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = 1024 * 1024;
     match bytes {
-        MIB.. => {
-            // u128: `bytes * 10` can't overflow.
-            let (bytes, mib) = (u128::from(bytes), u128::from(MIB));
-            let tenths = (bytes * 10 + mib / 2) / mib;
-            format!("{}.{} MB", tenths / 10, tenths % 10)
-        }
+        MIB.. => format!("{} MB", megabytes(bytes)),
         KIB.. => format!("{} KB", bytes / KIB),
         _ => format!("{bytes} B"),
     }
+}
+
+/// How much of a download is done: "1.2 of 3.4 MB", or "2 of 10 KB" for a
+/// small one — both in the total's unit.
+pub fn size_of_total(done: u64, total: u64) -> String {
+    if total >= MIB {
+        format!("{} of {} MB", megabytes(done), megabytes(total))
+    } else {
+        format!("{} of {} KB", done / KIB, total.div_ceil(KIB))
+    }
+}
+
+/// "1.2": megabytes to one decimal, rounded.
+fn megabytes(bytes: u64) -> String {
+    // u128: `bytes * 10` can't overflow.
+    let (bytes, mib) = (u128::from(bytes), u128::from(MIB));
+    let tenths = (bytes * 10 + mib / 2) / mib;
+    format!("{}.{}", tenths / 10, tenths % 10)
 }
 
 /// "1 world", "2 worlds".
@@ -58,6 +72,35 @@ pub fn count(n: usize, noun: &str) -> String {
     } else {
         format!("{n} {noun}s")
     }
+}
+
+/// "1 of 3 files".
+pub fn count_of_total(done: usize, total: usize, noun: &str) -> String {
+    format!("{done} of {}", count(total, noun))
+}
+
+/// A big count, short: "231.7M", "12.3K", "999".
+pub fn compact(n: u64) -> String {
+    let per = |unit: u64| n as f64 / unit as f64;
+    match n {
+        1_000_000_000.. => format!("{:.1}B", per(1_000_000_000)),
+        1_000_000.. => format!("{:.1}M", per(1_000_000)),
+        1_000.. => format!("{:.1}K", per(1_000)),
+        _ => n.to_string(),
+    }
+}
+
+/// A count in full, its thousands marked: "5,056".
+pub fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -96,5 +139,23 @@ mod tests {
         assert_eq!(size(80), "80 B");
         assert_eq!(size(412 * 1024), "412 KB");
         assert_eq!(size(1_258_291), "1.2 MB");
+        assert_eq!(size_of_total(310_000, 3_500_000), "0.3 of 3.3 MB");
+        assert_eq!(size_of_total(2048, 10_000), "2 of 10 KB");
+        assert_eq!(size_of_total(0, 0), "0 of 0 KB");
+    }
+
+    #[test]
+    fn counts() {
+        assert_eq!(count(1, "world"), "1 world");
+        assert_eq!(count(0, "world"), "0 worlds");
+        assert_eq!(count_of_total(1, 3, "file"), "1 of 3 files");
+        assert_eq!(count_of_total(0, 1, "file"), "0 of 1 file");
+        assert_eq!(compact(999), "999");
+        assert_eq!(compact(12_345), "12.3K");
+        assert_eq!(compact(146_600_000), "146.6M");
+        assert_eq!(compact(1_200_000_000), "1.2B");
+        assert_eq!(thousands(34), "34");
+        assert_eq!(thousands(5056), "5,056");
+        assert_eq!(thousands(1_234_567), "1,234,567");
     }
 }

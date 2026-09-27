@@ -43,35 +43,40 @@ impl Drop for Task {
     }
 }
 
+/// Hands out [`Tasks`] addressed to a screen: work can only start once it
+/// knows who it reports to.
+#[derive(Debug, Clone)]
+pub struct Spawner {
+    tx: UnboundedSender<Event>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl Spawner {
+    pub fn new(tx: UnboundedSender<Event>, runtime: tokio::runtime::Handle) -> Self {
+        Self { tx, runtime }
+    }
+
+    /// Starts work that reports to `owner`.
+    pub fn for_screen(&self, owner: ScreenId) -> Tasks {
+        Tasks {
+            spawner: self.clone(),
+            owner,
+        }
+    }
+}
+
 /// Starts background work for one screen.
 #[derive(Debug, Clone)]
 pub struct Tasks {
-    tx: UnboundedSender<Event>,
-    runtime: tokio::runtime::Handle,
+    spawner: Spawner,
     owner: ScreenId,
 }
 
 impl Tasks {
-    pub fn new(tx: UnboundedSender<Event>, runtime: tokio::runtime::Handle) -> Self {
-        Self {
-            tx,
-            runtime,
-            owner: 0,
-        }
-    }
-
-    /// The same spawner, reporting to `owner`.
-    pub fn for_screen(&self, owner: ScreenId) -> Self {
-        Self {
-            owner,
-            ..self.clone()
-        }
-    }
-
-    /// A mailbox addressed to this spawner's screen.
+    /// A mailbox addressed to their screen.
     pub fn mailbox(&self) -> Mailbox {
         Mailbox {
-            tx: self.tx.clone(),
+            tx: self.spawner.tx.clone(),
             to: self.owner,
         }
     }
@@ -82,7 +87,7 @@ impl Tasks {
         F: FnOnce(Mailbox) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        Task(self.runtime.spawn(work(self.mailbox())))
+        Task(self.spawner.runtime.spawn(work(self.mailbox())))
     }
 
     /// Runs `work` to its end even if its screen closes first: for work that
@@ -92,7 +97,7 @@ impl Tasks {
         F: FnOnce(Mailbox) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        drop(self.runtime.spawn(work(self.mailbox())));
+        drop(self.spawner.runtime.spawn(work(self.mailbox())));
     }
 
     /// Runs `work` in the background and delivers its result as one message.
@@ -112,7 +117,7 @@ mod tests {
     #[tokio::test]
     async fn results_reach_the_owner_and_dropping_aborts() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let tasks = Tasks::new(tx, tokio::runtime::Handle::current()).for_screen(7);
+        let tasks = Spawner::new(tx, tokio::runtime::Handle::current()).for_screen(7);
         let _task = tasks.run(async { 41 + 1 }, Msg::Test);
         match rx.recv().await {
             Some(Event::Msg(7, Msg::Test(42))) => {}

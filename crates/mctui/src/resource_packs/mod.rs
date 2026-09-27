@@ -79,7 +79,7 @@ const BUTTON: &str = "packs.button";
 fn target(kind: &'static str, key: &str) -> Target {
     Target::Row {
         list: kind,
-        key: key.to_owned(),
+        key: key.into(),
     }
 }
 
@@ -632,7 +632,8 @@ fn preview(b: &Browser, services: &Services) -> Handled {
         return Handled::Ignored;
     };
     let url = services.vanilla_tweaks.preview_url(b.catalog.version, pack);
-    open(&url, format!("Opened the preview of {}.", pack.label()))
+    let done = format!("Opened the preview of {}.", pack.label());
+    Handled::Action(Action::open_in_browser(url, done))
 }
 
 fn video(b: &Browser) -> Handled {
@@ -640,18 +641,12 @@ fn video(b: &Browser) -> Handled {
         return Handled::Ignored;
     };
     match &pack.video {
-        Some(url) => open(url, format!("Opened the video for {}.", pack.label())),
+        Some(url) => {
+            let done = format!("Opened the video for {}.", pack.label());
+            Handled::Action(Action::open_in_browser(url, done))
+        }
         None => Handled::Ignored,
     }
-}
-
-/// Opens `url` in the browser, saying `done`; if the browser won't open, the
-/// app says so instead.
-fn open(url: &str, done: String) -> Handled {
-    Handled::Action(Action::Many(vec![
-        Action::Banner(Banner::info(done)),
-        Action::OpenUrl(url.to_owned()),
-    ]))
 }
 
 fn build(b: &mut Browser, inst: &Inst, cx: &Ctx<'_>) -> Handled {
