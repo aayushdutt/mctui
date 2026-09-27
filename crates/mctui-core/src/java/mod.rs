@@ -22,7 +22,7 @@ pub use adoptium::ADOPTIUM_URL;
 use crate::config::Config;
 use crate::instance::Instance;
 use crate::net::{self, Download, Hash, Http};
-use crate::paths;
+use crate::{fsutil, paths};
 
 /// The Java a version needs when its JSON doesn't say: before 1.17 the
 /// version JSON had no `javaVersion`, and those versions run on Java 8.
@@ -337,30 +337,9 @@ fn unpack_checked(archive: &Path, managed: &Path, major: u32) -> Result<PathBuf,
         return Err(Error::BadDownload { major });
     }
     let dest = managed.join(major.to_string());
-    replace_dir(staging.path(), &dest, managed)?;
+    fsutil::replace_dir(staging.path(), &dest, managed)?;
     // `staging` now finds nothing to delete when dropped.
     detect::java_in(&dest).ok_or(Error::BadDownload { major })
-}
-
-/// Renames `new` to `dest`, replacing any folder there. The old folder is
-/// moved into a scratch folder in `scratch` first and deleted after, so
-/// `dest` is always one whole runtime or absent, never a mix.
-fn replace_dir(new: &Path, dest: &Path, scratch: &Path) -> io::Result<()> {
-    let trash = tempfile::Builder::new()
-        .prefix(".old-")
-        .tempdir_in(scratch)?;
-    let old = trash.path().join("runtime");
-    let had_old = match std::fs::rename(dest, &old) {
-        Ok(()) => true,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
-        Err(e) => return Err(e),
-    };
-    std::fs::rename(new, dest).inspect_err(|_| {
-        if had_old {
-            let _ = std::fs::rename(&old, dest);
-        }
-    })
-    // Dropping `trash` deletes the old runtime.
 }
 
 #[cfg(test)]
@@ -407,23 +386,5 @@ mod tests {
             explicit_path(&instance, &config),
             Some(Path::new("/instance/java"))
         );
-    }
-
-    #[test]
-    fn replacing_a_folder_swaps_it_whole() {
-        let root = tempfile::tempdir().unwrap();
-        let (new, dest) = (root.path().join("new"), root.path().join("21"));
-        std::fs::create_dir_all(dest.join("old-only")).unwrap();
-        std::fs::create_dir_all(new.join("bin")).unwrap();
-
-        replace_dir(&new, &dest, root.path()).unwrap();
-        assert!(dest.join("bin").is_dir());
-        assert!(!dest.join("old-only").exists());
-        let mut left: Vec<_> = std::fs::read_dir(root.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        left.sort();
-        assert_eq!(left, ["21"], "no scratch folders left");
     }
 }

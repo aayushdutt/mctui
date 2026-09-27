@@ -15,6 +15,7 @@ pub mod facets;
 pub mod fsutil;
 pub mod instance;
 pub mod java;
+pub mod launch;
 pub mod modrinth;
 pub mod mojang;
 pub mod net;

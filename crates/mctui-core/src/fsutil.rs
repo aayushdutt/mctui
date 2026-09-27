@@ -101,9 +101,44 @@ fn quarantine_as(path: &Path, stamp: &str) -> io::Result<PathBuf> {
     }
 }
 
+/// Renames folder `new` to `dest`, replacing any folder there. The old
+/// folder is moved into a scratch folder in `scratch` first and deleted
+/// after, so `dest` is always one whole folder or absent, never a mix. `new`,
+/// `dest`, and `scratch` must be on one filesystem.
+pub(crate) fn replace_dir(new: &Path, dest: &Path, scratch: &Path) -> io::Result<()> {
+    let trash = tempfile::Builder::new()
+        .prefix(".old-")
+        .tempdir_in(scratch)?;
+    let old = trash.path().join("old");
+    let had_old = match fs::rename(dest, &old) {
+        Ok(()) => true,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+        Err(e) => return Err(e),
+    };
+    fs::rename(new, dest).inspect_err(|_| {
+        if had_old {
+            let _ = fs::rename(&old, dest);
+        }
+    })
+    // Dropping `trash` deletes the old folder.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacing_a_folder_swaps_it_whole() {
+        let root = tempfile::tempdir().unwrap();
+        let (new, dest) = (root.path().join("new"), root.path().join("21"));
+        fs::create_dir_all(dest.join("old-only")).unwrap();
+        fs::create_dir_all(new.join("bin")).unwrap();
+
+        replace_dir(&new, &dest, root.path()).unwrap();
+        assert!(dest.join("bin").is_dir());
+        assert!(!dest.join("old-only").exists());
+        assert_eq!(names_in(root.path()), ["21"], "no scratch folders left");
+    }
 
     fn names_in(dir: &Path) -> Vec<String> {
         let mut names: Vec<_> = fs::read_dir(dir)
