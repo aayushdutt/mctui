@@ -10,11 +10,13 @@
 pub mod account;
 pub mod auth;
 pub mod config;
+pub mod fabric;
 pub mod facets;
 pub mod fsutil;
 pub mod instance;
 pub mod java;
 pub mod modrinth;
+pub mod mojang;
 pub mod net;
 pub mod paths;
 pub mod vanilla_tweaks;
