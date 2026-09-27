@@ -1,17 +1,9 @@
 # Build
-/mctui
+/target/
 /dist/
-
-# Go
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.out
-go.work
-go.work.sum
+# A binary built at the root by hand
+/mctui
+/mctui.exe
 
 # IDE
 .idea/
@@ -31,5 +23,5 @@ docs/
 # Local agent tooling (worktrees, settings)
 .claude/
 
-# Rust
-/target/
+# Snapshot review leftovers
+*.snap.new

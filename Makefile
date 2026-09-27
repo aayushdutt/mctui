@@ -1,111 +1,56 @@
-.PHONY: build run dev test test-live fmt-check verify lint fmt tidy clean build-all reset-auth damage-auth reset-all
+.PHONY: build run test test-live lint fmt fmt-check verify screenshots clean reset-auth damage-auth reset-all
 
-# Build the binary
+# Release build: target/release/mctui
 build:
-	go build -o mctui .
+	cargo build --release --locked -p mctui
 
-# Run in development mode
+# Run from source
 run:
-	go run .
+	cargo run -p mctui
 
-# Run with hot reload (requires air: go install github.com/air-verse/air@latest)
-dev:
-	air
-
-# Run tests. One target, composable modifiers:
-#   make test                      whole suite (unit + integration + e2e)
-#   make test SCOPE=unit           all packages except the e2e package
-#   make test SCOPE=e2e            the teatest end-to-end scenarios
-#   make test RACE=1               under the race detector
-#   make test COVER=1              with coverage -> coverage.{out,html}
-#   make test V=1                  verbose
-#   make test RUN=TestName         filter by test name (regex)
-#   make test SCOPE=e2e RACE=1 V=1 modifiers compose
-SCOPE ?= all
-ifeq ($(SCOPE),unit)
-  TEST_PKGS := $(shell go list ./... | grep -v '/internal/app')
-else ifeq ($(SCOPE),e2e)
-  TEST_PKGS := ./internal/app
-  TEST_RUN  := E2E
-else
-  TEST_PKGS := ./...
-endif
-RUN ?= $(TEST_RUN)
-
+# Every offline test. Filter by name with RUN=, e.g. `make test RUN=wizard`.
 test:
-	go test \
-		$(if $(filter 1,$(RACE)),-race,) \
-		$(if $(filter 1,$(V)),-v,) \
-		$(if $(filter 1,$(COVER)),-coverprofile=coverage.out,) \
-		$(if $(RUN),-run $(RUN),) \
-		$(TEST_PKGS)
-	@if [ "$(COVER)" = "1" ]; then go tool cover -html=coverage.out -o coverage.html; fi
+	cargo test --workspace --locked $(RUN)
 
-# Run tag-gated live tests that hit REAL external endpoints (network required).
-# These compile only with -tags live, so `make test` / `make verify` stay offline.
+# Tests that talk to the real services (Mojang, Fabric, Modrinth, Microsoft,
+# Adoptium, Vanilla Tweaks); they need the network. `live_launch` downloads a
+# whole game, so it's left out: run it with `cargo test -p mctui-core --test
+# launch live_launch -- --ignored`.
 test-live:
-	go test -tags live ./internal/...
+	cargo test -p mctui-core --locked -- --ignored --skip real_data_loads_cleanly --skip live_launch
 
-# Lint (tries golangci-lint, falls back to go vet)
 lint:
-	@if command -v golangci-lint >/dev/null; then \
-		golangci-lint run; \
-	else \
-		echo "golangci-lint not found, running go vet instead..."; \
-		go vet ./...; \
-	fi
+	cargo clippy --workspace --all-targets --locked -- -D warnings
 
-# Format code
 fmt:
-	go fmt ./...
-	@if command -v goimports >/dev/null; then \
-		goimports -w $$(git ls-files --cached --others --exclude-standard '*.go'); \
-	fi
+	cargo fmt --all
 
-# Fail if any Go file is not gofmt-clean (CI-friendly). Scoped to files git
-# tracks or would track (new files included; ignored trees such as agent
-# worktrees under .claude/ excluded) so they can't fail the gate or get
-# rewritten by `make fmt`.
 fmt-check:
-	@files=$$(git ls-files --cached --others --exclude-standard '*.go'); \
-	if [ -z "$$files" ]; then echo "fmt-check: no Go files found (not a git checkout?)"; exit 1; fi; \
-	unformatted=$$(gofmt -l $$files); \
-	if [ -n "$$unformatted" ]; then \
-		echo "Not gofmt-clean:"; echo "$$unformatted"; exit 1; \
-	fi
+	cargo fmt --all --check
 
-# Full pre-PR / CI gate: format check, vet, and race-enabled tests
-verify: fmt-check
-	go vet ./...
-	go test -race ./...
+# What CI runs
+verify: fmt-check lint test
 
-# Tidy dependencies
-tidy:
-	go mod tidy
+# Renders every screen to target/screenshots/*.png (needs Python with Pillow).
+screenshots:
+	rm -rf target/screenshots
+	MCTUI_SCREENSHOTS=$(CURDIR)/target/screenshots cargo test -p mctui screenshots -- --ignored
+	for f in target/screenshots/*.ansi; do python3 scripts/ansi2png.py "$$f" "$${f%.ansi}.png"; done
 
-# Clean build artifacts (binary, coverage, cross-build output in dist/)
 clean:
-	rm -f mctui coverage.out coverage.html
-	rm -rf dist
+	cargo clean
 
-# Build for all platforms (writes to dist/)
-build-all:
-	mkdir -p dist
-	GOOS=darwin GOARCH=amd64 go build -o dist/mctui-darwin-amd64 .
-	GOOS=darwin GOARCH=arm64 go build -o dist/mctui-darwin-arm64 .
-	GOOS=linux GOARCH=amd64 go build -o dist/mctui-linux-amd64 .
-	GOOS=windows GOARCH=amd64 go build -o dist/mctui-windows-amd64.exe .
-
-# Default app data dir (override for portable layout: make damage-auth MCTUI_DATA_DIR=./data)
-# Matches config.getDefaultDataDir when XDG_DATA_HOME is unset and not using APPDATA.
+# The default data folder (override for a portable or scratch one:
+# make damage-auth MCTUI_DATA_DIR=./data)
 MCTUI_DATA_DIR ?= $(HOME)/.local/share/mctui
 ACCOUNTS_JSON := $(MCTUI_DATA_DIR)/accounts.json
 
-# Reset authentication (deletes accounts.json)
+# Sign out of everything (deletes accounts.json)
 reset-auth:
 	rm -f $(ACCOUNTS_JSON)
 
-# Corrupt stored MSA tokens for testing session validation / re-login (keeps accounts.json)
+# Corrupt stored Microsoft tokens, to test session checks and signing in again
+# (keeps accounts.json)
 damage-auth:
 	@test -f $(ACCOUNTS_JSON) || (echo "No accounts file at $(ACCOUNTS_JSON); sign in once, or set MCTUI_DATA_DIR." && false)
 	@command -v jq >/dev/null || (echo "damage-auth needs jq (e.g. brew install jq)" && false)
@@ -115,6 +60,6 @@ damage-auth:
 		"$(ACCOUNTS_JSON)" > "$(ACCOUNTS_JSON).tmp" && mv "$(ACCOUNTS_JSON).tmp" "$(ACCOUNTS_JSON)"
 	@echo Damaged MSA tokens in $(ACCOUNTS_JSON)
 
-# Reset all data (instances, cache, auth)
+# Delete all data: instances, cache, accounts
 reset-all:
 	rm -rf $(MCTUI_DATA_DIR)

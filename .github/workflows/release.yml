@@ -8,29 +8,107 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  goreleaser:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive: mctui_Darwin_arm64.tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-14
+            archive: mctui_Darwin_x86_64.tar.gz
+          # The oldest supported runners, for the widest glibc compatibility.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            archive: mctui_Linux_x86_64.tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+            archive: mctui_Linux_arm64.tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: mctui_Windows_x86_64.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check the tag matches the version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked -p mctui --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          dir="target/${{ matrix.target }}/release"
+          case "${{ matrix.archive }}" in
+            *.zip) 7z a "${{ matrix.archive }}" "./$dir/mctui.exe" README.md ;;
+            *) tar -czf "${{ matrix.archive }}" -C "$dir" mctui -C "$GITHUB_WORKSPACE" README.md ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
+          path: dist
+          merge-multiple: true
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: '1.25'
-          cache: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum mctui_* > checksums.txt
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
+      - name: Publish the release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Personal access token (contents:write) for the separate homebrew-tap
-          # repo; the default GITHUB_TOKEN cannot push to another repository.
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+      # A personal access token (contents:write on aayushdutt/homebrew-tap):
+      # the workflow's own token can't push to another repository. Skipped
+      # until the secret is set, so a release never fails over it.
+      - name: Update the Homebrew cask
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        if: env.TAP_TOKEN != ''
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/aayushdutt/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          scripts/homebrew-cask.sh "$version" dist/checksums.txt > tap/Casks/mctui.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/mctui.rb
+          git commit -m "mctui $version"
+          git push
