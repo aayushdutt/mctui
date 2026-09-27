@@ -1,6 +1,6 @@
-//! Finding installed runtimes, and learning their major version cheaply:
-//! from the `release` file every modern runtime ships, else by running
-//! `java -version`.
+//! Finding installed runtimes, and learning their major version and
+//! architecture cheaply: from the `release` file every modern runtime ships,
+//! else by running `java -version` (which doesn't tell the architecture).
 
 use std::collections::HashSet;
 use std::fs;
@@ -9,6 +9,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use super::{Runtimes, Source};
+use crate::mojang::rules::Arch;
 
 /// How long `java -version` may take: a cold JVM on a slow disk can take a
 /// few seconds.
@@ -22,8 +23,17 @@ pub(super) struct Found {
     /// The executable, as found (maybe through a symlink).
     pub java: PathBuf,
     pub source: Source,
-    /// The major version its `release` file gives, if it has one.
-    pub release_major: Option<u32>,
+    /// What its `release` file says.
+    pub release: Release,
+}
+
+/// What a runtime's `release` file says about it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Release {
+    /// From `JAVA_VERSION`.
+    pub major: Option<u32>,
+    /// From `OS_ARCH`.
+    pub arch: Option<Arch>,
 }
 
 /// Every runtime in `search`'s locations, in [`Source`] order, each once:
@@ -40,9 +50,12 @@ pub(super) fn scan(search: &Runtimes) -> Vec<Found> {
         .iter()
         .filter_map(|home| java_in(home))
         .map(|java| (java, Source::JavaHome));
+    // An empty or relative `$PATH` entry means the current folder, and a
+    // `java` there is whatever happens to be in it.
     let path = search
         .path
         .iter()
+        .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(JAVA_EXE))
         .filter(|java| java.is_file())
         .map(|java| (java, Source::Path));
@@ -64,7 +77,7 @@ pub(super) fn scan(search: &Runtimes) -> Vec<Found> {
             let stub = cfg!(target_os = "macos") && real == Path::new("/usr/bin/java");
             let new = !stub && seen.insert(real.clone());
             new.then(|| Found {
-                release_major: release_major(&real),
+                release: release(&real),
                 java,
                 source,
             })
@@ -96,12 +109,16 @@ pub(super) async fn java_in_home(home: &Path) -> Option<PathBuf> {
     None
 }
 
-/// mctui keeps runtimes in folders named for their major version; anything
-/// else in there (a download, an install under way) isn't one.
+/// mctui keeps runtimes in folders named for their major version, plus the
+/// architecture when it isn't this computer's: `21`, `8-x86_64`. Anything else
+/// in there (a download, an install under way) isn't one.
 fn is_major_folder(dir: &Path) -> bool {
     dir.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name.parse::<u32>().is_ok())
+        .is_some_and(|name| {
+            let major = name.split_once('-').map_or(name, |(major, _)| major);
+            major.parse::<u32>().is_ok()
+        })
 }
 
 /// The folders in `dir`, symlinks followed, sorted by name; none if it can't
@@ -118,19 +135,51 @@ fn subdirs(dir: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// The major version in the `release` file of the runtime whose executable
-/// is `java` (its real path: the file sits beside `bin/`). Blocking.
-pub(super) fn release_major(java: &Path) -> Option<u32> {
-    let home = java.parent()?.parent()?;
-    parse_release(&fs::read_to_string(home.join("release")).ok()?)
+/// The `release` file of the runtime whose executable is `java` (its real
+/// path: the file sits beside `bin/`); empty if it has none. Blocking.
+pub(super) fn release(java: &Path) -> Release {
+    let Some(home) = java.parent().and_then(Path::parent) else {
+        return Release::default();
+    };
+    fs::read_to_string(home.join("release"))
+        .map(|text| parse_release(&text))
+        .unwrap_or_default()
 }
 
-/// The major version in a `release` file's `JAVA_VERSION="17.0.8"` line.
-fn parse_release(text: &str) -> Option<u32> {
-    let version = text
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("JAVA_VERSION="))?;
-    parse_major(version.trim().trim_matches('"'))
+/// [`release`] for an executable that may be a symlink, without blocking.
+pub(super) async fn release_of(java: &Path) -> Release {
+    match tokio::fs::canonicalize(java).await {
+        Ok(real) => tokio::task::spawn_blocking(move || release(&real))
+            .await
+            .unwrap_or_default(),
+        Err(_) => Release::default(),
+    }
+}
+
+/// The major version and architecture in a `release` file's
+/// `JAVA_VERSION="17.0.8"` and `OS_ARCH="aarch64"` lines.
+fn parse_release(text: &str) -> Release {
+    let value = |key: &str| {
+        text.lines()
+            .find_map(|line| line.trim().strip_prefix(key)?.strip_prefix('='))
+            .map(|value| value.trim().trim_matches('"'))
+    };
+    Release {
+        major: value("JAVA_VERSION").and_then(parse_major),
+        arch: value("OS_ARCH").and_then(parse_arch),
+    }
+}
+
+/// An architecture as Java names it (`os.arch`, or `OS_ARCH` in `release`):
+/// `amd64` and `x86_64` are the same, as are `aarch64` and `arm64`. `None`
+/// for the rest, which rules don't tell apart.
+fn parse_arch(name: &str) -> Option<Arch> {
+    match name {
+        "x86_64" | "amd64" | "x64" => Some(Arch::X86_64),
+        "aarch64" | "arm64" => Some(Arch::Arm64),
+        "x86" | "i386" | "i486" | "i586" | "i686" => Some(Arch::X86),
+        _ => None,
+    }
 }
 
 /// Runs `java -version` to learn its major version. `None` if it doesn't
@@ -264,9 +313,37 @@ mod tests {
             ("JAVA_VERSION=11.0.2\n", Some(11)),
             ("IMPLEMENTOR=\"Oracle\"\n", None),
             ("JAVA_VERSION=\"\"\n", None),
+            // Not a key that merely starts the same.
+            ("JAVA_VERSION_DATE=\"2025-10-21\"\n", None),
         ] {
-            assert_eq!(parse_release(text), want, "{text:?}");
+            assert_eq!(parse_release(text).major, want, "{text:?}");
         }
+    }
+
+    #[test]
+    fn architecture_from_release_files() {
+        let temurin_mac = "IMPLEMENTOR=\"Eclipse Adoptium\"\n\
+                           JAVA_VERSION=\"17.0.12\"\n\
+                           OS_ARCH=\"aarch64\"\n\
+                           OS_NAME=\"Darwin\"\n";
+        for (text, want) in [
+            (temurin_mac, Some(Arch::Arm64)),
+            ("OS_ARCH=\"x86_64\"\n", Some(Arch::X86_64)),
+            // Java 8 on Linux and Windows.
+            ("OS_ARCH=\"amd64\"\r\n", Some(Arch::X86_64)),
+            ("OS_ARCH=\"i586\"\n", Some(Arch::X86)),
+            ("OS_ARCH=\"ppc64le\"\n", None),
+            ("JAVA_VERSION=\"17\"\n", None),
+        ] {
+            assert_eq!(parse_release(text).arch, want, "{text:?}");
+        }
+        assert_eq!(
+            parse_release(temurin_mac),
+            Release {
+                major: Some(17),
+                arch: Some(Arch::Arm64)
+            }
+        );
     }
 
     #[test]

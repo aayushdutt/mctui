@@ -165,6 +165,68 @@ fn saved_instance_keeps_go_keys() {
     }
 }
 
+/// Go saved the Java it picked into every instance it launched, here one of
+/// its own runtimes. That's no choice of the user's: it's set aside, and the
+/// instance forgets it.
+#[tokio::test]
+async fn go_java_pins_are_set_aside_and_forgotten() {
+    use mctui_core::java::{Choice, Needs, Runtimes, Staleness};
+    use mctui_core::launch::InstanceChanges;
+    use mctui_core::mojang::rules::{Arch, Os};
+
+    let (tmp, dir) = fixture_data();
+    let store = InstanceStore::new(&dir);
+    let scan = store.scan().unwrap();
+    let mut fabric = scan
+        .instances
+        .into_iter()
+        .find(|i| i.id == "1.21.6 Fabric")
+        .unwrap();
+    let pinned = Path::new("/home/steve/.config/mctui/java/21/bin/java");
+    assert_eq!(fabric.java_path.as_deref(), Some(pinned));
+
+    // Go's runtimes folder, whether or not it's mctui's too (it isn't in
+    // portable mode). No Java is installed.
+    let go_java = PathBuf::from("/home/steve/.config/mctui/java");
+    let setups = [
+        (go_java.clone(), None),
+        (tmp.path().join("java"), Some(go_java)),
+    ];
+    let config = Config::load(&dir).value;
+    let mut stale = None;
+    for (managed, go_managed) in setups {
+        let runtimes = Runtimes {
+            managed,
+            go_managed,
+            java_home: None,
+            path: Vec::new(),
+            roots: Vec::new(),
+            adoptium_url: String::new(),
+            os: Os::Linux,
+            arch: Arch::X86_64,
+        };
+        let choice = Choice::of(&fabric, &config);
+        let pick = runtimes.find(&Needs::new(21), choice).await.unwrap();
+        assert_eq!(pick.runtime, None, "nothing installed: install one");
+        let pin = pick.stale.unwrap();
+        assert_eq!((pin.path.as_path(), pin.why), (pinned, Staleness::Managed));
+        stale = Some(pin);
+    }
+
+    // The launch hands it back, and the save leaves `javaPath` empty, as Go
+    // wrote an unset one.
+    let changes = InstanceChanges {
+        stale_java: stale,
+        ..InstanceChanges::default()
+    };
+    changes.apply(&mut fabric);
+    assert_eq!(fabric.java_path, None);
+    store.save(&fabric).unwrap();
+    let saved = fs::read_to_string(fabric.path.join("instance.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(json["javaPath"], "");
+}
+
 #[test]
 fn go_config_loads_and_round_trips() {
     let (tmp, dir) = fixture_data();

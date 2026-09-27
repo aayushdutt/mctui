@@ -14,7 +14,12 @@ pub enum Error {
 
 /// The root of mctui's data: config, accounts, instances, and game assets.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DataDir(PathBuf);
+pub struct DataDir {
+    root: PathBuf,
+    /// The `data` folder beside the executable: portable mode keeps
+    /// everything in it, managed Java too.
+    portable: bool,
+}
 
 impl DataDir {
     /// Resolution order: `$MCTUI_DATA_DIR`, `<exe dir>/data` if it exists
@@ -30,35 +35,52 @@ impl DataDir {
     }
 
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self(root.into())
+        Self {
+            root: root.into(),
+            portable: false,
+        }
+    }
+
+    /// Portable mode's data dir, which also keeps managed Java: see
+    /// [`java_runtimes_dir`].
+    pub fn portable(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            portable: true,
+        }
     }
 
     pub fn root(&self) -> &Path {
-        &self.0
+        &self.root
+    }
+
+    /// Whether this is portable mode's `data` folder beside the executable.
+    pub fn is_portable(&self) -> bool {
+        self.portable
     }
 
     pub fn config_file(&self) -> PathBuf {
-        self.0.join("config.json")
+        self.root.join("config.json")
     }
 
     pub fn accounts_file(&self) -> PathBuf {
-        self.0.join("accounts.json")
+        self.root.join("accounts.json")
     }
 
     pub fn instances_dir(&self) -> PathBuf {
-        self.0.join("instances")
+        self.root.join("instances")
     }
 
     pub fn assets_dir(&self) -> PathBuf {
-        self.0.join("assets")
+        self.root.join("assets")
     }
 
     pub fn libraries_dir(&self) -> PathBuf {
-        self.0.join("libraries")
+        self.root.join("libraries")
     }
 
     pub fn cache_dir(&self) -> PathBuf {
-        self.0.join("cache")
+        self.root.join("cache")
     }
 
     /// Creates the root and the instances, assets, and libraries dirs.
@@ -81,26 +103,39 @@ fn resolve_with(
 ) -> Result<DataDir, Error> {
     let var = |key| var(key).filter(|v| !v.is_empty()).map(PathBuf::from);
     if let Some(dir) = var("MCTUI_DATA_DIR") {
-        return Ok(DataDir(dir));
+        return Ok(DataDir::new(dir));
     }
     if let Some(portable) = exe_dir.map(|d| d.join("data")).filter(|d| d.is_dir()) {
-        return Ok(DataDir(portable));
+        return Ok(DataDir::portable(portable));
     }
     if let Some(xdg) = var("XDG_DATA_HOME") {
-        return Ok(DataDir(xdg.join("mctui")));
+        return Ok(DataDir::new(xdg.join("mctui")));
     }
     if cfg!(windows)
         && let Some(appdata) = var("APPDATA")
     {
-        return Ok(DataDir(appdata.join("mctui")));
+        return Ok(DataDir::new(appdata.join("mctui")));
     }
     let home = home.ok_or(Error::NoHomeDir)?;
-    Ok(DataDir(home.join(".local").join("share").join("mctui")))
+    Ok(DataDir::new(
+        home.join(".local").join("share").join("mctui"),
+    ))
 }
 
-/// Managed Java runtimes: `<config dir>/mctui/java` (e.g. `~/Library/Application
-/// Support/mctui/java` on macOS). Like the Go app, this lives outside the data dir.
-pub fn java_runtimes_dir() -> Option<PathBuf> {
+/// Managed Java runtimes for `data`: in portable mode `<data>/java`, else
+/// [`go_java_runtimes_dir`], outside the data dir as in the Go app.
+pub fn java_runtimes_dir(data: &DataDir) -> Option<PathBuf> {
+    if data.is_portable() {
+        Some(data.root().join("java"))
+    } else {
+        go_java_runtimes_dir()
+    }
+}
+
+/// Where the Go app kept managed Java runtimes, portable or not:
+/// `<config dir>/mctui/java` (e.g. `~/Library/Application Support/mctui/java`
+/// on macOS).
+pub fn go_java_runtimes_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("mctui").join("java"))
 }
 
@@ -128,12 +163,15 @@ mod tests {
 
         let dir = resolve(&all, Some(portable.path())).unwrap();
         assert_eq!(dir.root(), Path::new("/override"));
+        assert!(!dir.is_portable(), "an explicit dir isn't portable");
 
         let dir = resolve(&all[1..], Some(portable.path())).unwrap();
         assert_eq!(dir.root(), portable.path().join("data"));
+        assert!(dir.is_portable());
 
         let dir = resolve(&all[1..], Some(Path::new("/no/such/dir"))).unwrap();
         assert_eq!(dir.root(), Path::new("/xdg/mctui"));
+        assert!(!dir.is_portable());
 
         // Empty variables are ignored, as Go did.
         let dir = resolve(&[("MCTUI_DATA_DIR", ""), ("XDG_DATA_HOME", "")], None).unwrap();
@@ -153,5 +191,17 @@ mod tests {
         assert_eq!(dir.accounts_file(), Path::new("/data/accounts.json"));
         assert_eq!(dir.instances_dir(), Path::new("/data/instances"));
         assert_eq!(dir.cache_dir(), Path::new("/data/cache"));
+    }
+
+    #[test]
+    fn portable_mode_keeps_java_in_the_data_dir() {
+        let portable = DataDir::portable("/usb/mctui/data");
+        assert_eq!(
+            java_runtimes_dir(&portable),
+            Some(PathBuf::from("/usb/mctui/data/java"))
+        );
+        // Otherwise it's where the Go app kept it.
+        let usual = DataDir::new("/data");
+        assert_eq!(java_runtimes_dir(&usual), go_java_runtimes_dir());
     }
 }

@@ -155,19 +155,26 @@ pub struct Env {
 }
 
 impl Env {
-    /// This machine, with no features on.
+    /// The game on `os`, run by a Java built for `arch`, with no features on.
+    /// The architecture is Java's, not the computer's: on Apple silicon, an
+    /// Intel Java (run by Rosetta) loads Intel native libraries.
     ///
     /// The OS version is only filled in on Windows, where it's always `10.0`
     /// (Rust needs Windows 10 or later, and Java reports 11 as 10 too).
     /// Elsewhere it's left empty: the only other version conditions Mojang
     /// uses target Mac OS X 10.5, which can't run this launcher.
-    pub fn current() -> Self {
+    pub fn new(os: Os, arch: Arch) -> Self {
         Self {
-            os: Os::current(),
-            arch: Arch::current(),
-            os_version: if cfg!(windows) { "10.0" } else { "" }.to_owned(),
+            os,
+            arch,
+            os_version: if os == Os::Windows { "10.0" } else { "" }.to_owned(),
             features: Vec::new(),
         }
+    }
+
+    /// This machine, with a Java of this launcher's own architecture.
+    pub fn current() -> Self {
+        Self::new(Os::current(), Arch::current())
     }
 
     fn has_feature(&self, name: &str) -> bool {
@@ -514,5 +521,20 @@ mod tests {
             assert_eq!(env.arch.as_str(), "arm64");
         }
         assert!(env.features.is_empty());
+    }
+
+    #[test]
+    fn env_for_a_java_of_another_architecture() {
+        // An Intel Java on Apple silicon: rules see x86_64.
+        let rosetta = Env::new(Os::MacOs, Arch::X86_64);
+        assert_eq!(
+            (rosetta.arch.as_str(), rosetta.os_version.as_str()),
+            ("x86_64", "")
+        );
+        let win32 = Env::new(Os::Windows, Arch::X86);
+        assert_eq!(
+            (win32.arch.bits(), win32.os_version.as_str()),
+            ("32", "10.0")
+        );
     }
 }

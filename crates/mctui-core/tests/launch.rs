@@ -1077,7 +1077,7 @@ mod whole_launch {
     use std::os::unix::fs::PermissionsExt as _;
     use std::time::Duration;
 
-    use mctui_core::java::{Runtimes, Source};
+    use mctui_core::java::{Runtimes, Source, StaleJava, Staleness};
     use mctui_core::launch::{Exit, Launcher, Stage};
     use mctui_core::modrinth;
     use mctui_core::mojang::Mojang;
@@ -1097,11 +1097,22 @@ echo "cwd: $(pwd -P)"
 for arg in "$@"; do echo "arg: $arg"; done
 "#;
 
-    fn fake_java(dir: &Path) -> PathBuf {
-        let java = dir.join("java");
+    /// A Java 21 home at `home` built for `os_arch` (as Java names it),
+    /// running [`FAKE_JAVA`]. Returns its `java`.
+    fn fake_jdk(home: &Path, os_arch: &str) -> PathBuf {
+        let java = home.join("bin/java");
+        std::fs::create_dir_all(java.parent().unwrap()).unwrap();
         std::fs::write(&java, FAKE_JAVA).unwrap();
         std::fs::set_permissions(&java, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let release = format!("JAVA_VERSION=\"21.0.2\"\nOS_ARCH=\"{os_arch}\"\n");
+        std::fs::write(home.join("release"), release).unwrap();
         java
+    }
+
+    /// An Intel [`fake_jdk`] in `dir`: the test version only has Intel
+    /// natives for macOS, so on Apple silicon only an Intel Java runs it.
+    fn fake_java(dir: &Path) -> PathBuf {
+        fake_jdk(&dir.join("jdk"), "x86_64")
     }
 
     async fn launcher(game: &Game, data: &DataDir) -> Launcher {
@@ -1129,10 +1140,13 @@ for arg in "$@"; do echo "arg: $arg"; done
             data.clone(),
             Runtimes {
                 managed: data.root().join("no-runtimes"),
+                go_managed: None,
                 java_home: None,
                 path: Vec::new(),
                 roots: Vec::new(),
                 adoptium_url: uri.clone(),
+                os: Os::current(),
+                arch: Arch::current(),
             },
         );
         launcher.mojang =
@@ -1316,7 +1330,110 @@ for arg in "$@"; do echo "arg: $arg"; done
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Java(_)), "{err}");
-        assert!(err.to_string().contains("doesn't exist"), "{err}");
+        let message = err.to_string();
+        assert!(
+            message.starts_with("the Java set in Settings (") && message.ends_with("doesn't exist"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stale_instance_java_is_set_aside_and_forgotten() {
+        let game = Game::start("test").await;
+        let tmp = tempfile::tempdir().unwrap();
+        let (data, mut instance) = temp_instance(tmp.path());
+        let mut launcher = launcher(&game, &data).await;
+        // The Go app pinned the Java it picked; it's gone since.
+        let gone = tmp.path().join("Cellar/openjdk/21.0.1/bin/java");
+        instance.java_path = Some(gone.clone());
+        let java = fake_java(&tmp.path().join("jvm"));
+        launcher.runtimes.roots = vec![tmp.path().join("jvm")];
+
+        let mut started = launcher
+            .launch(
+                &instance,
+                &Config::default(),
+                &Identity::offline(""),
+                |_| {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (&started.java.java, started.java.source),
+            (&java, Source::System)
+        );
+        let stale = started.changes.stale_java.clone().unwrap();
+        assert_eq!(
+            stale,
+            StaleJava {
+                path: gone,
+                why: Staleness::Missing
+            }
+        );
+        assert!(stale.to_string().contains("no longer exists"), "{stale}");
+        all_lines(&mut started.logs).await;
+        started.game.wait().await;
+
+        // The caller saves the instance without it.
+        started.changes.apply(&mut instance);
+        assert_eq!(instance.java_path, None);
+        let again = launcher
+            .launch(
+                &instance,
+                &Config::default(),
+                &Identity::offline(""),
+                |_| {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(again.changes.stale_java, None);
+        again.game.wait().await;
+    }
+
+    #[tokio::test]
+    async fn apple_silicon_runs_old_natives_on_an_intel_java() {
+        let game = Game::start("test").await;
+        let tmp = tempfile::tempdir().unwrap();
+        let (data, instance) = temp_instance(tmp.path());
+        let mut launcher = launcher(&game, &data).await;
+        (launcher.runtimes.os, launcher.runtimes.arch) = MAC;
+        launcher.runtimes.roots = vec![tmp.path().join("jvm")];
+        let arm = fake_jdk(&tmp.path().join("jvm/arm"), "aarch64");
+        let intel = fake_jdk(&tmp.path().join("jvm/intel"), "x86_64");
+
+        // The test version's natives are Intel-only on macOS.
+        let mut started = launcher
+            .launch(
+                &instance,
+                &Config::default(),
+                &Identity::offline(""),
+                |_| {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (&started.java.java, started.java.arch),
+            (&intel, Arch::X86_64)
+        );
+        let lines = all_lines(&mut started.logs).await;
+        assert!(lines.contains(&"arg: net.minecraft.client.main.Main".to_owned()));
+        started.game.wait().await;
+
+        // Chosen by hand, the arm64 one is refused before it can crash.
+        let config = Config {
+            java_path: Some(arm),
+            ..Config::default()
+        };
+        let err = launcher
+            .launch(&instance, &config, &Identity::offline(""), |_| {})
+            .await
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.starts_with("the Java set in Settings (")
+                && message.contains("is an arm64 Java"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -1326,10 +1443,13 @@ for arg in "$@"; do echo "arg: $arg"; done
         let data = DataDir::new(tmp.path());
         let runtimes = Runtimes {
             managed: tmp.path().to_owned(),
+            go_managed: None,
             java_home: None,
             path: Vec::new(),
             roots: Vec::new(),
             adoptium_url: String::new(),
+            os: Os::current(),
+            arch: Arch::current(),
         };
         let launcher = Launcher::new(Http::new().unwrap(), data, runtimes);
         let (instance, config, identity) = (
@@ -1374,16 +1494,18 @@ async fn live_launch() {
         .await
         .unwrap()
         .value;
-    let required =
-        mctui_core::java::required_major(version.java_version.as_ref().map(|j| j.major_version));
-    let java = Runtimes::system()
-        .unwrap()
-        .find(required, None)
+    let runtimes = Runtimes::system(&data).unwrap();
+    let needs = runtimes.needs(&version);
+    let required = needs.major;
+    let java = runtimes
+        .find(&needs, mctui_core::java::Choice::default())
         .await
-        .unwrap();
+        .unwrap()
+        .runtime;
     let java_path = java
         .as_ref()
         .map_or_else(|| PathBuf::from("java"), |j| j.java.clone());
+    let arch = java.as_ref().map_or(runtimes.arch, |j| j.arch);
     let plan = launch::plan(&PlanInputs {
         version: &version,
         instance: &instance,
@@ -1391,7 +1513,7 @@ async fn live_launch() {
         data: &data,
         java: &java_path,
         identity: &Identity::offline("mctui"),
-        env: &Env::current(),
+        env: &Env::new(runtimes.os, arch),
     })
     .unwrap();
 

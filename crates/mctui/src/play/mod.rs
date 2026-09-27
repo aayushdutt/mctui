@@ -285,6 +285,9 @@ impl Session {
                     self.notes
                         .push("Offline — using the game files saved last time.".into());
                 }
+                if let Some(stale_java) = &changes.stale_java {
+                    self.notes.push(stale_java.to_string());
+                }
                 let mut banner = None;
                 if starter_mods.as_ref().is_some_and(|r| !r.all_ok()) {
                     banner = Some(Banner::warn(
@@ -365,7 +368,7 @@ pub fn unseen_trouble(data: &Data, id: &str) -> Option<&'static str> {
 
 /// A launcher sharing the app's clients.
 fn launcher(services: &Services, data: &Data) -> Result<Launcher, String> {
-    let runtimes = Runtimes::system().map_err(|e| e.to_string())?;
+    let runtimes = Runtimes::system(&data.dir).map_err(|e| e.to_string())?;
     let mut launcher = Launcher::new(services.http.clone(), data.dir.clone(), runtimes);
     launcher.mojang = services.mojang.clone();
     launcher.fabric = services.fabric.clone();

@@ -13,7 +13,7 @@ use super::{Error, Result, Step};
 use crate::config::Config;
 use crate::fabric::{self, Fabric};
 use crate::instance::{Instance, Loader};
-use crate::java::{self, Runtime, Runtimes};
+use crate::java::{Choice, Pick, Runtime, Runtimes, StaleJava};
 use crate::modrinth::{self, StarterReport};
 use crate::mojang::rules::Env;
 use crate::mojang::{Fetched, Mojang, VersionJson};
@@ -75,6 +75,9 @@ pub struct InstanceChanges {
     pub downloaded: Option<String>,
     /// Every starter mod is installed, so the instance needn't try again.
     pub starter_mods_installed: bool,
+    /// The instance's own Java was set aside as stale (see [`StaleJava`]),
+    /// so it should forget it. It says why, for a notice.
+    pub stale_java: Option<StaleJava>,
 }
 
 impl InstanceChanges {
@@ -84,7 +87,8 @@ impl InstanceChanges {
     }
 
     /// Applies the changes to `instance`. The download mark only sticks if
-    /// the instance still has the version and loader it was launched with.
+    /// the instance still has the version and loader it was launched with,
+    /// and a stale Java is only forgotten if the instance still has it.
     pub fn apply(&self, instance: &mut Instance) {
         if let Some(version) = &self.loader_version
             && instance.loader_version.trim().is_empty()
@@ -100,6 +104,11 @@ impl InstanceChanges {
         }
         if self.starter_mods_installed {
             instance.install_starter_fabric_mods = false;
+        }
+        if let Some(stale) = &self.stale_java
+            && instance.java_path.as_deref() == Some(stale.path.as_path())
+        {
+            instance.java_path = None;
         }
     }
 }
@@ -155,7 +164,8 @@ impl Launcher {
         changes.loader_version = picked_loader;
 
         on_step(Step::Java);
-        let java = self.java(&version, instance, config, &on_step).await?;
+        let (java, stale_java) = self.java(&version, instance, config, &on_step).await?;
+        changes.stale_java = stale_java;
 
         let starter_mods =
             if instance.loader == Loader::Fabric && instance.install_starter_fabric_mods {
@@ -176,7 +186,9 @@ impl Launcher {
             data: &self.data,
             java: &java.java,
             identity,
-            env: &Env::current(),
+            // Libraries are for the Java's architecture: on Apple silicon,
+            // an Intel Java loads Intel natives.
+            env: &Env::new(self.runtimes.os, java.arch),
         })?;
         if let Some(assets) = &mut plan.assets {
             assets.objects_url.clone_from(&self.resources_url);
@@ -223,24 +235,25 @@ impl Launcher {
     }
 
     /// The Java to run `version` with: the instance's or the app's if set
-    /// (an error if it doesn't fit), else an installed one that fits, else a
-    /// fresh install.
+    /// (an error if it can't run it), else an installed one that fits, else
+    /// a fresh install. Also the instance's own Java, if it was set aside as
+    /// stale.
     async fn java(
         &self,
         version: &VersionJson,
         instance: &Instance,
         config: &Config,
         on_step: &(impl Fn(Step) + Sync),
-    ) -> Result<Runtime> {
-        let declared = version.java_version.as_ref().map(|j| j.major_version);
-        let required = java::required_major(declared);
-        let explicit = java::explicit_path(instance, config);
-        if let Some(runtime) = self.runtimes.find(required, explicit).await? {
-            return Ok(runtime);
+    ) -> Result<(Runtime, Option<StaleJava>)> {
+        let needs = self.runtimes.needs(version);
+        let choice = Choice::of(instance, config);
+        let Pick { runtime, stale } = self.runtimes.find(&needs, choice).await?;
+        if let Some(runtime) = runtime {
+            return Ok((runtime, stale));
         }
-        let install = self.runtimes.install(&self.http, required, |progress| {
+        let install = self.runtimes.install(&self.http, &needs, |progress| {
             on_step(Step::InstallingJava(progress));
         });
-        Ok(install.await?)
+        Ok((install.await?, stale))
     }
 }

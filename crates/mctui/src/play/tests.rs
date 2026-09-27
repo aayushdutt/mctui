@@ -168,6 +168,7 @@ fn messages_advance_the_session_and_save_the_instance() {
                 .unwrap_or_default(),
         ),
         starter_mods_installed: false,
+        stale_java: None,
     };
     send(
         &mut h,
