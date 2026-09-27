@@ -7,6 +7,8 @@ use mctui_core::config::Config;
 use mctui_core::instance::{Instance, InstanceStore, Scan};
 use mctui_core::paths::DataDir;
 
+use crate::play::Session;
+
 use crate::accounts::SessionStatus;
 
 #[derive(Debug)]
@@ -19,6 +21,8 @@ pub struct Data {
     pub store: InstanceStore,
     /// Most recently played or created first.
     pub instances: Vec<Instance>,
+    /// The game being launched or played, or the last one to end.
+    pub game: Option<Session>,
 }
 
 impl Data {
@@ -38,6 +42,7 @@ impl Data {
             accounts: accounts.value,
             sessions: HashMap::new(),
             instances: Vec::new(),
+            game: None,
         };
         notices.extend(data.reload_instances());
         (data, notices)

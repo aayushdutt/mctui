@@ -118,6 +118,11 @@ impl Harness {
             .count()
     }
 
+    /// Runs `future` on the harness's runtime (where background work runs).
+    pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+
     pub fn data(&self) -> &Data {
         &self.app.data
     }
@@ -344,7 +349,9 @@ fn clicks_select_focus_and_act() {
     h.app.last_click = None;
     h.mouse(MouseEventKind::Down(MouseButton::Left), at);
     h.mouse(MouseEventKind::Down(MouseButton::Left), at);
-    assert_eq!(h.banner(), Some("Launching isn't in the Rust build yet."));
+    assert!(h.data().game.is_some(), "a double-click launches");
+    assert!(h.text().contains("Getting ready"));
+    h.press(KeyCode::Esc);
 
     // Footer hints are buttons.
     h.click(&Target::Key(KeyCode::Char('n')));

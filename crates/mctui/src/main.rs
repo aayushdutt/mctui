@@ -13,6 +13,7 @@ mod home;
 mod mods;
 mod msg;
 mod overlay;
+mod play;
 mod resource_packs;
 mod screen;
 mod services;

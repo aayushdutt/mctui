@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/play/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Survival 1.21  ›  Play                                                         ● Steve
+
+    Survival 1.21                                                                ✗ Didn't start
+    Minecraft 1.21.4  ·  Fabric 0.16.10  ·  as Steve
+
+    ✗ Couldn't launch Minecraft
+
+    Couldn't reach piston-meta.mojang.com — check your connection.
+
+      Try again  r      Play offline  o
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   r  try again    o  play offline    esc  back

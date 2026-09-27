@@ -10,6 +10,8 @@ pub enum Msg {
     Mods(crate::mods::Msg),
     /// Loading, building and saving Vanilla Tweaks packs.
     ResourcePacks(crate::resource_packs::Msg),
+    /// A launch, then the running game; tagged with its session's number.
+    Play(u64, crate::play::Msg),
     #[cfg(test)]
     Test(u32),
 }

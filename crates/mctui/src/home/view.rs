@@ -15,6 +15,7 @@ use super::layout::{self, Layout};
 use super::{Facets, Filter, Home, Pane, Row, Tab, Target};
 use crate::data::Data;
 use crate::format;
+use crate::play;
 use crate::theme::Theme;
 use crate::ui::widgets::{self, ButtonKind};
 use crate::ui::{self, Canvas, text};
@@ -35,7 +36,7 @@ impl Home {
             None => {
                 if let (Some(area), Some(inst)) = (lay.summary, self.selected_instance(data)) {
                     let t = *cv.theme();
-                    let line = text::fit(self.summary(&t, cv, inst), usize::from(area.width));
+                    let line = text::fit(self.summary(&t, cv, inst, data), usize::from(area.width));
                     cv.line(area.x, area.y, &line, area.width);
                 }
             }
@@ -120,7 +121,7 @@ impl Home {
             let area = Rect::new(body.x, y, body.width, 1);
             let target = ui::Target::Home(Target::Row(row.key()));
             let hovered = cv.hovered(&target);
-            self.render_row(cv, area, row, focused && i == self.selected, hovered, data);
+            Self::render_row(cv, area, row, focused && i == self.selected, hovered, data);
             cv.click(area, target);
         }
         let below = self.rows.len().saturating_sub(self.offset + visible);
@@ -136,7 +137,6 @@ impl Home {
     }
 
     fn render_row(
-        &self,
         cv: &mut Canvas<'_>,
         area: Rect,
         row: &Row,
@@ -167,7 +167,7 @@ impl Home {
         };
 
         // Right: the state that matters most — playing, new, or when played.
-        let accessory = if self.playing.as_deref() == Some(inst.id.as_str()) {
+        let accessory = if play::is_playing(data, &inst.id) {
             Line::styled(format!("{} Playing", ui::DOT), Style::new().fg(t.success))
         } else {
             match inst.last_played {
@@ -223,7 +223,7 @@ impl Home {
             return;
         };
         // Title, with its state chip flush right.
-        let (status, status_bg) = self.status(&t, inst);
+        let (status, status_bg) = Self::status(&t, inst, data);
         let status_w = status.width() as u16 + 2;
         let chip = cv.pill(
             area.right().saturating_sub(status_w),
@@ -244,7 +244,7 @@ impl Home {
             Style::new().fg(t.dim),
         );
 
-        self.actions(cv, x, area.y + 3, inst, data);
+        Self::actions(cv, x, area.y + 3, inst, data);
         self.tabs(cv, x, area.y + 5, w, inst);
         let top = area.y + 7;
         if top < area.bottom() {
@@ -253,8 +253,8 @@ impl Home {
     }
 
     /// The instance's buttons: the main action filled, offline beside it.
-    fn actions(&self, cv: &mut Canvas<'_>, x: u16, y: u16, inst: &Instance, data: &Data) {
-        let playing = self.playing.as_deref() == Some(inst.id.as_str());
+    fn actions(cv: &mut Canvas<'_>, x: u16, y: u16, inst: &Instance, data: &Data) {
+        let playing = play::is_playing(data, &inst.id);
         let play = if playing {
             "▶ View game"
         } else if crate::accounts::needs_sign_in(data) {
@@ -321,8 +321,8 @@ impl Home {
     }
 
     /// The title's state chip: playing, ready, or not downloaded yet.
-    fn status(&self, t: &Theme, inst: &Instance) -> (Line<'static>, Color) {
-        let (text, fg, bg) = if self.playing.as_deref() == Some(inst.id.as_str()) {
+    fn status(t: &Theme, inst: &Instance, data: &Data) -> (Line<'static>, Color) {
+        let (text, fg, bg) = if play::is_playing(data, &inst.id) {
             (format!("{} Playing", ui::DOT), t.success, t.success_bg)
         } else if inst.is_fully_downloaded {
             (format!("{} Ready", ui::DOT), t.success, t.success_bg)
@@ -333,14 +333,14 @@ impl Home {
     }
 
     /// Compact mode's one-liner: "● Ready · 1.21.4 · Fabric 0.16.10 · 12 mods · 2h ago".
-    fn summary(&self, t: &Theme, cv: &Canvas<'_>, inst: &Instance) -> Line<'static> {
+    fn summary(&self, t: &Theme, cv: &Canvas<'_>, inst: &Instance, data: &Data) -> Line<'static> {
         let sep = || Span::styled(" · ", Style::new().fg(t.muted));
         let mods = self.facets.get(&inst.id).map_or(0, |f| f.mods.len());
         let played = inst.last_played.map_or_else(
             || "Never played".to_owned(),
             |ts| format::relative(ts, cv.cx.now, &cv.cx.tz),
         );
-        let mut spans = self.status(t, inst).0.spans;
+        let mut spans = Self::status(t, inst, data).0.spans;
         spans.extend([
             sep(),
             Span::styled(inst.version.clone(), Style::new().fg(t.text)),

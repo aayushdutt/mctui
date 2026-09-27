@@ -480,9 +480,17 @@ fn play_signs_in_first_then_launches() {
     );
 
     h.settle();
-    assert_eq!(h.banner(), Some("Launching isn't in the Rust build yet."));
     assert_eq!(active(&h), Some("jeb_"));
-    assert!(h.text().contains("INSTANCES"), "back home");
+    let launching = h
+        .data()
+        .game
+        .as_ref()
+        .map(|g| (g.instance_id.as_str(), g.offline));
+    assert_eq!(
+        launching,
+        Some(("Survival 1.21", false)),
+        "the launch carried on"
+    );
 }
 
 #[test]
@@ -492,8 +500,9 @@ fn a_player_who_cant_sign_in_can_play_offline() {
     h.settle();
     assert!(h.text().contains("Couldn't reach Microsoft"));
     h.press(KeyCode::Char('o'));
-    assert_eq!(h.banner(), Some("Launching isn't in the Rust build yet."));
-    assert!(h.text().contains("INSTANCES"), "back home");
+    let launching = h.data().game.as_ref().map(|g| g.offline);
+    assert_eq!(launching, Some(true), "launching offline");
+    assert!(h.text().contains("Getting ready"), "on the launch screen");
 }
 
 #[test]

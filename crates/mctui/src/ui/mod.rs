@@ -32,6 +32,7 @@ pub const DOT: &str = "●";
 pub const CHECK: &str = "✓";
 pub const CROSS: &str = "✗";
 pub const WARN: &str = "▲";
+pub const PENDING: &str = "○";
 
 /// Read-only state a frame is drawn against.
 #[derive(Debug, Clone)]

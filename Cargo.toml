@@ -57,6 +57,8 @@ todo = "warn"
 # Terminal geometry is u16 everywhere and lists index with usize; the casts
 # between them are deliberate and bounded by the screen size.
 cast_possible_truncation = "allow"
+# Progress bars divide byte and file counts; f64 is plenty for a ratio.
+cast_precision_loss = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"

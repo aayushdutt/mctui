@@ -18,6 +18,7 @@ use crate::app::{Action, Banner, Route};
 use crate::data::Data;
 use crate::fuzzy;
 use crate::overlay::{HelpGroup, MenuItem, PaletteItem};
+use crate::play;
 use crate::screen::{Ctx, Handled, Mouse, Screen};
 use crate::ui::input::TextInput;
 use crate::ui::{self, Canvas, Hint};
@@ -148,8 +149,6 @@ pub struct Home {
     filter: Filter,
     facets: HashMap<String, Facets>,
     body: Rect,
-    /// The instance whose game is running.
-    playing: Option<String>,
     /// The empty screen's wink, picked once per run.
     splash: &'static str,
 }
@@ -165,7 +164,6 @@ impl Home {
             filter: Filter::Off,
             facets: HashMap::new(),
             body: Rect::default(),
-            playing: None,
             splash,
         };
         home.refresh(data);
@@ -581,7 +579,7 @@ impl Home {
                     key(KeyCode::Char('?'), "help"),
                 ],
                 Some(inst) => vec![
-                    key(KeyCode::Enter, self.play_label(inst, data)),
+                    key(KeyCode::Enter, Self::play_label(inst, data)),
                     key(KeyCode::Char('o'), "offline"),
                     key(KeyCode::Char('n'), "new"),
                     key(KeyCode::Char('/'), "search"),
@@ -593,8 +591,8 @@ impl Home {
     }
 
     /// What Enter does to an instance, in words.
-    fn play_label(&self, inst: &Instance, data: &Data) -> &'static str {
-        if self.playing.as_deref() == Some(inst.id.as_str()) {
+    fn play_label(inst: &Instance, data: &Data) -> &'static str {
+        if play::is_playing(data, &inst.id) {
             "view game"
         } else if crate::accounts::needs_sign_in(data) {
             "sign in & play"
@@ -661,7 +659,7 @@ impl Home {
         };
         let mut items = Vec::new();
         if let Some(inst) = self.selected_instance(data) {
-            let play = if self.playing.as_deref() == Some(inst.id.as_str()) {
+            let play = if play::is_playing(data, &inst.id) {
                 "View game"
             } else {
                 "Play"

@@ -25,6 +25,8 @@ pub enum Target {
         key: String,
     },
     Home(home::Target),
+    /// The launch screen's buttons and log.
+    Play(crate::play::PlayTarget),
     Wizard(wizard::Target),
     Mods(mods::Target),
 }

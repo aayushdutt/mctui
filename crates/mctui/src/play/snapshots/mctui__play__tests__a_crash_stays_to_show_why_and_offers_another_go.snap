@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/play/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Survival 1.21  ›  Play                                                         ● Steve
+
+    Survival 1.21                                                                     ✗ Crashed
+    Minecraft 1.21.4  ·  Fabric 0.16.10  ·  as Steve
+
+    ✗ Minecraft crashed after 1h 2m (exit code 1). The errors are below.
+
+      Play again  ↵      Copy log  c
+
+    GAME LOG   1                                                                  errors only  v
+
+    java.lang.OutOfMemoryError: Java heap space
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ↵  play again    c  copy log    v  log level    esc  back

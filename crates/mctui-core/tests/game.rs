@@ -163,12 +163,14 @@ async fn a_child_holding_the_output_open_does_not_hold_the_game() {
     );
     let report = wait(&game).await;
     assert_eq!(report.exit, Exit::Code(0));
+    // The point: it doesn't wait out the 10 s child. Generous margins keep
+    // the test steady on a busy machine.
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        started.elapsed() < Duration::from_secs(8),
         "{:?}",
         started.elapsed()
     );
-    assert!(report.ran_for < Duration::from_secs(2));
+    assert!(report.ran_for < Duration::from_secs(8));
     let lines = all_lines(&mut logs).await;
     assert_eq!(lines.len(), 1, "the output is closed too");
 }

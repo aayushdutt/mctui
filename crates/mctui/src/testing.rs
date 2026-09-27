@@ -110,6 +110,7 @@ pub fn fixture() -> Fixture {
         config: Config::default(),
         accounts,
         sessions: std::collections::HashMap::new(),
+        game: None,
         store,
         instances,
     };

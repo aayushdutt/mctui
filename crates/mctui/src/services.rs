@@ -11,7 +11,6 @@ use mctui_core::vanilla_tweaks::VanillaTweaks;
 /// Clients for every online service. Cheap to clone; tests point them at a
 /// mock server.
 #[derive(Debug, Clone)]
-#[expect(dead_code, reason = "the screens being built use them")]
 pub struct Services {
     pub http: Http,
     pub auth: Auth,

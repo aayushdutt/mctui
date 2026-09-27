@@ -23,6 +23,7 @@ use crate::home::Home;
 use crate::mods::{self, Mods};
 use crate::msg::Msg;
 use crate::overlay::{Confirm, Help, Menu, MenuItem, Outcome, Overlay, Palette, PaletteItem};
+use crate::play::{self, Phase, PlayScreen, Session};
 use crate::resource_packs::ResourcePacks;
 use crate::screen::{Ctx, Handled, Mouse, Screen, ScreenId};
 use crate::services::Services;
@@ -92,6 +93,8 @@ pub enum Action {
     OpenUrl(String),
     /// Hand a choice from a menu, dialog or the palette back to the mods screen.
     Mods(mods::Command),
+    /// Ask the running game to save and quit.
+    StopGame,
 }
 
 impl Action {
@@ -198,6 +201,10 @@ pub struct App {
     footer: Vec<ui::Hint>,
     notice_lines: Vec<String>,
     quit: bool,
+    /// A quit was asked for while the game runs; the next `q` goes through.
+    quit_armed: bool,
+    /// The last launch session's number.
+    sessions: u64,
     /// Session checks the app runs for the accounts.
     checks: Checks,
     /// Text to put on the clipboard after the next frame.
@@ -237,6 +244,8 @@ impl App {
             footer: Vec::new(),
             notice_lines: Vec::new(),
             quit: false,
+            quit_armed: false,
+            sessions: 0,
             checks: Checks::default(),
             clipboard: None,
             open: |target| open::that_detached(target),
@@ -256,6 +265,26 @@ impl App {
     /// Text the app asked to copy, for the terminal to write after a frame.
     pub fn take_clipboard(&mut self) -> Option<String> {
         self.clipboard.take()
+    }
+
+    #[cfg(test)]
+    pub fn data_mut(&mut self) -> &mut Data {
+        &mut self.data
+    }
+
+    /// Opens the launch screen for `id` without starting a launch.
+    #[cfg(test)]
+    pub fn show_play_screen_for_tests(&mut self, id: &str) {
+        self.stack
+            .push((self.next_id, Box::new(PlayScreen::new(id))));
+        self.next_id += 1;
+        self.relayout();
+    }
+
+    /// Pretends `n` launches have happened, so a test's session can be the latest.
+    #[cfg(test)]
+    pub fn sessions_for_tests(&mut self, n: u64) {
+        self.sessions = n;
     }
 
     #[cfg(test)]
@@ -337,7 +366,14 @@ impl App {
     pub fn next_deadline(&self) -> Option<Instant> {
         let banner = self.banner.as_ref().map(|(_, until)| *until);
         let screen = self.active().next_deadline();
-        banner.into_iter().chain(screen).min()
+        // The launch screen's clock lives with its session.
+        let game = self
+            .data
+            .game
+            .as_ref()
+            .filter(|g| self.active().plays(&g.instance_id))
+            .and_then(|g| g.next_deadline(Instant::now()));
+        banner.into_iter().chain(screen).chain(game).min()
     }
 
     /// Time passed. Returns whether to redraw.
@@ -393,6 +429,7 @@ impl App {
                 true
             }
             // Screens' own work reports to them, never to the app.
+            Msg::Play(seq, msg) => self.on_play_msg(seq, msg),
             Msg::Wizard(_) | Msg::Mods(_) | Msg::ResourcePacks(_) => false,
             #[cfg(test)]
             Msg::Test(_) => false,
@@ -401,6 +438,17 @@ impl App {
 
     fn on_key(&mut self, key: KeyEvent) -> bool {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.request_quit();
+            return true;
+        }
+        // A quit asked for while the game runs waits for a second press;
+        // any other key disarms it.
+        let armed = std::mem::take(&mut self.quit_armed);
+        if armed
+            && key.code == KeyCode::Char('q')
+            && self.stack.is_empty()
+            && self.overlay.is_none()
+        {
             self.quit = true;
             return true;
         }
@@ -575,7 +623,12 @@ impl App {
 
     fn run(&mut self, action: Action) {
         match action {
-            Action::Quit => self.quit = true,
+            Action::Quit => self.request_quit(),
+            Action::StopGame => {
+                if let Some(game) = &mut self.data.game {
+                    game.stop();
+                }
+            }
             Action::Banner(banner) => self.show(banner),
             Action::Open(route) => self.open(&route),
             Action::Close => {
@@ -643,7 +696,6 @@ impl App {
 
     /// Opens a screen over the current one.
     fn open(&mut self, route: &Route) {
-        let not_yet = |what: &str| Banner::info(format!("{what} isn't in the Rust build yet."));
         let screen: Box<dyn Screen> = match route {
             Route::Settings => Box::new(Settings::new(&self.data)),
             Route::EditInstance(id) => match self.data.instance(id) {
@@ -668,7 +720,7 @@ impl App {
                 let then = Some(Box::new(route.clone()));
                 return self.open(&Route::SignIn { then });
             }
-            Route::Launch { .. } => return self.show(not_yet("Launching")),
+            Route::Launch { id, offline } => return self.launch(id, *offline),
             Route::Mods(id) => match self.data.instance(id) {
                 Some(inst) => Box::new(Mods::new(
                     inst,
@@ -689,6 +741,85 @@ impl App {
         self.next_id += 1;
         self.stack.push((id, screen));
         self.overlay = None;
+    }
+
+    /// Plays `id`: shows the running session if it's this instance's, says
+    /// no if another game is running, else starts a launch.
+    fn launch(&mut self, id: &str, offline: bool) {
+        if let Some(game) = self.data.game.as_ref().filter(|g| g.is_live()) {
+            if game.instance_id != id {
+                let name = game.instance_name.clone();
+                return self.show(Banner::warn(format!(
+                    "{name} is still running. Stop it before playing another instance."
+                )));
+            }
+        } else {
+            self.sessions += 1;
+            let tasks = self.tasks.for_screen(APP);
+            let session = Session::start(
+                self.sessions,
+                id,
+                offline,
+                &self.data,
+                &self.services,
+                &tasks,
+            );
+            let Some(session) = session else {
+                return;
+            };
+            self.data.game = Some(session);
+            self.home.reload(&self.data);
+        }
+        // Reuse the launch screen if it's already on top.
+        if matches!(self.stack.last(), Some((_, s)) if s.plays(id)) {
+            return;
+        }
+        let screen_id = self.next_id;
+        self.next_id += 1;
+        self.stack.push((screen_id, Box::new(PlayScreen::new(id))));
+        self.overlay = None;
+    }
+
+    /// Applies a launch's message, if it's from the current session.
+    fn on_play_msg(&mut self, seq: u64, msg: play::Msg) -> bool {
+        let Some(mut game) = self.data.game.take() else {
+            return false;
+        };
+        if game.seq != seq {
+            self.data.game = Some(game);
+            return false;
+        }
+        let exited = matches!(msg, play::Msg::Exited(_));
+        let started = matches!(msg, play::Msg::Started(_));
+        let banner = game.apply(msg, &mut self.data);
+        let clean_exit = exited && matches!(&game.phase, Phase::Ended(r) if !r.crashed());
+        let id = game.instance_id.clone();
+        self.data.game = Some(game);
+        if let Some(banner) = banner {
+            self.show(banner);
+        }
+        if exited || started {
+            self.home.reload(&self.data);
+        }
+        // A clean exit goes back to where you were; a crash stays to show why.
+        if clean_exit && matches!(self.stack.last(), Some((_, s)) if s.plays(&id)) {
+            self.stack.pop();
+        }
+        true
+    }
+
+    /// Quits, unless the game is running: then the first request warns and
+    /// the second goes through.
+    fn request_quit(&mut self) {
+        let running = self.data.game.as_ref().is_some_and(Session::is_running);
+        if running && !self.quit_armed {
+            self.quit_armed = true;
+            self.show(Banner::warn(
+                "Minecraft is still running. Press q again to quit mctui; the game keeps running.",
+            ));
+        } else {
+            self.quit = true;
+        }
     }
 
     fn show(&mut self, banner: Banner) {

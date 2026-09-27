@@ -115,6 +115,11 @@ pub trait Screen: std::fmt::Debug {
     /// Data changed elsewhere in the app: instances on disk, or accounts.
     fn reload(&mut self, _data: &Data) {}
 
+    /// Whether this is the launch screen for instance `id`.
+    fn plays(&self, _id: &str) -> bool {
+        false
+    }
+
     /// When the screen next needs to redraw on its own (a spinner frame).
     fn next_deadline(&self) -> Option<Instant> {
         None

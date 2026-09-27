@@ -316,6 +316,14 @@ pub fn spinner(started: Instant, now: Instant) -> &'static str {
     FRAMES[(n % FRAMES.len() as u128) as usize]
 }
 
+/// The spinner frame for a frame drawn at `now` (the frame's own clock, so
+/// renders are repeatable).
+pub fn spinner_at(now: jiff::Timestamp) -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let n = now.as_millisecond().unsigned_abs() / SPIN.as_millis() as u64;
+    FRAMES[(n % FRAMES.len() as u64) as usize]
+}
+
 /// The next time a spinner that began at `started` changes frame.
 pub fn next_spin(started: Instant, now: Instant) -> Instant {
     let elapsed = now.saturating_duration_since(started).as_millis();
