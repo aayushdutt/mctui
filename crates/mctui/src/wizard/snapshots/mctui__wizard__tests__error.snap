@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/wizard/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  New instance                                                                   ● Steve
+
+    Version  ›  Loader  ›  Name
+
+    RELEASES                                                        SUMMARY
+
+    ✗ Couldn't reach Mojang                                         Minecraft     —
+    Check your connection, then press r to try again.               Loader        —
+                                                                    Name          —
+      Try again  r
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   r  retry    esc  cancel    ?  help

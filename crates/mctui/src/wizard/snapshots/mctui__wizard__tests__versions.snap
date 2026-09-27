@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/wizard/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  New instance                                                                   ● Steve
+
+    Version  ›  Loader  ›  Name
+
+    RELEASES   4                            Snapshots   ○ Off       SUMMARY
+
+    26.3                                               latest       Minecraft     26.3
+                                                                    Loader        —
+    1.21.8                                        Jul 17, 2025      Name          —
+
+    1.16.5                                        Jan 14, 2021
+
+    1.8.9                                          Dec 3, 2015
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ↵  next    /  filter    space  show snapshots    esc  cancel    ?  help

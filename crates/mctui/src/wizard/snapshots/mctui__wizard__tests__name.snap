@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/wizard/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  New instance                                                                   ● Steve
+
+    ✓ Version  ›  ✓ Loader  ›  Name
+
+    YOUR INSTANCE                                                   SUMMARY
+
+    Name                   1.21.8 Fabric                            Minecraft     1.21.8
+                                                                    Loader        Fabric 0.19.5
+    Starter mods           ● On                                     Name          1.21.8 Fabric
+                                                                    Starter mods  Fabric API
+                           Shown in your instance list. You                       Mod Menu
+                           can rename it later.                                   Sodium
+                                                                                  Lithium
+                            Create instance  ↵
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ↵  create    tab  next    esc  back

@@ -104,7 +104,6 @@ impl Harness {
     }
 
     /// Waits for background work to report back, then handles what arrived.
-    #[allow(dead_code)]
     pub fn settle(&mut self) {
         let Self {
             runtime,
@@ -187,7 +186,7 @@ impl Harness {
         self.mouse(MouseEventKind::Down(MouseButton::Left), at)
     }
 
-    fn selected(&self) -> Option<&str> {
+    pub fn selected(&self) -> Option<&str> {
         self.app
             .home
             .selected_instance(&self.app.data)
@@ -326,10 +325,7 @@ fn clicks_select_focus_and_act() {
 
     // Footer hints are buttons.
     h.click(&Target::Key(KeyCode::Char('n')));
-    assert_eq!(
-        h.banner(),
-        Some("Creating instances isn't in the Rust build yet.")
-    );
+    assert!(h.text().contains("New instance"), "the wizard opened");
 }
 
 #[test]
@@ -551,6 +547,7 @@ fn screenshots() {
 
     let light = |h: &mut Harness| h.app.theme = crate::theme::Theme::new(&theme::LIGHT, None);
     crate::accounts::tests::screenshots(&save, &light);
+    crate::wizard::tests::screenshots(&save);
 }
 
 // Regressions from the phase-1 review.

@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/wizard/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  New instance                                                                   ● Steve
+
+    ✓ Version  ›  Loader  ›  Name
+
+    MOD LOADER                                                      SUMMARY
+
+    Fabric  recommended                                 0.19.5      Minecraft     1.21.8
+                                                                    Loader        Fabric 0.19.5
+    Vanilla                                                         Name          —
+
+    Forge                                          coming soon
+
+    Quilt                                          coming soon
+
+    NeoForge                                       coming soon
+
+    Fast and light, with the most mods. Browse and install
+    them in mctui.
+
+
+
+
+
+
+
+
+
+   ↵  next    esc  back    ?  help

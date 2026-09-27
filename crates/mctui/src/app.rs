@@ -28,6 +28,7 @@ use crate::settings::Settings;
 use crate::task::{Event, Tasks};
 use crate::theme::{Terminal, Theme};
 use crate::ui::{self, Canvas, Cx, Hits, Target, text};
+use crate::wizard::Wizard;
 
 /// How long a banner stays up.
 const BANNER_TTL: Duration = Duration::from_secs(4);
@@ -385,6 +386,8 @@ impl App {
                 }
                 true
             }
+            // The wizard's work reports to the wizard, never to the app.
+            Msg::Wizard(_) => false,
             #[cfg(test)]
             Msg::Test(_) => false,
         }
@@ -637,6 +640,11 @@ impl App {
                 Box::new(SignIn::new(then, &self.data, &self.services, &tasks))
             }
             Route::OfflineProfile => Box::new(OfflineProfile::new()),
+            Route::NewInstance => {
+                // Its background work reports to the id it's about to get.
+                let tasks = self.tasks.for_screen(self.next_id);
+                Box::new(Wizard::new(&self.data, &self.services, &tasks))
+            }
             // A-8: playing online needs a sign-in that works; get one first,
             // then carry on with the launch.
             Route::Launch { offline: false, .. } if accounts::needs_sign_in(&self.data) => {
@@ -644,7 +652,6 @@ impl App {
                 return self.open(&Route::SignIn { then });
             }
             Route::Launch { .. } => return self.show(not_yet("Launching")),
-            Route::NewInstance => return self.show(not_yet("Creating instances")),
             Route::Mods(_) => return self.show(not_yet("The mods browser")),
             Route::ResourcePacks(_) => return self.show(not_yet("Resource packs")),
         };

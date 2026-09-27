@@ -21,6 +21,7 @@ mod term;
 mod testing;
 mod theme;
 mod ui;
+mod wizard;
 
 use std::io::IsTerminal as _;
 use std::time::{Duration, Instant};

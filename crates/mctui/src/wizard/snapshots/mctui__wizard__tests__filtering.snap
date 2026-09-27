@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/wizard/tests.rs
+expression: text
+---
+
+  mctui  ›  New instance                                                                   ● Steve
+
+    Version  ›  Loader  ›  Name
+
+    / 16                                                1 of 4      SUMMARY
+
+    1.16.5                                        Jan 14, 2021      Minecraft     1.16.5
+                                                                    Loader        —
+                                                                    Name          —
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ↵  apply filter    esc  cancel

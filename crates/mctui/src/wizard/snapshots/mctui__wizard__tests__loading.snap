@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/wizard/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  New instance                                                                   ● Steve
+
+    Version  ›  Loader  ›  Name
+
+    RELEASES                                                        SUMMARY
+
+    ⠋ Loading Minecraft versions…                                   Minecraft     —
+                                                                    Loader        —
+                                                                    Name          —
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   esc  cancel    ?  help

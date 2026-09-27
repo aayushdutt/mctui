@@ -7,7 +7,7 @@
 use crossterm::event::KeyCode;
 use ratatui::layout::{Position, Rect};
 
-use crate::{home, overlay};
+use crate::{home, overlay, wizard};
 
 /// Something on screen the mouse can act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +25,7 @@ pub enum Target {
         key: String,
     },
     Home(home::Target),
+    Wizard(wizard::Target),
 }
 
 impl Target {

@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/wizard/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  New instance                                                                   ● Steve
+
+    ✓ Version  ›  Loader  ›  Name
+
+    MOD LOADER                                                      SUMMARY
+
+    Fabric  recommended                                      ⠋      Minecraft     1.21.8
+                                                                    Loader        Fabric
+    Vanilla                                                         Name          —
+
+    Forge                                          coming soon
+
+    Quilt                                          coming soon
+
+    NeoForge                                       coming soon
+
+    Checking Fabric for Minecraft 1.21.8…
+
+
+
+
+
+
+
+
+
+
+   esc  back    ?  help

@@ -1,0 +1,33 @@
+---
+source: crates/mctui/src/wizard/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  New instance                                                                   ● Steve
+
+    ✓ Version  ›  Loader  ›  Name
+
+    MOD LOADER                                                      SUMMARY
+
+    Fabric                              Not available for 26.3      Minecraft     26.3
+                                                                    Loader        Vanilla
+    Vanilla                                                         Name          —
+
+    Forge                                          coming soon
+
+    Quilt                                          coming soon
+
+    NeoForge                                       coming soon
+
+    The game exactly as Mojang ships it, no mods.
+
+
+
+
+
+
+
+
+
+
+   ↵  next    esc  back    ?  help
