@@ -115,6 +115,12 @@ pub trait Screen: std::fmt::Debug {
     /// Data changed elsewhere in the app: instances on disk, or accounts.
     fn reload(&mut self, _data: &Data) {}
 
+    /// The route this screen was opened with, when opening it again should
+    /// do nothing.
+    fn route(&self) -> Option<crate::app::Route> {
+        None
+    }
+
     /// Whether this is the launch screen for instance `id`.
     fn plays(&self, _id: &str) -> bool {
         false

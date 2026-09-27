@@ -136,6 +136,10 @@ impl Settings {
 }
 
 impl Screen for Settings {
+    fn route(&self) -> Option<crate::app::Route> {
+        Some(crate::app::Route::Settings)
+    }
+
     fn crumbs(&self, _data: &Data) -> Vec<String> {
         vec!["Settings".into()]
     }
@@ -271,5 +275,19 @@ mod tests {
         h.press(KeyCode::Enter);
         assert!(h.text().contains("There's no Java at that path."));
         assert!(h.data().config.java_path.is_none());
+    }
+
+    #[test]
+    fn a_short_terminal_scrolls_the_form_to_the_focused_field() {
+        let mut h = Harness::new(80, 18);
+        h.press(KeyCode::Char('s'));
+        for _ in 0..4 {
+            h.press(KeyCode::Tab);
+        }
+        let text = h.text();
+        assert!(text.contains("Microsoft client ID"), "{text}");
+        h.type_text("abc");
+        h.press(KeyCode::Enter);
+        assert_eq!(h.data().config.msa_client_id, "abc");
     }
 }

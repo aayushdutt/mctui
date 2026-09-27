@@ -263,3 +263,80 @@ fn offline_play_with_no_services_fails_gracefully() {
             .is_some_and(|g| matches!(g.phase, Phase::Failed(_)))
     );
 }
+
+#[test]
+fn the_running_instance_cant_be_edited_or_deleted() {
+    let h = Harness::new(100, 30);
+    let game = fake_game(&h);
+    drop(h);
+    let mut h = on_play_screen(playing(game.clone()));
+    h.press(KeyCode::Esc);
+    for key in ['e', 'm', 'p'] {
+        h.press(KeyCode::Char(key));
+        assert_eq!(
+            h.banner(),
+            Some("Close Minecraft before changing this instance."),
+            "{key}"
+        );
+        assert!(h.text().contains("INSTANCES"), "still home after {key}");
+    }
+    h.press(KeyCode::Char('d'));
+    assert_eq!(
+        h.banner(),
+        Some("Close Minecraft before deleting this instance.")
+    );
+    game.stop();
+}
+
+#[test]
+fn view_game_never_detours_through_sign_in() {
+    let h = Harness::new(100, 30);
+    let game = fake_game(&h);
+    drop(h);
+    let mut h = on_play_screen(playing(game.clone()));
+    h.app.data_mut().accounts = mctui_core::account::Accounts::default();
+    h.press(KeyCode::Esc);
+    h.press(KeyCode::Enter);
+    assert!(h.text().contains("GAME LOG"), "{}", h.text());
+    game.stop();
+}
+
+#[test]
+fn a_game_that_starts_after_its_launch_was_cancelled_is_stopped() {
+    let mut h = Harness::new(100, 30);
+    let game = fake_game(&h);
+    let started = Started {
+        game: game.clone(),
+        changes: InstanceChanges::default(),
+        stale: false,
+        starter_mods: None,
+    };
+    h.app.handle(crate::task::Event::Msg(
+        u64::MAX,
+        crate::msg::Msg::Play(7, Msg::Started(Box::new(started))),
+    ));
+    let ended =
+        h.block_on(async { tokio::time::timeout(Duration::from_secs(5), game.wait()).await });
+    assert!(ended.is_ok(), "the orphaned game was stopped");
+}
+
+#[test]
+fn the_second_q_quits_from_any_screen() {
+    let h = Harness::new(100, 30);
+    let game = fake_game(&h);
+    drop(h);
+    let mut h = on_play_screen(playing(game.clone()));
+    h.press(KeyCode::Char(':'));
+    h.press(KeyCode::Esc);
+    h.app
+        .handle(crate::task::Event::Term(crossterm::event::Event::Key(
+            crossterm::event::KeyEvent::new(
+                KeyCode::Char('c'),
+                crossterm::event::KeyModifiers::CONTROL,
+            ),
+        )));
+    assert!(!h.app.should_quit());
+    h.press(KeyCode::Char('q'));
+    assert!(h.app.should_quit(), "q on the launch screen confirms");
+    game.stop();
+}

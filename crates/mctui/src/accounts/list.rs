@@ -236,6 +236,10 @@ fn remove(account: &Account) -> Action {
 }
 
 impl Screen for AccountList {
+    fn route(&self) -> Option<crate::app::Route> {
+        Some(crate::app::Route::Accounts)
+    }
+
     fn crumbs(&self, _data: &Data) -> Vec<String> {
         vec!["Accounts".into()]
     }

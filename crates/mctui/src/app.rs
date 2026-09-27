@@ -95,6 +95,9 @@ pub enum Action {
     Mods(mods::Command),
     /// Ask the running game to save and quit.
     StopGame,
+    /// Back out of every screen the way esc would, stopping at any question
+    /// (unsaved edits) a screen asks on the way.
+    Home,
 }
 
 impl Action {
@@ -386,6 +389,11 @@ impl App {
         }
         let id = self.active_id();
         redraw |= self.with_screen(id, |s, _| s.tick(now)).unwrap_or(false);
+        // The launch screen's spinner and clock move with its session.
+        redraw |=
+            self.data.game.as_ref().is_some_and(|g| {
+                self.active().plays(&g.instance_id) && g.next_deadline(now).is_some()
+            });
         redraw
     }
 
@@ -444,11 +452,7 @@ impl App {
         // A quit asked for while the game runs waits for a second press;
         // any other key disarms it.
         let armed = std::mem::take(&mut self.quit_armed);
-        if armed
-            && key.code == KeyCode::Char('q')
-            && self.stack.is_empty()
-            && self.overlay.is_none()
-        {
+        if armed && key.code == KeyCode::Char('q') {
             self.quit = true;
             return true;
         }
@@ -499,11 +503,10 @@ impl App {
             action,
         };
         if !self.stack.is_empty() {
-            items.push(verb(
-                "Home",
-                Some("esc"),
-                Action::Many(vec![Action::Close; self.stack.len()]),
-            ));
+            items.push(verb("Home", Some("esc"), Action::Home));
+        }
+        if self.active().route() != Some(Route::Accounts) {
+            items.push(verb("Accounts", Some("a"), Action::Open(Route::Accounts)));
         }
         items.push(verb("Quit mctui", None, Action::Quit));
         items
@@ -592,6 +595,13 @@ impl App {
             return dismissed;
         }
         let acted = match target {
+            Target::Account if left => {
+                if self.stack.is_empty() {
+                    self.home.commit_filter(&self.data);
+                }
+                self.run(Action::Open(Route::Accounts));
+                true
+            }
             Target::Key(code) if left => {
                 // A clicked letter is a command, not something to type.
                 if matches!(code, KeyCode::Char(_)) && self.stack.is_empty() {
@@ -624,6 +634,16 @@ impl App {
     fn run(&mut self, action: Action) {
         match action {
             Action::Quit => self.request_quit(),
+            Action::Home => {
+                // Each esc lets a screen revert a preview, cancel its work,
+                // or ask about unsaved edits (which stops the walk).
+                for _ in 0..self.stack.len() * 3 {
+                    if self.stack.is_empty() || self.overlay.is_some() {
+                        break;
+                    }
+                    self.on_key(KeyEvent::from(KeyCode::Esc));
+                }
+            }
             Action::StopGame => {
                 if let Some(game) = &mut self.data.game {
                     game.stop();
@@ -696,6 +716,22 @@ impl App {
 
     /// Opens a screen over the current one.
     fn open(&mut self, route: &Route) {
+        // Never stack a second copy of the screen on top.
+        if self
+            .stack
+            .last()
+            .is_some_and(|(_, s)| s.route().as_ref() == Some(route))
+        {
+            return;
+        }
+        // The running game's instance can't change under it.
+        if let Route::EditInstance(id) | Route::Mods(id) | Route::ResourcePacks(id) = route
+            && play::is_playing(&self.data, id)
+        {
+            return self.show(Banner::warn(
+                "Close Minecraft before changing this instance.",
+            ));
+        }
         let screen: Box<dyn Screen> = match route {
             Route::Settings => Box::new(Settings::new(&self.data)),
             Route::EditInstance(id) => match self.data.instance(id) {
@@ -713,6 +749,12 @@ impl App {
                 // Its background work reports to the id it's about to get.
                 let tasks = self.tasks.for_screen(self.next_id);
                 Box::new(Wizard::new(&self.data, &self.services, &tasks))
+            }
+            // A game already running only needs showing (or refusing).
+            Route::Launch { id, offline }
+                if self.data.game.as_ref().is_some_and(Session::is_live) =>
+            {
+                return self.launch(id, *offline);
             }
             // A-8: playing online needs a sign-in that works; get one first,
             // then carry on with the launch.
@@ -782,13 +824,27 @@ impl App {
 
     /// Applies a launch's message, if it's from the current session.
     fn on_play_msg(&mut self, seq: u64, msg: play::Msg) -> bool {
+        let current = self.data.game.as_ref().is_some_and(|g| g.seq == seq);
+        if !current {
+            // A launch cancelled just as its game started: nothing tracks
+            // that game, so stop it rather than leave it running.
+            if let play::Msg::Started(started) = msg {
+                started.game.stop();
+            }
+            return false;
+        }
         let Some(mut game) = self.data.game.take() else {
             return false;
         };
-        if game.seq != seq {
-            self.data.game = Some(game);
-            return false;
-        }
+        // Output only needs a redraw if the launch screen shows a new line.
+        let showing = matches!(self.stack.last(), Some((_, s)) if s.plays(&game.instance_id));
+        let redraw = match &msg {
+            play::Msg::Logs(lines) => {
+                let level = self.data.config.launch_log_verbosity;
+                showing && lines.iter().any(|l| l.level.shown_at(level))
+            }
+            _ => true,
+        };
         let exited = matches!(msg, play::Msg::Exited(_));
         let started = matches!(msg, play::Msg::Started(_));
         let banner = game.apply(msg, &mut self.data);
@@ -805,7 +861,7 @@ impl App {
         if clean_exit && matches!(self.stack.last(), Some((_, s)) if s.plays(&id)) {
             self.stack.pop();
         }
-        true
+        redraw
     }
 
     /// Quits, unless the game is running: then the first request warns and
@@ -815,7 +871,7 @@ impl App {
         if running && !self.quit_armed {
             self.quit_armed = true;
             self.show(Banner::warn(
-                "Minecraft is still running. Press q again to quit mctui; the game keeps running.",
+                "Minecraft is still running. Press q again to quit mctui: the game keeps running, but this session's play time won't be recorded.",
             ));
         } else {
             self.quit = true;
@@ -850,6 +906,11 @@ impl App {
     }
 
     fn confirm_delete(&mut self, id: &str) {
+        if play::is_playing(&self.data, id) {
+            return self.show(Banner::warn(
+                "Close Minecraft before deleting this instance.",
+            ));
+        }
         let Some(inst) = self.data.instance(id) else {
             return;
         };
@@ -880,6 +941,11 @@ impl App {
     }
 
     fn delete(&mut self, id: &str) {
+        if play::is_playing(&self.data, id) {
+            return self.show(Banner::warn(
+                "Close Minecraft before deleting this instance.",
+            ));
+        }
         let Some(inst) = self.data.instance(id) else {
             return;
         };
@@ -906,7 +972,10 @@ impl App {
         };
         self.footer = self.active().hints(&self.data);
         self.notice_lines = notice_lines(&self.notices, inner.width);
-        let footer_h = ui::hints_height(&self.footer, inner.width);
+        // The footer never crowds out the header: on a tiny terminal it gets
+        // what's left, or nothing.
+        let footer_h =
+            ui::hints_height(&self.footer, inner.width).min(inner.height.saturating_sub(3));
         let notices_h = self.notice_lines.len() as u16;
         let banner_h = u16::from(self.banner.is_some());
         let footer = Rect::new(
@@ -960,11 +1029,7 @@ impl App {
         let crumbs = self.active().crumbs(&self.data);
         let crumbs: Vec<&str> = crumbs.iter().map(String::as_str).collect();
         let account = self.account_status();
-        cv.header(
-            chrome.header,
-            &crumbs,
-            Some((account, Target::Key(KeyCode::Char('a')))),
-        );
+        cv.header(chrome.header, &crumbs, Some((account, Target::Account)));
         let screen = self.active();
         cv.clipped(chrome.body, |cv| screen.render(cv, &self.data));
 

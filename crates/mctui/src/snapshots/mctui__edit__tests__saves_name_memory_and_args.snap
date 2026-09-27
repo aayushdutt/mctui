@@ -7,7 +7,6 @@ expression: h.text()
 
     Name                   Survival 1.21
 
-
     PERFORMANCE
 
     Memory                 Default
@@ -17,6 +16,7 @@ expression: h.text()
     JVM arguments          None
 
                            Only the name changes; the folder stays put.
+
 
 
 

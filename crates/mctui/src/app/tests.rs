@@ -653,11 +653,11 @@ fn hovering_delete_never_arms_enter() {
 }
 
 #[test]
-fn clicking_a_key_hint_while_typing_runs_the_command() {
+fn clicking_the_account_while_typing_opens_accounts() {
     let mut h = Harness::new(80, 24);
     h.press(KeyCode::Char('/'));
     h.type_text("sur");
-    h.click(&Target::Key(KeyCode::Char('a')));
+    h.click(&Target::Account);
     assert!(h.text().contains("ACCOUNTS"), "opened the accounts");
     h.press(KeyCode::Esc);
     assert!(h.text().contains("“sur”"), "the filter kept what was typed");
@@ -701,4 +701,44 @@ fn help_scrolls_when_it_does_not_fit() {
     assert_ne!(h.text(), before);
     h.press(KeyCode::Char('q'));
     assert!(h.app.overlay.is_none());
+}
+
+#[test]
+fn clicking_the_account_on_a_form_doesnt_type_into_it() {
+    let mut h = Harness::new(100, 30);
+    h.press(KeyCode::Char('e'));
+    h.click(&Target::Account);
+    h.press(KeyCode::Esc);
+    let name = h.data().instance("Survival 1.21").map(|i| i.name.clone());
+    assert_eq!(name.as_deref(), Some("Survival 1.21"));
+    assert!(h.text().contains("Survival 1.21"), "{}", h.text());
+}
+
+#[test]
+fn palette_home_backs_out_the_way_esc_would() {
+    let mut h = Harness::new(100, 30);
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Right);
+    h.press(KeyCode::Right);
+    assert_eq!(h.app_theme(), "light");
+    h.press(KeyCode::Char(':'));
+    h.type_text("home");
+    h.press(KeyCode::Enter);
+    assert!(
+        h.text().contains("Discard changes?"),
+        "the settings screen asks first"
+    );
+    h.press(KeyCode::Char('y'));
+    assert_ne!(h.app_theme(), "light", "the preview is reverted");
+}
+
+#[test]
+fn tiny_terminals_keep_the_footer_off_the_header() {
+    let mut h = Harness::new(80, 7);
+    let text = h.text();
+    let first = text
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_default();
+    assert!(first.trim_start().starts_with("mctui"), "{text}");
 }

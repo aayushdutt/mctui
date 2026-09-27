@@ -16,6 +16,8 @@ pub enum Target {
     Key(KeyCode),
     /// Everything outside an open overlay's card. Clicking it closes the overlay.
     Backdrop,
+    /// The signed-in account in the header: opens Accounts.
+    Account,
     Overlay(overlay::Target),
     /// A form field, by position (one form is on screen at a time).
     Field(usize),

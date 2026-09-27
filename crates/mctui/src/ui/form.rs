@@ -271,6 +271,31 @@ impl Form {
 
     /// Draws the fields in `area`: labels in a column, controls beside them,
     /// errors in the gap below, the focused field's help at the end.
+    /// Each field's row (and its section label's, if it starts a group),
+    /// counted from the top of the form, and the row after the last field.
+    fn rows(&self) -> (Vec<(Option<u16>, u16)>, u16) {
+        let mut y = 0;
+        let rows = self
+            .fields
+            .iter()
+            .map(|field| {
+                let label = field.section.map(|_| {
+                    let at = y;
+                    y += 2;
+                    at
+                });
+                let row = y;
+                y += 2;
+                (label, row)
+            })
+            .collect();
+        (rows, y.saturating_sub(1))
+    }
+
+    /// Draws the fields in `area`: labels in a column, controls beside them,
+    /// errors in the gap below, the focused field's help after the last field.
+    /// A form taller than `area` scrolls to keep the focused field in view,
+    /// with its help pinned at the bottom.
     pub fn render(
         &self,
         cv: &mut Canvas<'_>,
@@ -278,19 +303,28 @@ impl Form {
         focused: bool,
         target: impl Fn(usize) -> Target,
     ) {
+        const HELP: u16 = 2;
         let t = *cv.theme();
-        let mut y = area.y;
-        for (i, field) in self.fields.iter().enumerate() {
-            if let Some(label) = field.section {
-                if i > 0 {
-                    y += 1;
-                }
+        let (rows, end) = self.rows();
+        let fits = end + 1 + HELP <= area.height;
+        let view = if fits {
+            area.height
+        } else {
+            area.height.saturating_sub(HELP + 1)
+        };
+        // Scroll just enough to show the focused field and its error line,
+        // and its group's label when there's room.
+        let (label, row) = rows.get(self.focus).copied().unwrap_or_default();
+        let offset = (row + 2).saturating_sub(view).min(label.unwrap_or(row));
+        let place = |r: u16| (r >= offset && r - offset < view).then(|| area.y + r - offset);
+
+        for (i, (field, (label_row, row))) in self.fields.iter().zip(&rows).enumerate() {
+            if let (Some(label), Some(y)) = (field.section, label_row.and_then(place)) {
                 widgets::section(cv, Rect::new(area.x, y, area.width, 1), label, None, false);
-                y += 2;
             }
-            if y >= area.bottom() {
-                break;
-            }
+            let Some(y) = place(*row) else {
+                continue;
+            };
             let is_focus = focused && i == self.focus;
             let label = if is_focus {
                 Style::new().fg(t.strong).bold()
@@ -302,9 +336,10 @@ impl Form {
             let w = area.right().saturating_sub(x).min(FIELD_MAX);
             match &field.control {
                 Control::Text { input, placeholder } => {
+                    let field_area = Rect::new(x, y, w, 1);
                     widgets::field(
                         cv,
-                        Rect::new(x, y, w, 1),
+                        field_area,
                         input,
                         placeholder,
                         is_focus,
@@ -319,24 +354,32 @@ impl Form {
                     widgets::choice(cv, x, y, value, is_focus, target(i));
                 }
             }
-            if let Some(error) = &field.error {
-                let msg = format!("{} {error}", super::CROSS);
-                cv.text(
-                    x + 1,
-                    y + 1,
-                    &text::truncate(&msg, usize::from(w)),
-                    w,
-                    Style::new().fg(t.error),
-                );
+            if let Some(error) = field.error.as_ref().filter(|_| place(row + 1).is_some()) {
+                let msg = text::truncate(&format!("{} {error}", super::CROSS), usize::from(w))
+                    .into_owned();
+                cv.text(x + 1, y + 1, &msg, w, Style::new().fg(t.error));
             }
-            y += 2;
         }
+
+        let help_y = if fits {
+            area.y + end + 1
+        } else {
+            if end + 1 > offset + view {
+                let more = Style::new().fg(t.faint);
+                cv.text(area.x, area.y + view, "↓ more", LABEL_W, more);
+            }
+            area.y + view + 1
+        };
         let help = self.fields.get(self.focus).map_or("", |f| f.help);
         if focused && !help.is_empty() {
             let x = area.x + LABEL_W + 1;
             let w = area.right().saturating_sub(x);
-            for (i, line) in text::wrap(help, usize::from(w)).iter().take(2).enumerate() {
-                let y = y + i as u16;
+            for (i, line) in text::wrap(help, usize::from(w))
+                .iter()
+                .take(usize::from(HELP))
+                .enumerate()
+            {
+                let y = help_y + i as u16;
                 if y < area.bottom() {
                     cv.text(x, y, line, w, Style::new().fg(t.muted));
                 }
