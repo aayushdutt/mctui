@@ -20,12 +20,12 @@ use crate::data::Data;
 use crate::edit::EditInstance;
 use crate::format;
 use crate::home::Home;
-use crate::mods::{self, Mods};
+use crate::mods::Mods;
 use crate::msg::Msg;
 use crate::overlay::{Confirm, Help, Menu, MenuItem, Outcome, Overlay, Palette, PaletteItem};
 use crate::play::{self, Phase, PlayScreen, Session};
 use crate::resource_packs::ResourcePacks;
-use crate::screen::{Ctx, Handled, Mouse, Screen, ScreenId};
+use crate::screen::{Command, Ctx, Handled, Mouse, Screen, ScreenId};
 use crate::services::Services;
 use crate::settings::Settings;
 use crate::task::{Event, Tasks};
@@ -33,8 +33,8 @@ use crate::theme::{Terminal, Theme};
 use crate::ui::{self, Canvas, Cx, Hits, Target, text};
 use crate::wizard::Wizard;
 
-/// How long a banner stays up.
-const BANNER_TTL: Duration = Duration::from_secs(4);
+/// Regaining focus rescans the instances at most this often.
+const RESCAN_ON_FOCUS: Duration = Duration::from_secs(5);
 /// Two clicks on the same spot within this are a double-click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 
@@ -59,7 +59,8 @@ pub enum Action {
     Quit,
     Banner(Banner),
     Open(Route),
-    /// Close the top screen.
+    /// Close the screen that asked (the top one, unless background work
+    /// finished for a screen further down).
     Close,
     /// Switch themes (settings previews them live).
     SetTheme(String),
@@ -78,8 +79,8 @@ pub enum Action {
         id: String,
         anchor: Option<Position>,
     },
-    /// Run the active screen's command `name` (see [`Screen::command`]).
-    Command(&'static str),
+    /// Hand a choice back to the screen that offered it (see [`Screen::command`]).
+    Command(Command),
     /// A small menu of actions, at the pointer when `anchor` is given.
     Menu {
         title: String,
@@ -91,8 +92,6 @@ pub enum Action {
     /// Put text on the clipboard.
     Copy(String),
     OpenUrl(String),
-    /// Hand a choice from a menu, dialog or the palette back to the mods screen.
-    Mods(mods::Command),
     /// Ask the running game to save and quit.
     StopGame,
     /// Back out of every screen the way esc would, stopping at any question
@@ -138,6 +137,16 @@ pub struct Banner {
 }
 
 impl Banner {
+    /// How long it stays up: long enough to read, and longer for a problem.
+    fn ttl(&self) -> Duration {
+        let read = Duration::from_millis(60) * self.text.chars().count() as u32;
+        let least = match self.kind {
+            BannerKind::Warn => Duration::from_secs(8),
+            BannerKind::Info | BannerKind::Success => Duration::from_secs(4),
+        };
+        (Duration::from_secs(2) + read).clamp(least, Duration::from_secs(12))
+    }
+
     pub fn info(text: impl Into<String>) -> Self {
         Self {
             kind: BannerKind::Info,
@@ -187,6 +196,11 @@ pub struct App {
     tasks: Tasks,
     services: Services,
     overlay: Option<Overlay>,
+    /// The screen the overlay belongs to; it closes when that screen stops
+    /// being on top.
+    overlay_owner: ScreenId,
+    /// The screen whose background work asked for the actions being run.
+    asking: Option<ScreenId>,
     banner: Option<(Banner, Instant)>,
     /// Problems found at startup; they stay until the next key.
     notices: Vec<String>,
@@ -206,6 +220,10 @@ pub struct App {
     quit: bool,
     /// A quit was asked for while the game runs; the next `q` goes through.
     quit_armed: bool,
+    /// Ctrl+Z: hand the terminal back to the shell after this event.
+    suspend: bool,
+    /// When the instances were last rescanned on regaining focus.
+    scanned: Option<Instant>,
     /// The last launch session's number.
     sessions: u64,
     /// Session checks the app runs for the accounts.
@@ -236,6 +254,8 @@ impl App {
             tasks,
             services,
             overlay: None,
+            overlay_owner: HOME,
+            asking: None,
             banner: None,
             notices,
             size,
@@ -248,6 +268,8 @@ impl App {
             notice_lines: Vec::new(),
             quit: false,
             quit_armed: false,
+            suspend: false,
+            scanned: None,
             sessions: 0,
             checks: Checks::default(),
             clipboard: None,
@@ -284,6 +306,12 @@ impl App {
         self.relayout();
     }
 
+    /// The routes of the screens over home, bottom first.
+    #[cfg(test)]
+    pub fn stack_routes(&self) -> Vec<Option<Route>> {
+        self.stack.iter().map(|(_, s)| s.route()).collect()
+    }
+
     /// Pretends `n` launches have happened, so a test's session can be the latest.
     #[cfg(test)]
     pub fn sessions_for_tests(&mut self, n: u64) {
@@ -297,6 +325,11 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    /// Whether Ctrl+Z asked to suspend mctui (once).
+    pub fn take_suspend(&mut self) -> bool {
+        std::mem::take(&mut self.suspend)
     }
 
     /// The render context for a frame.
@@ -403,7 +436,12 @@ impl App {
             Event::Msg(APP, msg) => self.on_app_msg(msg),
             Event::Msg(id, msg) => {
                 let handled = self.with_screen(id, |s, cx| s.handle_msg(msg, cx));
-                handled.is_some_and(|h| self.apply(h))
+                handled.is_some_and(|h| {
+                    self.asking = Some(id);
+                    let redraw = self.apply(h);
+                    self.asking = None;
+                    redraw
+                })
             }
             Event::Term(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => {
                 self.on_key(key)
@@ -415,16 +453,34 @@ impl App {
                 true
             }
             Event::Term(TermEvent::FocusGained) => {
-                // Pick up instances added or edited while we were away.
-                self.reload();
-                true
+                // Pick up instances added or edited while we were away — but
+                // switching panes back and forth needn't rescan every time.
+                let stale = self
+                    .scanned
+                    .is_none_or(|at| at.elapsed() >= RESCAN_ON_FOCUS);
+                if stale {
+                    self.reload();
+                }
+                stale
             }
             Event::Term(TermEvent::Key(_) | TermEvent::FocusLost) => false,
         };
+        // A menu or question outlives its screen only by mistake: work that
+        // finished in the background may have closed or covered it.
+        let orphaned = self.overlay.is_some() && self.overlay_owner != self.active_id();
+        if orphaned {
+            self.overlay = None;
+        }
+        let redraw = redraw || orphaned;
         if redraw {
             self.relayout();
         }
         redraw
+    }
+
+    fn show_overlay(&mut self, overlay: Overlay) {
+        self.overlay = Some(overlay);
+        self.overlay_owner = self.active_id();
     }
 
     /// Background work the app owns reported back.
@@ -447,6 +503,10 @@ impl App {
     fn on_key(&mut self, key: KeyEvent) -> bool {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.request_quit();
+            return true;
+        }
+        if key.code == KeyCode::Char('z') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.request_suspend();
             return true;
         }
         // A quit asked for while the game runs waits for a second press;
@@ -472,11 +532,11 @@ impl App {
             match key.code {
                 KeyCode::Char('?') => {
                     let (title, groups) = self.active().help();
-                    self.overlay = Some(Overlay::Help(Help::new(title, groups)));
+                    self.show_overlay(Overlay::Help(Help::new(title, groups)));
                     return true;
                 }
                 KeyCode::Char(':') => {
-                    self.overlay = Some(Overlay::Palette(Palette::new(self.palette_items())));
+                    self.show_overlay(Overlay::Palette(Palette::new(self.palette_items())));
                     return true;
                 }
                 _ => {}
@@ -652,7 +712,8 @@ impl App {
             Action::Banner(banner) => self.show(banner),
             Action::Open(route) => self.open(&route),
             Action::Close => {
-                self.stack.pop();
+                let id = self.asking.unwrap_or_else(|| self.active_id());
+                self.stack.retain(|(sid, _)| *sid != id);
             }
             Action::SetTheme(name) => self.theme = Theme::resolve(&name, self.terminal),
             Action::Reload => self.reload(),
@@ -662,7 +723,7 @@ impl App {
                     Some(warning) => dialog.danger(warning),
                     None => dialog,
                 };
-                self.overlay = Some(Overlay::Confirm(dialog));
+                self.show_overlay(Overlay::Confirm(dialog));
             }
             Action::Many(actions) => actions.into_iter().for_each(|a| self.run(a)),
             Action::OpenFolder(id) => self.open_folder(&id),
@@ -672,17 +733,17 @@ impl App {
             Action::ActionsMenu { id, anchor } => {
                 if let Some(inst) = self.data.instance(&id) {
                     let menu = Menu::new(inst.name.clone(), Home::menu_items(inst), anchor);
-                    self.overlay = Some(Overlay::Menu(menu));
+                    self.show_overlay(Overlay::Menu(menu));
                 }
             }
-            Action::Command(name) => {
-                self.on_active(|s, cx| s.command(name, cx));
+            Action::Command(command) => {
+                self.on_active(|s, cx| s.command(command, cx));
             }
             Action::Menu {
                 title,
                 items,
                 anchor,
-            } => self.overlay = Some(Overlay::Menu(Menu::new(title, items, anchor))),
+            } => self.show_overlay(Overlay::Menu(Menu::new(title, items, anchor))),
             Action::Account(change) => {
                 let tasks = self.tasks.for_screen(APP);
                 if let Some(banner) =
@@ -701,14 +762,6 @@ impl App {
                     self.show(Banner::warn(format!(
                         "Couldn't open your browser ({e}) — go to {url} yourself."
                     )));
-                }
-            }
-            Action::Mods(command) => {
-                let msg = Msg::Mods(mods::Msg::Chose(command));
-                if let Some(handled) =
-                    self.with_screen(self.active_id(), |s, cx| s.handle_msg(msg, cx))
-                {
-                    self.apply(handled);
                 }
             }
         }
@@ -750,9 +803,10 @@ impl App {
                 let tasks = self.tasks.for_screen(self.next_id);
                 Box::new(Wizard::new(&self.data, &self.services, &tasks))
             }
-            // A game already running only needs showing (or refusing).
+            // A game already running only needs showing (or refusing), and
+            // so does a crash nobody has seen.
             Route::Launch { id, offline }
-                if self.data.game.as_ref().is_some_and(Session::is_live) =>
+                if self.data.game.as_ref().is_some_and(|g| g.holds(id)) =>
             {
                 return self.launch(id, *offline);
             }
@@ -788,13 +842,15 @@ impl App {
     /// Plays `id`: shows the running session if it's this instance's, says
     /// no if another game is running, else starts a launch.
     fn launch(&mut self, id: &str, offline: bool) {
-        if let Some(game) = self.data.game.as_ref().filter(|g| g.is_live()) {
+        if let Some(game) = self.data.game.as_mut().filter(|g| g.holds(id)) {
             if game.instance_id != id {
                 let name = game.instance_name.clone();
                 return self.show(Banner::warn(format!(
                     "{name} is still running. Stop it before playing another instance."
                 )));
             }
+            // Seen now; the next launch starts over.
+            game.unseen = false;
         } else {
             self.sessions += 1;
             let tasks = self.tasks.for_screen(APP);
@@ -845,9 +901,16 @@ impl App {
             }
             _ => true,
         };
+        if let play::Msg::Refreshed(account) = &msg {
+            self.checks.renewed(&account.id, &mut self.data);
+        }
         let exited = matches!(msg, play::Msg::Exited(_));
         let started = matches!(msg, play::Msg::Started(_));
+        let ends = exited || matches!(msg, play::Msg::Failed(_));
         let banner = game.apply(msg, &mut self.data);
+        if ends {
+            game.unseen = game.went_wrong() && !showing;
+        }
         let clean_exit = exited && matches!(&game.phase, Phase::Ended(r) if !r.crashed());
         let id = game.instance_id.clone();
         self.data.game = Some(game);
@@ -878,11 +941,29 @@ impl App {
         }
     }
 
+    /// Suspends to the shell, unless a launch or game is under way: stopped,
+    /// mctui would stop reading the game's output and stall it.
+    fn request_suspend(&mut self) {
+        if !cfg!(unix) {
+            return;
+        }
+        if let Some(game) = self.data.game.as_ref().filter(|g| g.is_live()) {
+            let name = game.instance_name.clone();
+            self.show(Banner::info(format!(
+                "mctui can't pause while {name} is running: the game would freeze too."
+            )));
+        } else {
+            self.suspend = true;
+        }
+    }
+
     fn show(&mut self, banner: Banner) {
-        self.banner = Some((banner, Instant::now() + BANNER_TTL));
+        let ttl = banner.ttl();
+        self.banner = Some((banner, Instant::now() + ttl));
     }
 
     fn reload(&mut self) {
+        self.scanned = Some(Instant::now());
         if let Some(problem) = self.data.reload_instances() {
             self.show(Banner::warn(problem));
         }

@@ -17,6 +17,8 @@ use ratatui::style::Color;
 pub struct Terminal {
     pub light: bool,
     pub background: Option<Color>,
+    /// It didn't answer at all, so further queries would only time out too.
+    pub silent: bool,
 }
 
 impl Terminal {
@@ -31,9 +33,13 @@ impl Terminal {
                 Self {
                     light: palette.theme_mode() == ThemeMode::Light,
                     background: Some(Color::Rgb(r, g, b)),
+                    silent: false,
                 }
             }
-            Err(_) => Self::default(),
+            Err(e) => Self {
+                silent: matches!(e, terminal_colorsaurus::Error::Timeout(_)),
+                ..Self::default()
+            },
         }
     }
 }
@@ -393,7 +399,7 @@ mod tests {
     fn auto_and_unknown_follow_the_terminal() {
         let light = Terminal {
             light: true,
-            background: None,
+            ..Terminal::default()
         };
         let dark = Terminal::default();
         assert_eq!(Theme::resolve("auto", light).name, "light");

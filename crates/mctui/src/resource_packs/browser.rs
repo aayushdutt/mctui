@@ -99,14 +99,17 @@ pub enum Work {
 /// Background work on the instance's pack; dropping it stops the work.
 #[derive(Debug)]
 pub struct Job {
+    /// Its number: results from a job stopped or replaced since are ignored.
+    pub seq: u64,
     pub work: Work,
     pub since: Instant,
     _task: Task,
 }
 
 impl Job {
-    pub fn new(work: Work, since: Instant, task: Task) -> Self {
+    pub fn new(seq: u64, work: Work, since: Instant, task: Task) -> Self {
         Self {
+            seq,
             work,
             since,
             _task: task,
@@ -115,18 +118,20 @@ impl Job {
 }
 
 /// Saves the cart in the background, one save at a time, the newest last.
+/// Closing the screen doesn't lose the last pick: the saver stops once it
+/// has saved everything it was sent.
 #[derive(Debug)]
 pub struct Saver {
     latest: watch::Sender<Cart>,
-    _task: Task,
 }
 
 impl Saver {
     pub fn start(tasks: &Tasks, game_dir: PathBuf, cart: Cart) -> Self {
         let (latest, mut rx) = watch::channel(cart);
-        let task = tasks.spawn(move |mail| async move {
+        tasks.spawn_detached(move |mail| async move {
             // Only the newest cart matters: edits made during a save are
-            // saved together after it.
+            // saved together after it. A cart sent just before the screen
+            // closed still counts as changed.
             while rx.changed().await.is_ok() {
                 let cart = Cart::clone(&rx.borrow_and_update());
                 if let Err(e) = cart.save(&game_dir).await {
@@ -134,10 +139,7 @@ impl Saver {
                 }
             }
         });
-        Self {
-            latest,
-            _task: task,
-        }
+        Self { latest }
     }
 
     fn save(&self, cart: &Cart) {
@@ -167,6 +169,8 @@ pub struct Browser {
     pub basket: List,
     pub search: Option<Search>,
     pub job: Option<Job>,
+    /// The last job's number.
+    pub jobs: u64,
     /// Fetching the catalog again after an offline start.
     pub retry: Option<(Instant, Task)>,
     saver: Saver,
@@ -195,6 +199,7 @@ impl Browser {
             basket: List::new(CART),
             search: None,
             job: None,
+            jobs: 0,
             retry: None,
             saver,
         };

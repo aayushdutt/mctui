@@ -2,12 +2,11 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
+use ratatui::style::Style;
 
 use super::{Outcome, Target};
 use crate::app::Action;
-use crate::theme;
+use crate::ui::widgets::{self, ButtonKind};
 use crate::ui::{self, Canvas, Hint, text};
 
 #[derive(Debug)]
@@ -124,56 +123,50 @@ impl Confirm {
                 }
                 y += 1;
             }
-            let yes = button(cv, body.x, y, self.yes, self.focus_yes, Target::Yes, accent);
-            // Red only ever fills the destructive choice; the safe one uses the accent.
-            button(
+            // The focused choice is filled; red only ever fills the
+            // destructive one.
+            let kind = |focused, danger| match (focused, danger) {
+                (false, _) => ButtonKind::Secondary,
+                (true, true) => ButtonKind::Danger,
+                (true, false) => ButtonKind::Primary,
+            };
+            let yes = widgets::button(
+                cv,
+                body.x,
+                y,
+                self.yes,
+                None,
+                kind(self.focus_yes, self.danger),
+                ui::Target::Overlay(Target::Yes),
+            );
+            widgets::button(
                 cv,
                 yes.right() + 2,
                 y,
                 self.no,
-                !self.focus_yes,
-                Target::No,
-                t.accent,
+                None,
+                kind(!self.focus_yes, false),
+                ui::Target::Overlay(Target::No),
             );
             if hints {
-                let hints = [
-                    Hint::show("←→", "choose"),
-                    Hint::key(KeyCode::Enter, "confirm"),
-                    Hint::key(KeyCode::Esc, "cancel"),
-                ];
+                // ↵ answers with whichever button is focused.
+                let hints = if self.focus_yes {
+                    [
+                        Hint::show("←→", "choose"),
+                        Hint::key(KeyCode::Enter, "confirm"),
+                        Hint::key(KeyCode::Esc, "cancel"),
+                    ]
+                } else {
+                    [
+                        Hint::show("←→", "choose"),
+                        Hint::key(KeyCode::Enter, "cancel"),
+                        Hint::key(KeyCode::Char('y'), "confirm"),
+                    ]
+                };
                 cv.hints(Rect::new(body.x, y + 2, body.width, 1), &hints);
             }
         });
     }
-}
-
-/// The focused choice is a filled single-row button; the other sits on a
-/// quiet surface, brightening under the pointer. Returns its area.
-fn button(
-    cv: &mut Canvas<'_>,
-    x: u16,
-    y: u16,
-    label: &str,
-    focused: bool,
-    target: Target,
-    accent: Color,
-) -> Rect {
-    let t = *cv.theme();
-    let target = ui::Target::Overlay(target);
-    let (fg, bg) = match (focused, cv.hovered(&target)) {
-        (true, _) => (theme::on_color(accent), accent),
-        (false, true) => (t.strong, t.surface_hi),
-        (false, false) => (t.text, t.surface),
-    };
-    let style = if focused {
-        Style::new().fg(fg).bold()
-    } else {
-        Style::new().fg(fg)
-    };
-    let line = Line::from(Span::styled(format!(" {label} "), style));
-    let area = cv.pill(x, y, &line, bg, 30);
-    cv.click(area, target);
-    area
 }
 
 #[cfg(test)]

@@ -1,8 +1,6 @@
 //! The components every screen is built from (see DESIGN.md). Each draws one
 //! row at most, registers its click target, and lights up under the pointer.
 
-#![expect(dead_code, reason = "components land before the screens that use them")]
-
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
@@ -322,6 +320,14 @@ pub fn spinner_at(now: jiff::Timestamp) -> &'static str {
     const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let n = now.as_millisecond().unsigned_abs() / SPIN.as_millis() as u64;
     FRAMES[(n % FRAMES.len() as u64) as usize]
+}
+
+/// When a [`spinner_at`] next changes frame, given the wall clock and the
+/// monotonic clock at the same moment.
+pub fn next_spin_at(wall: jiff::Timestamp, now: Instant) -> Instant {
+    let step = SPIN.as_millis() as u64;
+    let into = wall.as_millisecond().unsigned_abs() % step;
+    now + Duration::from_millis(step - into)
 }
 
 /// The next time a spinner that began at `started` changes frame.

@@ -48,8 +48,10 @@ use crate::theme::Terminal;
 /// coalesce into ~60 frames a second.
 const FRAME: Duration = Duration::from_millis(16);
 
-/// At most this many queued events are handled between frames.
+/// At most this many queued events are handled between frames, for at most
+/// this long.
 const MAX_BATCH: usize = 512;
+const MAX_BATCH_TIME: Duration = Duration::from_millis(8);
 
 fn main() -> anyhow::Result<()> {
     if std::env::args()
@@ -72,11 +74,14 @@ fn main() -> anyhow::Result<()> {
     };
 
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(run(data, notices, terminal))
+    let result = runtime.block_on(run(data, notices, terminal));
+    // Don't hold the shell prompt for work nobody will see (an unpack).
+    runtime.shutdown_timeout(Duration::from_millis(300));
+    result
 }
 
 async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Result<()> {
-    let mut tui = Tui::enter()?;
+    let mut tui = Tui::enter(!terminal.silent)?;
     let size = tui.size()?;
     let (tx, mut events) = mpsc::unbounded_channel();
     spawn_input_reader(tx.clone());
@@ -88,6 +93,8 @@ async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Re
     let tz = TimeZone::system();
     let mut prof = RenderProf::from_env();
 
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
     let mut dirty = true;
     let mut next_frame = Instant::now();
     while !app.should_quit() {
@@ -118,10 +125,14 @@ async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Re
         tokio::select! {
             event = events.recv() => {
                 let Some(event) = event else { break };
+                let batch = Instant::now();
                 dirty |= app.handle(event);
                 // Handle what's already queued before drawing once — but not
                 // forever, so a flood still gets frames.
                 for _ in 0..MAX_BATCH {
+                    if batch.elapsed() >= MAX_BATCH_TIME {
+                        break;
+                    }
                     let Ok(event) = events.try_recv() else { break };
                     dirty |= app.handle(event);
                 }
@@ -129,9 +140,56 @@ async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Re
             () = sleep_until(wake) => {
                 dirty |= app.tick(Instant::now());
             }
+            // Quitting normally is what puts the terminal back.
+            () = &mut shutdown => break,
+        }
+        if app.take_suspend() {
+            #[cfg(unix)]
+            {
+                tui.suspend()?;
+                // The window may have changed size while we were away.
+                let size = tui.size()?;
+                app.handle(Event::Term(crossterm::event::Event::Resize(
+                    size.width,
+                    size.height,
+                )));
+            }
+            dirty = true;
         }
     }
     Ok(())
+}
+
+/// Resolves when the system asks mctui to go: SIGTERM, SIGHUP (the terminal
+/// closed), SIGQUIT or SIGINT; on Windows, the console closing.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let (Ok(mut term), Ok(mut hup), Ok(mut quit), Ok(mut int)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+            signal(SignalKind::quit()),
+            signal(SignalKind::interrupt()),
+        ) else {
+            return std::future::pending().await;
+        };
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = hup.recv() => {}
+            _ = quit.recv() => {}
+            _ = int.recv() => {}
+        }
+    }
+    #[cfg(windows)]
+    {
+        match tokio::signal::windows::ctrl_close() {
+            Ok(mut close) => {
+                close.recv().await;
+            }
+            Err(_) => std::future::pending().await,
+        }
+    }
 }
 
 async fn sleep_until(deadline: Option<Instant>) {

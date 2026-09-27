@@ -25,6 +25,9 @@ tracing-subscriber.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 insta.workspace = true
 serde_json.workspace = true

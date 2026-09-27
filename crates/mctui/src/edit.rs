@@ -75,13 +75,16 @@ impl EditInstance {
     fn save(&mut self, cx: &mut Ctx<'_>) -> Handled {
         let name = self.form.text("name").trim().to_owned();
         let memory = self.form.text("memory").trim().to_owned();
+        let xmx = memory_arg(&memory);
         let java = self.form.text("java").trim().to_owned();
         if name.is_empty() {
             self.form.set_error("name", Some("Give it a name.".into()));
         }
-        if !memory.is_empty() && !valid_memory(&memory) {
-            self.form
-                .set_error("memory", Some("Use a size like 4G or 6144M.".into()));
+        if !memory.is_empty() && xmx.is_none() {
+            self.form.set_error(
+                "memory",
+                Some("Use a size like 4G or 6144M, at least 512M.".into()),
+            );
         }
         if !java.is_empty() && !Path::new(&java).is_file() {
             self.form
@@ -108,8 +111,8 @@ impl EditInstance {
             .text("jvm_args")
             .split_whitespace()
             .map(str::to_owned);
-        edited.jvm_args = (!memory.is_empty())
-            .then(|| format!("-Xmx{}", memory.to_uppercase()))
+        edited.jvm_args = xmx
+            .map(|size| format!("-Xmx{size}"))
             .into_iter()
             .chain(extra)
             .collect();
@@ -147,10 +150,22 @@ fn split_memory(args: &[String]) -> (Option<&str>, Vec<&str>) {
     (memory, rest)
 }
 
-/// `4G`, `6144M`, `4096` (bytes need no unit): digits and an optional unit.
-fn valid_memory(s: &str) -> bool {
-    let digits = s.trim_end_matches(['k', 'K', 'm', 'M', 'g', 'G']);
-    s.len() - digits.len() <= 1 && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+/// The `-Xmx` size for what was typed: `4G`, `6144M`, or bare megabytes
+/// (`4096`; Java would read those as bytes). `None` if it isn't a size, or is
+/// too small for the game to start.
+fn memory_arg(s: &str) -> Option<String> {
+    let digits = s.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n: u64 = digits.parse().ok()?;
+    let (unit, mb) = match &s[digits.len()..] {
+        "" | "m" | "M" => ('M', n),
+        "g" | "G" => ('G', n.saturating_mul(1024)),
+        "k" | "K" => ('K', n / 1024),
+        _ => return None,
+    };
+    (mb >= 512).then(|| format!("{n}{unit}"))
 }
 
 impl Screen for EditInstance {
@@ -238,8 +253,12 @@ mod tests {
 
     #[test]
     fn memory_is_validated_and_split() {
-        assert!(valid_memory("4G") && valid_memory("6144m") && valid_memory("4096"));
-        assert!(!valid_memory("4GB") && !valid_memory("G") && !valid_memory("four"));
+        assert_eq!(memory_arg("4g").as_deref(), Some("4G"));
+        assert_eq!(memory_arg("6144m").as_deref(), Some("6144M"));
+        assert_eq!(memory_arg("4096").as_deref(), Some("4096M"), "megabytes");
+        for bad in ["4GB", "G", "four", "+4G", "256M", "4 G", ""] {
+            assert_eq!(memory_arg(bad), None, "{bad}");
+        }
         let args = vec![
             "-Xms512M".to_owned(),
             "-Xmx4G".to_owned(),
@@ -281,7 +300,10 @@ mod tests {
         h.press(KeyCode::Tab);
         h.type_text("lots");
         h.press(KeyCode::Enter);
-        assert!(h.text().contains("Use a size like 4G or 6144M."));
+        assert!(
+            h.text()
+                .contains("Use a size like 4G or 6144M, at least 512M.")
+        );
         h.press(KeyCode::Esc);
         assert!(
             h.text().contains("Discard changes?"),

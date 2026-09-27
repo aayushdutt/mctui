@@ -1520,6 +1520,7 @@ dependencies = [
  "nucleo-matcher",
  "open",
  "ratatui",
+ "rustix",
  "serde_json",
  "sha1",
  "tempfile",

@@ -106,6 +106,9 @@ pub struct Session {
     pub dropped: u64,
     /// Worth knowing, but not a failure ("using saved game files").
     pub notes: Vec<String>,
+    /// It crashed or failed while the launch screen wasn't showing, and
+    /// nobody has looked yet: opening the instance shows why first.
+    pub unseen: bool,
     /// The launch, then the log pump. Dropping it cancels a launch in
     /// progress; a running game is unaffected.
     task: Option<Task>,
@@ -185,6 +188,7 @@ impl Session {
             log: VecDeque::new(),
             dropped: 0,
             notes: Vec::new(),
+            unseen: false,
             task: Some(task),
         })
     }
@@ -197,6 +201,21 @@ impl Session {
         )
     }
 
+    /// Whether opening `id`'s launch screen shows this session rather than
+    /// starting another: it's under way, or it went wrong unseen.
+    pub fn holds(&self, id: &str) -> bool {
+        self.is_live() || (self.unseen && self.instance_id == id)
+    }
+
+    /// Whether it crashed or failed.
+    pub fn went_wrong(&self) -> bool {
+        match &self.phase {
+            Phase::Ended(report) => report.crashed(),
+            Phase::Failed(_) => true,
+            _ => false,
+        }
+    }
+
     /// Whether the game itself is running.
     pub fn is_running(&self) -> bool {
         matches!(self.phase, Phase::Playing { .. } | Phase::Stopping)
@@ -206,9 +225,11 @@ impl Session {
     /// something's under way, the play timer's next minute while playing.
     pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
         match &self.phase {
-            Phase::Preparing(_) | Phase::Stopping => {
-                Some(crate::ui::widgets::next_spin(*SPIN_EPOCH, now))
-            }
+            // The spinner is drawn from the wall clock (see `spinner_at`).
+            Phase::Preparing(_) | Phase::Stopping => Some(crate::ui::widgets::next_spin_at(
+                jiff::Timestamp::now(),
+                now,
+            )),
             Phase::Playing { since, .. } => {
                 let minutes = now.saturating_duration_since(*since).as_secs() / 60 + 1;
                 Some(*since + Duration::from_secs(minutes * 60))
@@ -323,14 +344,23 @@ impl Session {
     }
 }
 
-/// A fixed start for spinners, so their frames advance steadily.
-pub(crate) static SPIN_EPOCH: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
-
 /// Whether `id`'s game is launching or running.
 pub fn is_playing(data: &Data, id: &str) -> bool {
     data.game
         .as_ref()
         .is_some_and(|g| g.instance_id == id && g.is_live())
+}
+
+/// How `id`'s last launch went wrong ("Crashed"), if nobody has looked yet.
+pub fn unseen_trouble(data: &Data, id: &str) -> Option<&'static str> {
+    let game = data
+        .game
+        .as_ref()
+        .filter(|g| g.instance_id == id && g.unseen)?;
+    Some(match game.phase {
+        Phase::Failed(_) => "Couldn't start",
+        _ => "Crashed",
+    })
 }
 
 /// A launcher sharing the app's clients.

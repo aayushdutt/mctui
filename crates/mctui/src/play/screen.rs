@@ -1,6 +1,7 @@
 //! The launch screen: the steps while Minecraft gets ready, then the game's
 //! log while it runs, then how it ended.
 
+use std::cell::Cell;
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -50,8 +51,12 @@ const STAGES: [(Stage, &str); 7] = [
 pub struct PlayScreen {
     id: String,
     body: Rect,
-    /// Log lines scrolled up from the newest; 0 follows the log as it grows.
-    scroll: usize,
+    /// Scrolled back: the newest line in view, by its number in the whole
+    /// log, so it stays put as lines arrive. `None` follows the log.
+    pin: Option<u64>,
+    /// How many lines back the view goes with the oldest line still at the
+    /// top, as of the last frame.
+    max_scroll: Cell<usize>,
 }
 
 impl PlayScreen {
@@ -59,7 +64,8 @@ impl PlayScreen {
         Self {
             id: id.to_owned(),
             body: Rect::default(),
-            scroll: 0,
+            pin: None,
+            max_scroll: Cell::new(0),
         }
     }
 
@@ -67,7 +73,9 @@ impl PlayScreen {
         data.game.as_ref().filter(|g| g.instance_id == self.id)
     }
 
-    fn relaunch(&self, offline: bool) -> Handled {
+    fn relaunch(&mut self, offline: bool) -> Handled {
+        // The next launch's log starts fresh at the bottom.
+        self.pin = None;
         Handled::Action(Action::Open(Route::Launch {
             id: self.id.clone(),
             offline,
@@ -101,22 +109,40 @@ impl PlayScreen {
             return Handled::Ignored;
         };
         let verbosity = data.config.launch_log_verbosity;
-        let text: Vec<&str> = shown(session, verbosity).map(|l| l.text.as_str()).collect();
+        let text: Vec<&str> = shown(session, verbosity)
+            .map(|(_, l)| l.text.as_str())
+            .collect();
         Handled::Action(Action::Many(vec![
             Action::Copy(text.join("\n")),
             Action::Banner(Banner::info(format!("Copied {} log lines.", text.len()))),
         ]))
     }
 
+    /// How many shown lines are newer than the view.
+    fn below(&self, session: &Session, verbosity: LogVerbosity) -> usize {
+        self.pin.map_or(0, |pin| {
+            shown(session, verbosity)
+                .rev()
+                .take_while(|(n, _)| *n > pin)
+                .count()
+                .min(self.max_scroll.get())
+        })
+    }
+
     fn scroll_by(&mut self, delta: isize, data: &Data) -> bool {
-        let total = self
-            .session(data)
-            .map_or(0, |s| shown(s, data.config.launch_log_verbosity).count());
-        let next = self
-            .scroll
+        let Some(session) = self.session(data) else {
+            return false;
+        };
+        let verbosity = data.config.launch_log_verbosity;
+        let below = self.below(session, verbosity);
+        let next = below
             .saturating_add_signed(delta)
-            .min(total.saturating_sub(1));
-        std::mem::replace(&mut self.scroll, next) != next
+            .min(self.max_scroll.get());
+        let pin = match next {
+            0 => None,
+            n => shown(session, verbosity).rev().nth(n).map(|(n, _)| n),
+        };
+        std::mem::replace(&mut self.pin, pin) != pin
     }
 
     fn cycle_verbosity(cx: &mut Ctx<'_>) -> Handled {
@@ -135,12 +161,19 @@ impl PlayScreen {
     }
 }
 
-/// The log lines shown at `verbosity`, oldest first.
-fn shown(session: &Session, verbosity: LogVerbosity) -> impl DoubleEndedIterator<Item = &LogLine> {
+/// The log lines shown at `verbosity`, oldest first, each with its number in
+/// the whole log (counting lines dropped from the front).
+fn shown(
+    session: &Session,
+    verbosity: LogVerbosity,
+) -> impl DoubleEndedIterator<Item = (u64, &LogLine)> {
+    let first = session.dropped;
     session
         .log
         .iter()
-        .filter(move |l| l.level.shown_at(verbosity))
+        .enumerate()
+        .filter(move |(_, l)| l.level.shown_at(verbosity))
+        .map(move |(i, l)| (first + i as u64, l))
 }
 
 fn verbosity_label(v: LogVerbosity) -> &'static str {
@@ -250,7 +283,7 @@ impl Screen for PlayScreen {
                 KeyCode::Char('v'),
                 Some(Phase::Playing { .. } | Phase::Stopping | Phase::Ended(_)),
             ) => {
-                self.scroll = 0;
+                self.pin = None;
                 Self::cycle_verbosity(cx)
             }
             (
@@ -271,9 +304,7 @@ impl Screen for PlayScreen {
             }
             (KeyCode::PageUp, _) => Handled::changed(self.scroll_by(page, cx.data)),
             (KeyCode::PageDown, _) => Handled::changed(self.scroll_by(-page, cx.data)),
-            (KeyCode::End | KeyCode::Char('G'), _) => {
-                Handled::changed(std::mem::take(&mut self.scroll) != 0)
-            }
+            (KeyCode::End | KeyCode::Char('G'), _) => Handled::changed(self.pin.take().is_some()),
             (KeyCode::Home | KeyCode::Char('g'), _) => {
                 Handled::changed(self.scroll_by(isize::MAX, cx.data))
             }
@@ -397,8 +428,8 @@ impl PlayScreen {
         if area.height < 3 {
             return;
         }
-        let lines: Vec<&LogLine> = shown(session, verbosity).collect();
-        let count = lines.len().to_string();
+        let total = shown(session, verbosity).count();
+        let count = total.to_string();
         widgets::section(
             cv,
             Rect { height: 1, ..area },
@@ -418,7 +449,7 @@ impl PlayScreen {
 
         let body = Rect::new(area.x, area.y + 2, area.width, area.height - 2);
         cv.click(body, Target::Play(PlayTarget::Log));
-        if lines.is_empty() {
+        if total == 0 {
             let empty = match verbosity {
                 LogVerbosity::All => "Nothing yet.",
                 _ => "No problems so far. Press v to see everything.",
@@ -426,10 +457,29 @@ impl PlayScreen {
             cv.text(body.x, body.y, empty, body.width, Style::new().fg(t.faint));
             return;
         }
-        let height = usize::from(body.height.saturating_sub(u16::from(self.scroll > 0)));
-        let end = lines.len().saturating_sub(self.scroll);
-        let start = end.saturating_sub(height);
-        for (i, line) in lines[start..end].iter().enumerate() {
+        // Scrolled up, a row goes to "↓ newer", and one to the note below.
+        let note = usize::from(session.dropped > 0);
+        let top = usize::from(body.height).saturating_sub(1 + note).max(1);
+        self.max_scroll.set(total.saturating_sub(top));
+        let below = self.below(session, verbosity);
+        let mut height = usize::from(body.height.saturating_sub(u16::from(below > 0)));
+        let mut y = body.y;
+        // Scrolled back to the oldest line kept: say that older ones are gone.
+        if note > 0 && below + height >= total && height > 1 {
+            let note = format!("… {} earlier lines weren't kept", session.dropped);
+            cv.text(body.x, y, &note, body.width, Style::new().fg(t.faint));
+            height -= 1;
+            y += 1;
+        }
+        // Only the lines on screen, found from the newest end.
+        let mut lines: Vec<&LogLine> = shown(session, verbosity)
+            .rev()
+            .skip(below)
+            .take(height)
+            .map(|(_, l)| l)
+            .collect();
+        lines.reverse();
+        for (i, line) in lines.iter().enumerate() {
             let fg = match line.level {
                 Level::Error => t.error,
                 Level::Warn => t.warning,
@@ -437,16 +487,10 @@ impl PlayScreen {
                 Level::Debug => t.muted,
             };
             let text = text::truncate(&line.text, usize::from(body.width));
-            cv.text(
-                body.x,
-                body.y + i as u16,
-                &text,
-                body.width,
-                Style::new().fg(fg),
-            );
+            cv.text(body.x, y + i as u16, &text, body.width, Style::new().fg(fg));
         }
-        if self.scroll > 0 {
-            let more = format!("↓ {} newer · G to follow", self.scroll);
+        if below > 0 {
+            let more = format!("↓ {below} newer · G to follow");
             cv.text(
                 body.x,
                 body.bottom() - 1,

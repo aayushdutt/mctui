@@ -241,6 +241,26 @@ fn toggling_saves_and_swaps_conflicts() {
 }
 
 #[test]
+fn a_pick_made_just_before_closing_is_still_saved() {
+    let mut h = open((120, 32), fresh);
+    let game = game(h.data());
+    press_all(
+        &mut h,
+        &[
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Tab,
+            KeyCode::Enter,
+            KeyCode::Esc,
+            KeyCode::Esc,
+        ],
+    );
+    assert!(h.text().contains("INSTANCES"), "closed at once");
+    eventually(|| saved_cart(&game).contains("GUI", "DarkUI"));
+}
+
+#[test]
 fn builds_and_applies_the_pack() {
     let mut h = open((120, 32), |game| {
         fs::create_dir_all(game).unwrap();

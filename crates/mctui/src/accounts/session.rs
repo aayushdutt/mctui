@@ -126,6 +126,13 @@ impl Checks {
         })
     }
 
+    /// A launch renewed `id`'s sign-in itself: that settles any check of the
+    /// old token.
+    pub fn renewed(&mut self, id: &str, data: &mut Data) {
+        self.running.remove(id);
+        data.sessions.insert(id.to_owned(), SessionStatus::Valid);
+    }
+
     /// A check reported back. Returns a toast if saving a refreshed account
     /// failed.
     pub fn handle(&mut self, msg: Msg, data: &mut Data) -> Option<Banner> {

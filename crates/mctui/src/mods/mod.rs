@@ -22,7 +22,7 @@ use ratatui::layout::Rect;
 use crate::app::{Action, Banner};
 use crate::data::Data;
 use crate::overlay::{HelpGroup, PaletteItem};
-use crate::screen::{Ctx, Handled, Mouse, Screen};
+use crate::screen::{self, Ctx, Handled, Mouse, Screen};
 use crate::task::{Task, Tasks};
 use crate::ui::input::TextInput;
 use crate::ui::list::List;
@@ -33,6 +33,8 @@ use copy::{banner, hit_page, mod_page, open_page};
 const DEBOUNCE: Duration = Duration::from_millis(350);
 /// Results asked for at a time.
 const PAGE: usize = 20;
+/// Install progress closer together than this is skipped.
+const PROGRESS_EVERY: Duration = Duration::from_millis(40);
 /// The next page is fetched when the selection gets this close to the end.
 const LOAD_AHEAD: usize = 5;
 
@@ -101,8 +103,6 @@ pub enum Msg {
         title: String,
         result: modrinth::Result<()>,
     },
-    /// Picked in a menu, a dialog or the palette.
-    Chose(Command),
 }
 
 impl From<Msg> for crate::msg::Msg {
@@ -111,13 +111,18 @@ impl From<Msg> for crate::msg::Msg {
     }
 }
 
-/// Something to do, picked in a menu, a dialog or the palette (they reach the
-/// screen through [`Action::Mods`]).
+/// Something to do, picked in a menu, a dialog or the palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Install { project_id: String, title: String },
     Remove { file: String, title: String },
     Search,
+}
+
+impl Command {
+    fn action(self) -> Action {
+        Action::Command(screen::Command::Mods(self))
+    }
 }
 
 #[derive(Debug)]
@@ -353,9 +358,23 @@ impl Mods {
             project_id.to_owned(),
         );
         let task = self.tasks.spawn(move |mail| async move {
+            // Downloads report every chunk; the bar needs far fewer frames.
+            // A finished file always shows, so a slow one never hides behind
+            // a skipped update.
+            let last = std::sync::Mutex::new(None::<(Instant, usize)>);
             let result = client
                 .install(&inst, &project, |progress| {
-                    mail.send(Msg::Progress { seq, progress }.into());
+                    let mut last = last
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let now = Instant::now();
+                    let due = last.is_none_or(|(at, files)| {
+                        files != progress.files_done || now.duration_since(at) >= PROGRESS_EVERY
+                    });
+                    if due {
+                        *last = Some((now, progress.files_done));
+                        mail.send(Msg::Progress { seq, progress }.into());
+                    }
                 })
                 .await;
             mail.send(Msg::Installed { seq, result }.into());
@@ -449,12 +468,17 @@ impl Mods {
                 };
                 Handled::Action(Action::Many(vec![Action::Banner(toast), Action::Reload]))
             }
-            Msg::Chose(Command::Install { project_id, title }) => {
+        }
+    }
+
+    fn run(&mut self, command: Command) -> Handled {
+        match command {
+            Command::Install { project_id, title } => {
                 self.focus = Focus::Results;
                 self.install(&project_id, &title)
             }
-            Msg::Chose(Command::Remove { file, title }) => self.remove(&file, &title),
-            Msg::Chose(Command::Search) => self.focus(Focus::Search),
+            Command::Remove { file, title } => self.remove(&file, &title),
+            Command::Search => self.focus(Focus::Search),
         }
     }
 
@@ -565,7 +589,7 @@ impl Screen for Mods {
         let mut items = vec![verb(
             "Search Modrinth".into(),
             "/",
-            Action::Mods(Command::Search),
+            Command::Search.action(),
         )];
         if let Some(hit) = self.selected_hit() {
             let title = &hit.title;
@@ -579,10 +603,11 @@ impl Screen for Mods {
                 verb(
                     format!("{install} {title}"),
                     "↵",
-                    Action::Mods(Command::Install {
+                    Command::Install {
                         project_id,
                         title: title.clone(),
-                    }),
+                    }
+                    .action(),
                 ),
                 verb(
                     format!("Open {title} on Modrinth"),
@@ -631,9 +656,13 @@ impl Screen for Mods {
         self.on_paste(text, cx.now)
     }
 
-    // Other screens' messages never come here; the wildcard stays right as
-    // they add theirs.
-    #[allow(unreachable_patterns, clippy::match_wildcard_for_single_variants)]
+    fn command(&mut self, command: screen::Command, _cx: &mut Ctx<'_>) -> Handled {
+        match command {
+            screen::Command::Mods(command) => self.run(command),
+            screen::Command::ResourcePacks(_) => Handled::Ignored,
+        }
+    }
+
     fn handle_msg(&mut self, msg: crate::msg::Msg, _cx: &mut Ctx<'_>) -> Handled {
         match msg {
             crate::msg::Msg::Mods(msg) => self.on_msg(msg),

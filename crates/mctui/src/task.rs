@@ -85,6 +85,16 @@ impl Tasks {
         Task(self.runtime.spawn(work(self.mailbox())))
     }
 
+    /// Runs `work` to its end even if its screen closes first: for work that
+    /// must land, like saving, and that finishes by itself.
+    pub fn spawn_detached<F, Fut>(&self, work: F)
+    where
+        F: FnOnce(Mailbox) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        drop(self.runtime.spawn(work(self.mailbox())));
+    }
+
     /// Runs `work` in the background and delivers its result as one message.
     pub fn run<T, Fut>(&self, work: Fut, into_msg: impl FnOnce(T) -> Msg + Send + 'static) -> Task
     where

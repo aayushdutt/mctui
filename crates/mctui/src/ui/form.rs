@@ -255,6 +255,9 @@ impl Form {
 
     fn move_focus(&mut self, delta: isize, wrap: bool) -> FormEvent {
         let n = self.fields.len();
+        if n == 0 {
+            return FormEvent::Ignored;
+        }
         let next = if wrap {
             self.focus
                 .checked_add_signed(delta)

@@ -565,12 +565,19 @@ impl Home {
                 key(KeyCode::Char(':'), "commands"),
                 key(KeyCode::Char('?'), "help"),
             ],
-            (Filter::Applied(_), Pane::List) => vec![
-                key(KeyCode::Enter, "play"),
-                key(KeyCode::Esc, "clear filter"),
-                key(KeyCode::Char('/'), "edit filter"),
-                key(KeyCode::Char('?'), "help"),
-            ],
+            (Filter::Applied(_), Pane::List) => {
+                let enter = self
+                    .selected_instance(data)
+                    .map(|inst| key(KeyCode::Enter, Self::play_label(inst, data)));
+                enter
+                    .into_iter()
+                    .chain([
+                        key(KeyCode::Esc, "clear filter"),
+                        key(KeyCode::Char('/'), "edit filter"),
+                        key(KeyCode::Char('?'), "help"),
+                    ])
+                    .collect()
+            }
             (Filter::Off, Pane::List) => match self.selected_instance(data) {
                 None => vec![
                     key(KeyCode::Enter, "new instance"),
@@ -594,6 +601,8 @@ impl Home {
     fn play_label(inst: &Instance, data: &Data) -> &'static str {
         if play::is_playing(data, &inst.id) {
             "view game"
+        } else if play::unseen_trouble(data, &inst.id).is_some() {
+            "see what happened"
         } else if crate::accounts::needs_sign_in(data) {
             "sign in & play"
         } else {
@@ -620,7 +629,7 @@ impl Home {
                     ("o", "play offline"),
                     ("n", "new instance"),
                     ("e", "edit instance"),
-                    ("d", "delete instance"),
+                    ("d ⌫", "delete instance"),
                     ("f", "open folder"),
                 ],
             },
@@ -661,6 +670,8 @@ impl Home {
         if let Some(inst) = self.selected_instance(data) {
             let play = if play::is_playing(data, &inst.id) {
                 "View game"
+            } else if play::unseen_trouble(data, &inst.id).is_some() {
+                "See what happened"
             } else {
                 "Play"
             };
@@ -818,7 +829,7 @@ fn instance_action(inst: &Instance, code: KeyCode) -> Option<Action> {
         KeyCode::Char('m') => mods(inst),
         KeyCode::Char('p') => Action::Open(Route::ResourcePacks(id())),
         KeyCode::Char('e') => Action::Open(Route::EditInstance(id())),
-        KeyCode::Char('d') | KeyCode::Delete => Action::ConfirmDelete(id()),
+        KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => Action::ConfirmDelete(id()),
         KeyCode::Char('f') => Action::OpenFolder(id()),
         KeyCode::Char('x') => Action::ActionsMenu {
             id: id(),

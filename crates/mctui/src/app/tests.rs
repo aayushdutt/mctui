@@ -550,6 +550,8 @@ fn screenshots() {
     h.press(KeyCode::Esc);
     h.press(KeyCode::Char('d'));
     save("delete", &mut h);
+    h.press(KeyCode::Right);
+    save("delete-armed", &mut h);
     h.press(KeyCode::Esc);
     let at = h.find(&row("Creative Build"));
     h.mouse(MouseEventKind::Down(MouseButton::Right), at);
@@ -741,4 +743,27 @@ fn tiny_terminals_keep_the_footer_off_the_header() {
         .find(|l| !l.trim().is_empty())
         .unwrap_or_default();
     assert!(first.trim_start().starts_with("mctui"), "{text}");
+}
+
+#[test]
+fn an_overlay_closes_with_the_screen_it_belongs_to() {
+    let mut h = Harness::new(100, 30);
+    h.press(KeyCode::Char('s'));
+    h.press(KeyCode::Char(':'));
+    assert!(h.app.overlay.is_some());
+    // Work finishing in the background closed the screen under the palette.
+    h.app.stack.pop();
+    assert!(h.app.handle(Event::Msg(APP, Msg::Test(0))), "redraws");
+    assert!(
+        h.app.overlay.is_none(),
+        "its choices meant nothing any more"
+    );
+}
+
+#[test]
+fn ctrl_z_suspends_to_the_shell() {
+    let mut h = Harness::new(80, 24);
+    h.ctrl('z');
+    assert_eq!(h.app.take_suspend(), cfg!(unix));
+    assert!(!h.app.take_suspend(), "once");
 }

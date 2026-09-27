@@ -169,6 +169,11 @@ impl Home {
         // Right: the state that matters most — playing, new, or when played.
         let accessory = if play::is_playing(data, &inst.id) {
             Line::styled(format!("{} Playing", ui::DOT), Style::new().fg(t.success))
+        } else if let Some(trouble) = play::unseen_trouble(data, &inst.id) {
+            Line::styled(
+                format!("{} {trouble}", ui::WARN),
+                Style::new().fg(t.warning),
+            )
         } else {
             match inst.last_played {
                 None => Line::styled("new", Style::new().fg(t.secondary)),
@@ -255,8 +260,11 @@ impl Home {
     /// The instance's buttons: the main action filled, offline beside it.
     fn actions(cv: &mut Canvas<'_>, x: u16, y: u16, inst: &Instance, data: &Data) {
         let playing = play::is_playing(data, &inst.id);
+        let trouble = play::unseen_trouble(data, &inst.id).is_some();
         let play = if playing {
             "▶ View game"
+        } else if trouble {
+            "See what happened"
         } else if crate::accounts::needs_sign_in(data) {
             "▶ Sign in & play"
         } else {
@@ -264,7 +272,7 @@ impl Home {
         };
         let target = ui::Target::Home(Target::Play);
         let end = widgets::button(cv, x, y, play, Some("↵"), ButtonKind::Primary, target).right();
-        if !playing {
+        if !playing && !trouble {
             let target = ui::Target::Home(Target::PlayOffline);
             widgets::button(
                 cv,
@@ -324,6 +332,8 @@ impl Home {
     fn status(t: &Theme, inst: &Instance, data: &Data) -> (Line<'static>, Color) {
         let (text, fg, bg) = if play::is_playing(data, &inst.id) {
             (format!("{} Playing", ui::DOT), t.success, t.success_bg)
+        } else if let Some(trouble) = play::unseen_trouble(data, &inst.id) {
+            (format!("{} {trouble}", ui::WARN), t.warning, t.warning_bg)
         } else if inst.is_fully_downloaded {
             (format!("{} Ready", ui::DOT), t.success, t.success_bg)
         } else {

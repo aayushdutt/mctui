@@ -26,6 +26,7 @@ fn session(seq: u64, phase: Phase) -> Session {
         log: VecDeque::new(),
         dropped: 0,
         notes: Vec::new(),
+        unseen: false,
         task: None,
     }
 }
@@ -338,5 +339,164 @@ fn the_second_q_quits_from_any_screen() {
     assert!(!h.app.should_quit());
     h.press(KeyCode::Char('q'));
     assert!(h.app.should_quit(), "q on the launch screen confirms");
+    game.stop();
+}
+
+#[test]
+fn the_log_scrolls_to_a_full_first_page_and_says_what_it_dropped() {
+    let mut h = on_play_screen(Phase::Ended(exit(0)));
+    if let Some(session) = &mut h.app.data_mut().game {
+        session
+            .log
+            .extend((1..=200).map(|i| line(&format!("line {i}"), Level::Error)));
+        session.dropped = 1_800;
+    }
+    let text = h.text();
+    assert!(
+        text.contains("line 200") && !text.contains("weren't kept"),
+        "{text}"
+    );
+
+    h.press(KeyCode::Char('g'));
+    let text = h.text();
+    assert!(
+        text.contains("… 1800 earlier lines weren't kept") && text.contains("line 1\n"),
+        "{text}"
+    );
+    let shown = text.lines().filter(|l| l.contains("line ")).count();
+    assert!(shown > 5, "the first page is full, not one line: {text}");
+    h.press(KeyCode::Char('j'));
+    assert!(
+        !h.text().contains("line 1\n"),
+        "one step down moves the view at once"
+    );
+}
+
+#[test]
+fn a_crash_while_away_waits_on_home_until_seen() {
+    let h = Harness::new(100, 30);
+    let game = fake_game(&h);
+    drop(h);
+    let mut h = Harness::new(100, 30);
+    h.app.sessions_for_tests(1);
+    let mut crashed = session(1, playing(game.clone()));
+    crashed.log.push_back(line(
+        "java.lang.OutOfMemoryError: Java heap space",
+        Level::Error,
+    ));
+    h.app.data_mut().game = Some(crashed);
+    h.app.handle(crate::task::Event::Msg(
+        u64::MAX,
+        crate::msg::Msg::Play(1, Msg::Exited(exit(1))),
+    ));
+    game.stop();
+    let text = h.text();
+    assert!(text.contains("▲ Crashed"), "{text}");
+    assert!(text.contains("see what happened"), "{text}");
+
+    h.press(KeyCode::Enter);
+    let text = h.text();
+    assert!(text.contains("OutOfMemoryError"), "shows why: {text}");
+    assert_eq!(
+        h.data().game.as_ref().map(|g| g.seq),
+        Some(1),
+        "not relaunched"
+    );
+
+    h.press(KeyCode::Esc);
+    let text = h.text();
+    assert!(
+        !text.contains("Crashed") && text.contains("↵  play"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_sign_in_renewed_by_a_launch_settles_the_accounts_check() {
+    use crate::accounts::SessionStatus;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+
+    let mut h = Harness::online(100, 30, |_| {});
+    // Minecraft is slow to answer the startup check, then turns it down.
+    h.mock(
+        Mock::given(method("GET"))
+            .and(path("/minecraft/profile"))
+            .respond_with(ResponseTemplate::new(401).set_delay(Duration::from_millis(300))),
+    );
+    h.app.start();
+    let account = h.data().accounts.active().cloned().unwrap();
+    assert_eq!(
+        h.data().sessions.get(&account.id),
+        Some(&SessionStatus::Checking)
+    );
+
+    h.app.sessions_for_tests(1);
+    h.app.data_mut().game = Some(session(1, Phase::Preparing(None)));
+    let id = account.id.clone();
+    h.app.handle(crate::task::Event::Msg(
+        u64::MAX,
+        crate::msg::Msg::Play(1, Msg::Refreshed(Box::new(account))),
+    ));
+    std::thread::sleep(Duration::from_millis(400));
+    h.settle();
+    assert_eq!(h.data().sessions.get(&id), Some(&SessionStatus::Valid));
+}
+
+#[test]
+fn ctrl_z_doesnt_suspend_while_the_game_runs() {
+    let h = Harness::new(100, 30);
+    let game = fake_game(&h);
+    drop(h);
+    let mut h = on_play_screen(playing(game.clone()));
+    let key = crossterm::event::KeyEvent::new(
+        KeyCode::Char('z'),
+        crossterm::event::KeyModifiers::CONTROL,
+    );
+    h.app
+        .handle(crate::task::Event::Term(crossterm::event::Event::Key(key)));
+    assert!(!h.app.take_suspend());
+    if cfg!(unix) {
+        assert!(h.banner().is_some_and(|b| b.contains("can't pause")));
+    }
+    game.stop();
+}
+
+#[test]
+fn a_scrolled_back_log_stays_put_as_lines_arrive() {
+    let h = Harness::new(100, 30);
+    let game = fake_game(&h);
+    drop(h);
+    let mut h = on_play_screen(playing(game.clone()));
+    if let Some(session) = &mut h.app.data_mut().game {
+        session
+            .log
+            .extend((1..=200).map(|i| line(&format!("line {i}"), Level::Error)));
+    }
+    h.draw();
+    for _ in 0..5 {
+        h.press(KeyCode::Char('k'));
+    }
+    let view = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|l| l.trim_start().starts_with("line "))
+            .map(|l| l.trim().to_owned())
+            .collect()
+    };
+    let before = view(&h.text());
+    assert_eq!(before.last().map(String::as_str), Some("line 195"));
+
+    let more = (201..=250)
+        .map(|i| line(&format!("line {i}"), Level::Error))
+        .collect();
+    h.app.handle(crate::task::Event::Msg(
+        u64::MAX,
+        crate::msg::Msg::Play(1, Msg::Logs(more)),
+    ));
+    let text = h.text();
+    assert_eq!(view(&text), before, "the same lines");
+    assert!(text.contains("↓ 55 newer"), "{text}");
+    h.press(KeyCode::Char('G'));
+    assert_eq!(view(&h.text()).last().map(String::as_str), Some("line 250"));
     game.stop();
 }

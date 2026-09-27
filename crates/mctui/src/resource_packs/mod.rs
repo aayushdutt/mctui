@@ -30,7 +30,7 @@ use crate::app::{Action, Banner, Question};
 use crate::data::Data;
 use crate::format;
 use crate::overlay::{HelpGroup, MenuItem, PaletteItem};
-use crate::screen::{Ctx, Handled, Mouse, Screen};
+use crate::screen::{self, Ctx, Handled, Mouse, Screen};
 use crate::services::Services;
 use crate::task::{Task, Tasks};
 use crate::ui::{self, Canvas, Hint, Target, widgets};
@@ -90,12 +90,12 @@ pub enum Msg {
     Loaded(Box<Load>),
     /// The catalog again, after starting offline.
     Refreshed(Result<Loaded<Catalog>, vanilla_tweaks::Error>),
-    /// A build moved on to its next stage.
-    Stage(Stage),
-    /// A build finished: the cart as applied.
-    Applied(Result<Cart, vanilla_tweaks::Error>),
-    /// The pack came out of the game: the cart without a build.
-    Removed(Result<Cart, vanilla_tweaks::Error>),
+    /// Job `seq`'s build moved on to its next stage.
+    Stage(u64, Stage),
+    /// Job `seq`'s build finished: the cart as applied.
+    Applied(u64, Result<Cart, vanilla_tweaks::Error>),
+    /// Job `seq` took the pack out of the game: the cart without a build.
+    Removed(u64, Result<Cart, vanilla_tweaks::Error>),
     SaveFailed(String),
 }
 
@@ -113,7 +113,7 @@ fn app_msg(msg: Msg) -> crate::msg::Msg {
 
 /// What keys, clicks, menu entries and palette rows do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Command {
+pub enum Command {
     Toggle,
     Preview,
     Video,
@@ -162,7 +162,7 @@ impl Command {
     }
 
     fn action(self) -> Action {
-        Action::Command(self.name())
+        Action::Command(screen::Command::ResourcePacks(self))
     }
 
     fn button(self) -> Target {
@@ -385,6 +385,12 @@ impl ResourcePacks {
             return Handled::Ignored;
         };
         let banner = |banner| Handled::Action(Action::Banner(banner));
+        // A result from a job that was stopped (or replaced) since.
+        if let Msg::Stage(seq, _) | Msg::Applied(seq, _) | Msg::Removed(seq, _) = &msg
+            && b.job.as_ref().is_none_or(|job| job.seq != *seq)
+        {
+            return Handled::Ignored;
+        }
         match msg {
             Msg::Loaded(_) => Handled::Ignored,
             Msg::SaveFailed(error) => {
@@ -402,14 +408,14 @@ impl ResourcePacks {
                     )),
                 }
             }
-            Msg::Stage(stage) => match (&mut b.job, stage) {
+            Msg::Stage(_, stage) => match (&mut b.job, stage) {
                 (Some(job), Stage::Downloading) if job.work == Work::Building => {
                     job.work = Work::Downloading;
                     Handled::Consumed
                 }
                 _ => Handled::Ignored,
             },
-            Msg::Applied(result) => {
+            Msg::Applied(_, result) => {
                 b.job = None;
                 match result {
                     Ok(cart) if cart.is_empty() => {
@@ -427,7 +433,7 @@ impl ResourcePacks {
                     Err(e) => banner(Banner::warn(describe(&e, 'b'))),
                 }
             }
-            Msg::Removed(result) => {
+            Msg::Removed(_, result) => {
                 b.job = None;
                 match result {
                     Ok(cart) => {
@@ -666,16 +672,18 @@ fn build(b: &mut Browser, inst: &Inst, cx: &Ctx<'_>) -> Handled {
     } else {
         Work::Building
     };
+    b.jobs += 1;
+    let seq = b.jobs;
     let task = cx.tasks.spawn(move |mail| async move {
         let progress = mail.clone();
         let applied = site
             .apply_with(&game, version, &mut cart, move |stage| {
-                progress.send(app_msg(Msg::Stage(stage)));
+                progress.send(app_msg(Msg::Stage(seq, stage)));
             })
             .await;
-        mail.send(app_msg(Msg::Applied(applied.map(|()| cart))));
+        mail.send(app_msg(Msg::Applied(seq, applied.map(|()| cart))));
     });
-    b.job = Some(Job::new(work, cx.now, task));
+    b.job = Some(Job::new(seq, work, cx.now, task));
     Handled::Consumed
 }
 
@@ -727,8 +735,12 @@ fn remove(b: &mut Browser, inst: &Inst, cx: &Ctx<'_>) -> Handled {
         let removed = vanilla_tweaks::unapply(&game, &mut cart).await;
         removed.map(|()| cart)
     };
-    let task = cx.tasks.run(work, |removed| app_msg(Msg::Removed(removed)));
-    b.job = Some(Job::new(Work::Removing, cx.now, task));
+    b.jobs += 1;
+    let seq = b.jobs;
+    let task = cx
+        .tasks
+        .run(work, move |removed| app_msg(Msg::Removed(seq, removed)));
+    b.job = Some(Job::new(seq, Work::Removing, cx.now, task));
     Handled::Consumed
 }
 
@@ -987,10 +999,10 @@ impl Screen for ResourcePacks {
         }
     }
 
-    fn command(&mut self, name: &'static str, cx: &mut Ctx<'_>) -> Handled {
-        match Command::parse(name) {
-            Some(command) => self.run(command, cx),
-            None => Handled::Ignored,
+    fn command(&mut self, command: screen::Command, cx: &mut Ctx<'_>) -> Handled {
+        match command {
+            screen::Command::ResourcePacks(command) => self.run(command, cx),
+            screen::Command::Mods(_) => Handled::Ignored,
         }
     }
 

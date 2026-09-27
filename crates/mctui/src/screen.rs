@@ -22,6 +22,15 @@ use crate::ui::{Canvas, Hint, Target};
 /// that started it and is dropped if that screen is gone.
 pub type ScreenId = u64;
 
+/// A choice a screen offered in a menu, a dialog or the palette, handed back
+/// to it through [`Action::Command`]. Overlays belong to the screen that
+/// opened them, so the active screen is always the one that offered it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Command {
+    Mods(crate::mods::Command),
+    ResourcePacks(crate::resource_packs::Command),
+}
+
 /// How a screen dealt with an input.
 #[derive(Debug)]
 pub enum Handled {
@@ -101,9 +110,9 @@ pub trait Screen: std::fmt::Debug {
         Handled::Ignored
     }
 
-    /// Runs one of this screen's commands by name: a confirmed question's
-    /// `on_yes`, a menu entry or a palette row ([`Action::Command`]).
-    fn command(&mut self, _name: &'static str, _cx: &mut Ctx<'_>) -> Handled {
+    /// Runs a choice this screen offered: a confirmed question's `on_yes`, a
+    /// menu entry or a palette row ([`Action::Command`]).
+    fn command(&mut self, _command: Command, _cx: &mut Ctx<'_>) -> Handled {
         Handled::Ignored
     }
 

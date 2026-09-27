@@ -179,8 +179,8 @@ impl List {
             cv.click(band, target);
         }
         let below = self.keys.len().saturating_sub(self.offset + visible);
-        if below > 0 {
-            let y = area.bottom().saturating_sub(1);
+        if below > 0 && area.height > 0 {
+            let y = area.bottom() - 1;
             cv.text(area.x + 2, y, &format!("↓ {below} more"), area.width, more);
         }
     }

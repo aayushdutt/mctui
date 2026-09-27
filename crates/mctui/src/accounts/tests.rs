@@ -9,6 +9,7 @@ use wiremock::matchers::{bearer_token, body_string_contains, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 use super::{SessionStatus, offline};
+use crate::app::Route;
 use crate::app::tests::Harness;
 use crate::data::Data;
 use crate::task::Event;
@@ -286,6 +287,27 @@ fn signs_in_with_microsoft() {
     assert!(
         text.contains("ACCOUNTS") && text.contains("● jeb_"),
         "{text}"
+    );
+}
+
+#[test]
+fn a_sign_in_finishing_underneath_closes_itself_not_the_screen_on_top() {
+    let mut h = Harness::online(80, 24, |_| {});
+    given_code(&h, vec![oauth_error("authorization_pending")]);
+    given_chain(&h, JEB);
+    h.press(KeyCode::Char('a'));
+    h.press(KeyCode::Char('n'));
+    h.settle();
+    h.press(KeyCode::Char(':'));
+    h.type_text("accounts");
+    h.press(KeyCode::Enter);
+
+    player_signs_in(&h);
+    h.settle();
+    assert_eq!(active(&h), Some("jeb_"));
+    assert_eq!(
+        h.app.stack_routes(),
+        [Some(Route::Accounts), Some(Route::Accounts)]
     );
 }
 

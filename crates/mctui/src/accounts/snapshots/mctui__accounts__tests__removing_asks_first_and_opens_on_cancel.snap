@@ -17,7 +17,7 @@ expression: h.text()
 
                 Remove      Cancel
 
-               ←→  choose    ↵  confirm    esc  cancel
+               ←→  choose    ↵  cancel    y  confirm
 
               ────────────────────────────────────────────────────
 

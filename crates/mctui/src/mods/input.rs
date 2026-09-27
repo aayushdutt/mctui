@@ -251,10 +251,11 @@ impl Mods {
             message: format!("Remove {} from “{}”?", m.title, self.inst.name),
             yes: "Remove",
             danger: Some("Its file is deleted from the mods folder.".into()),
-            on_yes: Action::Mods(Command::Remove {
+            on_yes: Command::Remove {
                 file: m.file.clone(),
                 title: m.title.clone(),
-            }),
+            }
+            .action(),
         }))
     }
 
@@ -278,10 +279,11 @@ impl Mods {
     /// The right-click menu for a search result.
     fn hit_menu(&self, hit: &SearchHit, at: Position) -> Action {
         let installed = self.installed_jar(hit);
-        let install = Action::Mods(Command::Install {
+        let install = Command::Install {
             project_id: hit.project_id.clone(),
             title: hit.title.clone(),
-        });
+        }
+        .action();
         let open = open_page(hit_page(hit), &hit.title);
         let mut items = vec![
             menu_item(
