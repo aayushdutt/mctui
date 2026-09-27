@@ -1,0 +1,165 @@
+{
+  "hits": [
+    {
+      "project_id": "AANobbMI",
+      "project_type": "mod",
+      "all_project_types": [
+        "mod"
+      ],
+      "slug": "sodium",
+      "author": "jellysquid3",
+      "author_id": "TEZXhE2U",
+      "organization": "CaffeineMC",
+      "organization_id": "LjcZDkRW",
+      "title": "Sodium",
+      "description": "A high-performance rendering engine replacement for Minecraft, which greatly improves frame rates and reduces micro-stutter.",
+      "categories": [
+        "fabric",
+        "neoforge",
+        "optimization",
+        "quilt"
+      ],
+      "display_categories": [
+        "fabric",
+        "neoforge",
+        "optimization",
+        "quilt"
+      ],
+      "versions": [
+        "26.2-rc-1",
+        "26.2-rc-2",
+        "26.2",
+        "26.3-rc-1",
+        "26.3-rc-2",
+        "26.3"
+      ],
+      "downloads": 231674837,
+      "follows": 41057,
+      "icon_url": "https://cdn.modrinth.com/data/AANobbMI/295862f4724dc3f78df3447ad6072b2dcd3ef0c9_96.webp",
+      "date_created": "2021-01-03T00:53:34.185936+00:00",
+      "date_modified": "2026-09-20T21:27:06.329936+00:00",
+      "latest_version": "c3YkZvne",
+      "license": "LicenseRef-Polyform-Shield-1.0.0",
+      "client_side": "required",
+      "server_side": "unsupported",
+      "environment": [
+        "client_only"
+      ],
+      "disclosure_types": [],
+      "gallery": [
+        "https://cdn.modrinth.com/data/AANobbMI/images/d84313e6f57dc9e7896961dbd2dfc2689d482758_350.webp"
+      ],
+      "featured_gallery": null,
+      "color": 8703084
+    },
+    {
+      "project_id": "PtjYWJkn",
+      "project_type": "mod",
+      "all_project_types": [
+        "mod"
+      ],
+      "slug": "sodium-extra",
+      "author": "FlashyReese",
+      "author_id": "QXAY01zS",
+      "organization": null,
+      "organization_id": null,
+      "title": "Sodium Extra",
+      "description": "A Sodium addon that adds features that shouldn't be in Sodium.",
+      "categories": [
+        "cursed",
+        "fabric",
+        "neoforge",
+        "optimization",
+        "quilt",
+        "utility"
+      ],
+      "display_categories": [
+        "cursed",
+        "fabric",
+        "neoforge",
+        "optimization",
+        "quilt",
+        "utility"
+      ],
+      "versions": [
+        "1.21.11",
+        "26.1",
+        "26.1.1",
+        "26.1.2",
+        "26.2",
+        "26.3"
+      ],
+      "downloads": 98055963,
+      "follows": 13514,
+      "icon_url": "https://cdn.modrinth.com/data/PtjYWJkn/0df4fb22a11e1dcb5e83cb0aadd275b571aca7a9_96.webp",
+      "date_created": "2021-02-17T04:37:04.928784+00:00",
+      "date_modified": "2026-09-16T02:48:16.702643+00:00",
+      "latest_version": "f4TfteNb",
+      "license": "LGPL-3.0-only",
+      "client_side": "required",
+      "server_side": "unsupported",
+      "environment": [
+        "client_only"
+      ],
+      "disclosure_types": [],
+      "gallery": [],
+      "featured_gallery": null,
+      "color": 16577485
+    },
+    {
+      "project_id": "Bh37bMuy",
+      "project_type": "mod",
+      "all_project_types": [
+        "mod"
+      ],
+      "slug": "reeses-sodium-options",
+      "author": "FlashyReese",
+      "author_id": "QXAY01zS",
+      "organization": null,
+      "organization_id": null,
+      "title": "Reese's Sodium Options",
+      "description": "Alternative Options Menu for Sodium",
+      "categories": [
+        "fabric",
+        "neoforge",
+        "quilt",
+        "utility"
+      ],
+      "display_categories": [
+        "fabric",
+        "neoforge",
+        "quilt",
+        "utility"
+      ],
+      "versions": [
+        "1.21.11",
+        "26.1",
+        "26.1.1",
+        "26.1.2",
+        "26.2",
+        "26.3"
+      ],
+      "downloads": 81961057,
+      "follows": 8885,
+      "icon_url": "https://cdn.modrinth.com/data/Bh37bMuy/icon.png",
+      "date_created": "2021-08-21T06:10:10.242065+00:00",
+      "date_modified": "2026-09-24T19:57:30.574040+00:00",
+      "latest_version": "KoUrx3jJ",
+      "license": "MIT",
+      "client_side": "required",
+      "server_side": "unsupported",
+      "environment": [
+        "client_only"
+      ],
+      "disclosure_types": [],
+      "gallery": [
+        "https://cdn.modrinth.com/data/Bh37bMuy/images/ef92f9dbadd953c9acfbc0a5246921a8226dac1c_350.webp"
+      ],
+      "featured_gallery": null,
+      "color": 6978040
+    }
+  ],
+  "offset": 0,
+  "limit": 3,
+  "total_hits": 34
+}

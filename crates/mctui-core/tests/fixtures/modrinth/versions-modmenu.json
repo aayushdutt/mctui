@@ -1,0 +1,104 @@
+[
+  {
+    "game_versions": [
+      "1.21.4"
+    ],
+    "loaders": [
+      "fabric",
+      "quilt"
+    ],
+    "environment": "client_only",
+    "id": "qEKKsTqd",
+    "project_id": "mOgUt4GM",
+    "author_id": "uF4fzWRt",
+    "featured": false,
+    "name": "v13.0.4 for 1.21.4",
+    "version_number": "13.0.4",
+    "changelog": "- Fix inversion of config mode (thanks sisby-folk)",
+    "changelog_url": null,
+    "date_published": "2026-03-25T01:16:45.047605Z",
+    "downloads": 1084544,
+    "version_type": "release",
+    "status": "listed",
+    "requested_status": null,
+    "files": [
+      {
+        "id": "Sf9q3wnW",
+        "hashes": {
+          "sha1": "b5d816f6df9ffb9af8f9c2b43dfb15d9bbfcf400",
+          "sha512": "863f7c367898e0fce283b11554d253f05acadf46057ab0d2c14a592582ce35bbd9cf4f4b8cf1e3658a6f7a4bb765f9e49a8a02127edbe017daeea8fb24b0ab4f"
+        },
+        "url": "https://cdn.modrinth.com/data/mOgUt4GM/versions/qEKKsTqd/modmenu-13.0.4.jar",
+        "filename": "modmenu-13.0.4.jar",
+        "primary": true,
+        "size": 1050885,
+        "file_type": null
+      }
+    ],
+    "dependencies": [
+      {
+        "version_id": null,
+        "project_id": "eXts2L7r",
+        "file_name": null,
+        "dependency_type": "required"
+      },
+      {
+        "version_id": null,
+        "project_id": "P7dR8mSH",
+        "file_name": null,
+        "dependency_type": "required"
+      }
+    ]
+  },
+  {
+    "game_versions": [
+      "1.21.4"
+    ],
+    "loaders": [
+      "fabric",
+      "quilt"
+    ],
+    "environment": "client_only",
+    "id": "7iGb2ltH",
+    "project_id": "mOgUt4GM",
+    "author_id": "uF4fzWRt",
+    "featured": false,
+    "name": "v13.0.3 for 1.21.4",
+    "version_number": "13.0.3",
+    "changelog": "- Removed redundant stacetrace logging for mod icon errors\n- Updated Ukrainian translation\n- Fix scroll position being r",
+    "changelog_url": null,
+    "date_published": "2025-03-11T21:49:43.167175Z",
+    "downloads": 4326558,
+    "version_type": "release",
+    "status": "listed",
+    "requested_status": null,
+    "files": [
+      {
+        "id": "zfmgS5fB",
+        "hashes": {
+          "sha1": "4cab0014a7223c6988fde70064579dc66ef8f000",
+          "sha512": "147681418d8729790fe7712163706d5209a5e6c90ffe81867020f70595ef5ede8037586ca4eb8239e540b1375dca4a0bbfbbe86c61c488aabf9b702520b7afe5"
+        },
+        "url": "https://cdn.modrinth.com/data/mOgUt4GM/versions/7iGb2ltH/modmenu-13.0.3.jar",
+        "filename": "modmenu-13.0.3.jar",
+        "primary": true,
+        "size": 1050777,
+        "file_type": null
+      }
+    ],
+    "dependencies": [
+      {
+        "version_id": null,
+        "project_id": "P7dR8mSH",
+        "file_name": null,
+        "dependency_type": "required"
+      },
+      {
+        "version_id": null,
+        "project_id": "eXts2L7r",
+        "file_name": null,
+        "dependency_type": "required"
+      }
+    ]
+  }
+]

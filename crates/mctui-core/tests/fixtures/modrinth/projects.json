@@ -1,0 +1,135 @@
+[
+  {
+    "client_side": "optional",
+    "server_side": "optional",
+    "game_versions": [
+      "26.3-pre-2",
+      "26.3-pre-3",
+      "26.3-rc-1",
+      "26.3-rc-2",
+      "26.3",
+      "26.4-snapshot-1"
+    ],
+    "environment": [
+      "client_or_server_prefers_both"
+    ],
+    "id": "P7dR8mSH",
+    "slug": "fabric-api",
+    "project_type": "mod",
+    "team": "BZoBsPo6",
+    "organization": null,
+    "title": "Fabric API",
+    "description": "Lightweight and modular API providing common hooks and intercompatibility measures utilized by mods using the Fabric toolchain.",
+    "body": "# Fabric API\n\nEssential hooks for modding with Fabric.\n\nFabric API is the library for essential hooks and interoperability mechanisms for Fabric mods. Examples ",
+    "body_url": null,
+    "published": "2021-01-22T11:04:41.419169Z",
+    "updated": "2026-09-22T20:19:52.389874Z",
+    "approved": "2021-01-22T11:04:41.419169Z",
+    "queued": null,
+    "status": "approved",
+    "requested_status": null,
+    "moderator_message": null,
+    "license": {
+      "id": "Apache-2.0",
+      "name": "Apache License 2.0",
+      "url": null
+    },
+    "downloads": 262664169,
+    "followers": 36237,
+    "categories": [
+      "library"
+    ],
+    "additional_categories": [],
+    "loaders": [
+      "fabric"
+    ],
+    "versions": [
+      "KZS9tylY",
+      "EW33COvi",
+      "Vz2fCyj1"
+    ],
+    "icon_url": "https://cdn.modrinth.com/data/P7dR8mSH/icon.png",
+    "raw_icon_url": "https://cdn.modrinth.com/data/P7dR8mSH/icon.png",
+    "issues_url": "https://github.com/FabricMC/fabric/issues",
+    "source_url": "https://github.com/FabricMC/fabric",
+    "wiki_url": "https://fabricmc.net/wiki/",
+    "discord_url": "https://discord.gg/v6v4pMv",
+    "donation_urls": [],
+    "gallery": [],
+    "color": 12367004,
+    "thread_id": "P7dR8mSH",
+    "monetization_status": "monetized"
+  },
+  {
+    "client_side": "required",
+    "server_side": "unsupported",
+    "game_versions": [
+      "26.2-rc-2",
+      "26.2",
+      "26.3-snapshot-5",
+      "26.3-rc-1",
+      "26.3",
+      "26.4-snapshot-1"
+    ],
+    "environment": [
+      "client_only"
+    ],
+    "id": "mOgUt4GM",
+    "slug": "modmenu",
+    "project_type": "mod",
+    "team": "VMz4FpgB",
+    "organization": "ASjenmjH",
+    "title": "Mod Menu",
+    "description": "Adds a mod menu to view the list of mods you have installed.",
+    "body": "# Mod Menu\n![Screenshot of the Mods screen, showing a list of a few mods on the left side below a search bar and filters button, where Mod Menu is selected. On ",
+    "body_url": null,
+    "published": "2020-11-06T05:11:04.725058Z",
+    "updated": "2026-09-24T20:44:06.256867Z",
+    "approved": "2020-11-06T05:11:04.725058Z",
+    "queued": null,
+    "status": "approved",
+    "requested_status": null,
+    "moderator_message": null,
+    "license": {
+      "id": "MIT",
+      "name": "MIT License",
+      "url": null
+    },
+    "downloads": 147357295,
+    "followers": 27222,
+    "categories": [
+      "utility"
+    ],
+    "additional_categories": [],
+    "loaders": [
+      "fabric",
+      "quilt"
+    ],
+    "versions": [
+      "M3KFXLhq",
+      "DgzrfgAZ",
+      "O90fUm3q"
+    ],
+    "icon_url": "https://cdn.modrinth.com/data/mOgUt4GM/5a20ed1450a0e1e79a1fe04e61bb4e5878bf1d20.png",
+    "raw_icon_url": "https://cdn.modrinth.com/data/mOgUt4GM/5a20ed1450a0e1e79a1fe04e61bb4e5878bf1d20.png",
+    "issues_url": "https://github.com/TerraformersMC/ModMenu/issues",
+    "source_url": "https://github.com/TerraformersMC/ModMenu",
+    "wiki_url": "https://github.com/TerraformersMC/ModMenu/wiki",
+    "discord_url": "https://discord.gg/jEGF5fb",
+    "donation_urls": [],
+    "gallery": [
+      {
+        "url": "https://cdn.modrinth.com/data/mOgUt4GM/images/70fd54b0579f2de3ac45fa9650aca2ec8ff0882b_350.webp",
+        "raw_url": "https://cdn.modrinth.com/data/mOgUt4GM/images/ec97a9f09bc750dd7895414eac14f6252ca47621.png",
+        "featured": true,
+        "title": "Mod Menu Banner",
+        "description": "Fancy ModMenu banner",
+        "created": "2023-11-03T21:09:55.559800Z",
+        "ordering": 0
+      }
+    ],
+    "color": 1330428,
+    "thread_id": "mOgUt4GM",
+    "monetization_status": "monetized"
+  }
+]

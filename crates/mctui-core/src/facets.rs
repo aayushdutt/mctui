@@ -201,7 +201,7 @@ const ACRONYMS: [&str; 7] = ["api", "yacl", "emf", "etf", "fps", "ui", "hud"];
 /// version-like one, minus trailing loader words; lower-case names are title
 /// cased. The version is the first word from there that starts with a digit,
 /// up to any `+build` suffix.
-fn parse_mod_file_name(file: &str) -> (String, Option<String>) {
+pub(crate) fn parse_mod_file_name(file: &str) -> (String, Option<String>) {
     let base = strip_ext(file, ".jar").unwrap_or(file);
     let words: Vec<&str> = base
         .split(['-', '_', ' '])

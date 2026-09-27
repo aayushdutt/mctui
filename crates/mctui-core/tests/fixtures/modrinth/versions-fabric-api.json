@@ -1,0 +1,113 @@
+[
+  {
+    "game_versions": [
+      "1.21.4"
+    ],
+    "loaders": [
+      "fabric"
+    ],
+    "environment": "client_or_server_prefers_both",
+    "id": "ZNwYCTsk",
+    "project_id": "P7dR8mSH",
+    "author_id": "JZA4dW8o",
+    "featured": false,
+    "name": "[1.21.4] Fabric API 0.118.0+1.21.4",
+    "version_number": "0.118.0+1.21.4",
+    "changelog": "- Bump version (modmuss50)\n- Add vararg helper methods for multi-tag support in the FabricTagBuilder (#4452) (ImVeryBad)",
+    "changelog_url": null,
+    "date_published": "2025-02-20T18:30:49.048057Z",
+    "downloads": 769859,
+    "version_type": "release",
+    "status": "listed",
+    "requested_status": null,
+    "files": [
+      {
+        "id": "Ay9bJDQI",
+        "hashes": {
+          "sha512": "1e0d31b6663dc2c7be648f3a5a9cf7b698b9a0fd0f7ae16d1d3f32d943d7c5205ff63a4f81b0c4e94a8997482cce026b7ca486e99d9ce35ac069aeb29b02a30d",
+          "sha1": "ca9702e27078db7c2c9d28899a2c4bd136bd5e12"
+        },
+        "url": "https://cdn.modrinth.com/data/P7dR8mSH/versions/ZNwYCTsk/fabric-api-0.118.0%2B1.21.4.jar",
+        "filename": "fabric-api-0.118.0+1.21.4.jar",
+        "primary": true,
+        "size": 2139752,
+        "file_type": null
+      }
+    ],
+    "dependencies": []
+  },
+  {
+    "game_versions": [
+      "1.21.4"
+    ],
+    "loaders": [
+      "fabric"
+    ],
+    "environment": "client_or_server_prefers_both",
+    "id": "BYonCXDS",
+    "project_id": "P7dR8mSH",
+    "author_id": "JZA4dW8o",
+    "featured": false,
+    "name": "[1.21.4] Fabric API 0.117.0+1.21.4",
+    "version_number": "0.117.0+1.21.4",
+    "changelog": "- Bump version (modmuss50)\n- Fix res loader tests (modmuss50)\n- Implement builtin mod resource/data pack sorting (#4070)",
+    "changelog_url": null,
+    "date_published": "2025-02-15T15:22:06.429499Z",
+    "downloads": 274033,
+    "version_type": "beta",
+    "status": "listed",
+    "requested_status": null,
+    "files": [
+      {
+        "id": "3nNlDS2D",
+        "hashes": {
+          "sha512": "4dedb7a3f8d1e0110742b19dc3ad55033417f2d0a0507def21ce2716a08678fce5155a1bd4810639d366d6b59ef8fbab19f1415a93c23255b223039635a2d661",
+          "sha1": "317d879af820f3e88af10a7fb2707a193bf1f6bf"
+        },
+        "url": "https://cdn.modrinth.com/data/P7dR8mSH/versions/BYonCXDS/fabric-api-0.117.0%2B1.21.4.jar",
+        "filename": "fabric-api-0.117.0+1.21.4.jar",
+        "primary": true,
+        "size": 2137787,
+        "file_type": null
+      }
+    ],
+    "dependencies": []
+  },
+  {
+    "game_versions": [
+      "1.21.4"
+    ],
+    "loaders": [
+      "fabric"
+    ],
+    "environment": "client_or_server_prefers_both",
+    "id": "3WOjLgFJ",
+    "project_id": "P7dR8mSH",
+    "author_id": "JZA4dW8o",
+    "featured": false,
+    "name": "[1.21.4] Fabric API 0.116.1+1.21.4",
+    "version_number": "0.116.1+1.21.4",
+    "changelog": "- Bump version (modmuss50)\n- Fix incorrect HUD z index for sub layers (#4437) (modmuss)\n",
+    "changelog_url": null,
+    "date_published": "2025-02-11T17:00:37.462794Z",
+    "downloads": 184295,
+    "version_type": "release",
+    "status": "listed",
+    "requested_status": null,
+    "files": [
+      {
+        "id": "ZpUcvRha",
+        "hashes": {
+          "sha512": "389ae61dbf6bd4cd9d16a68e2ab8b74a0e46e6301970ad35ec1feaed4e123bc5a29cb36e7ed7c8aa27c5a3fe5edfd3975920240f29667a9f49c9947f5ba911e7",
+          "sha1": "42f3ea93bbfac03f23af752593c95ddc6af863d6"
+        },
+        "url": "https://cdn.modrinth.com/data/P7dR8mSH/versions/3WOjLgFJ/fabric-api-0.116.1%2B1.21.4.jar",
+        "filename": "fabric-api-0.116.1+1.21.4.jar",
+        "primary": true,
+        "size": 2126372,
+        "file_type": null
+      }
+    ],
+    "dependencies": []
+  }
+]

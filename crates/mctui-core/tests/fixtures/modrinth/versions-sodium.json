@@ -1,0 +1,113 @@
+[
+  {
+    "game_versions": [
+      "1.21.4"
+    ],
+    "loaders": [
+      "fabric"
+    ],
+    "environment": "client_only",
+    "id": "c3YkZvne",
+    "project_id": "AANobbMI",
+    "author_id": "TEZXhE2U",
+    "featured": false,
+    "name": "Sodium 0.6.13 for Fabric 1.21.4",
+    "version_number": "mc1.21.4-0.6.13-fabric",
+    "changelog": "- Improved compatibility with some NeoForge mods that use the Fabric Rendering API.\n- Improved compatibility with some F",
+    "changelog_url": null,
+    "date_published": "2025-04-04T00:09:49.666331Z",
+    "downloads": 5449996,
+    "version_type": "release",
+    "status": "listed",
+    "requested_status": null,
+    "files": [
+      {
+        "id": "Ya4LV6Qd",
+        "hashes": {
+          "sha1": "c881d2db971207c396b5629632437f1520c0c478",
+          "sha512": "2c72ca2ddfd27e29ff6c24fccdf6f3d80857bd1014c707017f96cb4a424f94918e53ba21d85f22e3c9171803f8d2c12c99ae857d38d8e85546cc65960b95a2f1"
+        },
+        "url": "https://cdn.modrinth.com/data/AANobbMI/versions/c3YkZvne/sodium-fabric-0.6.13%2Bmc1.21.4.jar",
+        "filename": "sodium-fabric-0.6.13+mc1.21.4.jar",
+        "primary": true,
+        "size": 1306799,
+        "file_type": null
+      }
+    ],
+    "dependencies": []
+  },
+  {
+    "game_versions": [
+      "1.21.4"
+    ],
+    "loaders": [
+      "fabric"
+    ],
+    "environment": "client_only",
+    "id": "FRXt5xaI",
+    "project_id": "AANobbMI",
+    "author_id": "TEZXhE2U",
+    "featured": false,
+    "name": "Sodium 0.6.10 for Fabric 1.21.4",
+    "version_number": "mc1.21.4-0.6.10-fabric",
+    "changelog": "- Fixed compatibility with NeoForge version 21.4.96-beta and newer.\n- Updated Fabric API modules to version 0.118.0.",
+    "changelog_url": null,
+    "date_published": "2025-02-26T17:51:51.491Z",
+    "downloads": 1566205,
+    "version_type": "release",
+    "status": "listed",
+    "requested_status": null,
+    "files": [
+      {
+        "id": "hDAaQj7w",
+        "hashes": {
+          "sha1": "b4ce6db38fd287ce6af644ee9f71a5318c52f42e",
+          "sha512": "e6213b74dc3ba15387040dadd383f0c69999f365c9bf492893c52f0d74090b577e4ce03c52f2a39cd9d680dd32aa6228aae268dabcd0c2478908195c56d975c9"
+        },
+        "url": "https://cdn.modrinth.com/data/AANobbMI/versions/FRXt5xaI/sodium-fabric-0.6.10%2Bmc1.21.4.jar",
+        "filename": "sodium-fabric-0.6.10+mc1.21.4.jar",
+        "primary": true,
+        "size": 1305866,
+        "file_type": null
+      }
+    ],
+    "dependencies": []
+  },
+  {
+    "game_versions": [
+      "1.21.4"
+    ],
+    "loaders": [
+      "fabric"
+    ],
+    "environment": "client_only",
+    "id": "joBzVWtR",
+    "project_id": "AANobbMI",
+    "author_id": "TEZXhE2U",
+    "featured": false,
+    "name": "Sodium 0.6.2 for Fabric 1.21.4",
+    "version_number": "mc1.21.4-0.6.2-fabric",
+    "changelog": "- Added support for Minecraft 1.21.4\n- Fixed the handling of translucent render layers in item rendering when using the ",
+    "changelog_url": null,
+    "date_published": "2024-12-03T21:21:41.169462Z",
+    "downloads": 127882,
+    "version_type": "beta",
+    "status": "listed",
+    "requested_status": null,
+    "files": [
+      {
+        "id": "tKsVW1bC",
+        "hashes": {
+          "sha512": "227a051609855a88027b93832d20624b4a0161a6b541d0fc651911c680d5e2f64b834fa7931eb5faed8cea24b75f493ccf3e0b5d0216f7c4fe05ebe09d2d216f",
+          "sha1": "ae3d1af44b32754b21ad4776495ff001e4339487"
+        },
+        "url": "https://cdn.modrinth.com/data/AANobbMI/versions/joBzVWtR/sodium-fabric-0.6.2%2Bmc1.21.4.jar",
+        "filename": "sodium-fabric-0.6.2+mc1.21.4.jar",
+        "primary": true,
+        "size": 1288943,
+        "file_type": null
+      }
+    ],
+    "dependencies": []
+  }
+]
