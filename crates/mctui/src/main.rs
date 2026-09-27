@@ -75,7 +75,7 @@ async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Re
     let (tx, mut events) = mpsc::unbounded_channel();
     spawn_input_reader(tx.clone());
     let tasks = Tasks::new(tx, tokio::runtime::Handle::current());
-    let services = Services::new(Http::new()?);
+    let services = Services::new(Http::new()?, &data.dir);
     let area = Rect::new(0, 0, size.width, size.height);
     let mut app = App::new(data, notices, terminal, (tasks, services), area);
     let tz = TimeZone::system();

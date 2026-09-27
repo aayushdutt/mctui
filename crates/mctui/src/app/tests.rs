@@ -36,7 +36,7 @@ impl Harness {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (tx, events) = tokio::sync::mpsc::unbounded_channel();
         let tasks = Tasks::new(tx, runtime.handle().clone());
-        let services = Services::new(mctui_core::net::Http::new().unwrap());
+        let services = Services::new(mctui_core::net::Http::new().unwrap(), &data.dir);
         let terminal = crate::theme::Terminal::default();
         let mut app = App::new(
             data,
