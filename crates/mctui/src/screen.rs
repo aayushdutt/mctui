@@ -13,6 +13,7 @@ use crate::app::Action;
 use crate::data::Data;
 use crate::msg::Msg;
 use crate::overlay::{HelpGroup, PaletteItem};
+use crate::services::Services;
 use crate::task::Tasks;
 use crate::theme::Theme;
 use crate::ui::{Canvas, Hint, Target};
@@ -54,10 +55,12 @@ pub enum Mouse {
 /// What a screen may use while handling input.
 #[expect(
     dead_code,
-    reason = "tasks, theme and now serve the screens being built"
+    reason = "tasks, services, theme and now serve the screens being built"
 )]
 pub struct Ctx<'a> {
     pub data: &'a mut Data,
+    /// Clients for the online services.
+    pub services: &'a Services,
     /// Starts background work that reports back to this screen.
     pub tasks: &'a Tasks,
     pub theme: &'a Theme,

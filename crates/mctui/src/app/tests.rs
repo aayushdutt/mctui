@@ -36,11 +36,13 @@ impl Harness {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (tx, events) = tokio::sync::mpsc::unbounded_channel();
         let tasks = Tasks::new(tx, runtime.handle().clone());
+        let services = Services::new(mctui_core::net::Http::new().unwrap());
+        let terminal = crate::theme::Terminal::default();
         let mut app = App::new(
             data,
             notices,
-            crate::theme::Terminal::default(),
-            tasks,
+            terminal,
+            (tasks, services),
             Rect::new(0, 0, w, h),
         );
         app.set_splash("Blazingly monospaced!");

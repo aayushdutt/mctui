@@ -22,6 +22,7 @@ use crate::format;
 use crate::home::Home;
 use crate::overlay::{Confirm, Help, Menu, Outcome, Overlay, Palette, PaletteItem};
 use crate::screen::{Ctx, Handled, Mouse, Screen, ScreenId};
+use crate::services::Services;
 use crate::settings::Settings;
 use crate::task::{Event, Tasks};
 use crate::theme::{Terminal, Theme};
@@ -154,6 +155,7 @@ pub struct App {
     stack: Vec<(ScreenId, Box<dyn Screen>)>,
     next_id: ScreenId,
     tasks: Tasks,
+    services: Services,
     overlay: Option<Overlay>,
     banner: Option<(Banner, Instant)>,
     /// Problems found at startup; they stay until the next key.
@@ -181,7 +183,7 @@ impl App {
         data: Data,
         notices: Vec<String>,
         terminal: Terminal,
-        tasks: Tasks,
+        (tasks, services): (Tasks, Services),
         size: Rect,
     ) -> Self {
         let home = Home::new(&data, splash());
@@ -194,6 +196,7 @@ impl App {
             stack: Vec::new(),
             next_id: HOME + 1,
             tasks,
+            services,
             overlay: None,
             banner: None,
             notices,
@@ -259,6 +262,7 @@ impl App {
         let tasks = self.tasks.for_screen(id);
         let mut cx = Ctx {
             data: &mut self.data,
+            services: &self.services,
             tasks: &tasks,
             theme: &self.theme,
             now: Instant::now(),

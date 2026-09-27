@@ -11,6 +11,7 @@ mod home;
 mod msg;
 mod overlay;
 mod screen;
+mod services;
 mod settings;
 mod task;
 mod term;
@@ -25,12 +26,14 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+use mctui_core::net::Http;
 use mctui_core::paths::DataDir;
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 
 use crate::app::App;
 use crate::data::Data;
+use crate::services::Services;
 use crate::task::{Event, Tasks};
 use crate::term::Tui;
 use crate::theme::Terminal;
@@ -72,8 +75,9 @@ async fn run(data: Data, notices: Vec<String>, terminal: Terminal) -> anyhow::Re
     let (tx, mut events) = mpsc::unbounded_channel();
     spawn_input_reader(tx.clone());
     let tasks = Tasks::new(tx, tokio::runtime::Handle::current());
+    let services = Services::new(Http::new()?);
     let area = Rect::new(0, 0, size.width, size.height);
-    let mut app = App::new(data, notices, terminal, tasks, area);
+    let mut app = App::new(data, notices, terminal, (tasks, services), area);
     let tz = TimeZone::system();
     let mut prof = RenderProf::from_env();
 
