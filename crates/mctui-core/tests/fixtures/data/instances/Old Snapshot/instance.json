@@ -1,0 +1,14 @@
+{
+  "id": "26.2-snapshot-1 Fabric",
+  "name": "Old Snapshot",
+  "version": "26.2-snapshot-1",
+  "loader": "fabric",
+  "loaderVer": "0.18.6",
+  "path": "/mnt/old-disk/mctui/instances/26.2-snapshot-1 Fabric",
+  "javaPath": "",
+  "jvmArgs": null,
+  "lastPlayed": "2026-04-08T02:00:32.888982+05:30",
+  "playTime": 0,
+  "isFullyDownloaded": true,
+  "cachedAt": "2026-04-08T02:01:04.069544+05:30"
+}

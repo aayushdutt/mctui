@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Instances                                                  ● Steve
+
+    Instances                3      Creative Build                    ● Ready
+                                    Minecraft 1.21.1  ·  Vanilla
+    Survival 1.21       2h ago
+                                      ▶ Play   ↵      Play offline   o
+    Snapshot Test          new
+                                     Overview   Mods 0   Resource packs 0
+
+    Creative Build                  50m           3d ago        0
+    ──────────────────────────────  played        last played   worlds
+
+     Play                       ↵
+     Play offline               o
+     Resource packs             p
+     Edit                       e
+     Open folder                f
+     Delete                     d
+
+    ──────────────────────────────
+
+   ↵  play    o  offline    n  new    /  search    :  commands    ?  help

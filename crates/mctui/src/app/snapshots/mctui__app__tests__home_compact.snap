@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: "Harness::new(60, 24).text()"
+---
+
+  mctui  ›  Instances                              ● Steve
+
+    Instances                                          3
+
+    Survival 1.21                                 2h ago
+
+    Snapshot Test                                    new
+
+    Creative Build                                3d ago
+
+    + New instance
+
+
+
+
+
+
+
+    ● Ready · 1.21.4 · Fabric 0.16.10 · 3 mods · 2h ago
+
+   ↵  play    o  offline    n  new    /  search
+   :  commands    ?  help

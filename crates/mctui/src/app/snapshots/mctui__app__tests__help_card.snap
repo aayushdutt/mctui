@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: h.text()
+---
+
+  m  Home · keys                                                             e
+     ──────────────────────────────────────────────────────────────────────
+
+     Navigate                             Screens
+     ↑↓ j k        move                   m             mods
+     pgup pgdn     page                   p             resource packs
+     tab           list ↔ details         s             settings
+     → l ]         details · next tab     a             accounts
+     ← h [         back · previous tab
+                                          General
+     Act                                  x             actions
+     ↵             play                   :             command palette
+     o             play offline           /             filter
+     n             new instance           esc           clear filter · back
+     e             edit instance          ?             help
+     d             delete instance        q             quit
+     f             open folder            double-click  play                 o
+                                          right-click   actions              o
+
+      esc  close
+
+     ──────────────────────────────────────────────────────────────────────

@@ -1,0 +1,31 @@
+[package]
+name = "mctui"
+description = "A fast, mouse-friendly Minecraft launcher for your terminal."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+mctui-core.workspace = true
+
+anyhow.workspace = true
+crossterm.workspace = true
+jiff.workspace = true
+nucleo-matcher.workspace = true
+open.workspace = true
+ratatui.workspace = true
+terminal-colorsaurus.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

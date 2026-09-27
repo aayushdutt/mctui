@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = ["crates/mctui-core", "crates/mctui"]
+
+[workspace.package]
+version = "0.5.0-dev"
+edition = "2024"
+rust-version = "1.93"
+repository = "https://github.com/aayushdutt/mctui"
+
+[workspace.dependencies]
+mctui-core = { path = "crates/mctui-core" }
+
+anyhow = "1"
+crossterm = "0.29"
+dirs = "7"
+insta = "1.48"
+jiff = { version = "0.2", features = ["serde"] }
+nucleo-matcher = "0.3"
+open = "5"
+ratatui = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+terminal-colorsaurus = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+# Terminal geometry is u16 everywhere and lists index with usize; the casts
+# between them are deliberate and bounded by the screen size.
+cast_possible_truncation = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+# Hex colours read better unbroken.
+unreadable_literal = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

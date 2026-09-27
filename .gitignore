@@ -30,3 +30,6 @@ docs/
 
 # Local agent tooling (worktrees, settings)
 .claude/
+
+# Rust
+/target/

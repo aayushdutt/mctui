@@ -1,0 +1,16 @@
+{
+  "id": "1.21.6 Fabric",
+  "name": "1.21.6 Fabric",
+  "version": "1.21.6",
+  "loader": "fabric",
+  "loaderVer": "0.19.3",
+  "path": "/home/steve/.local/share/mctui/instances/1.21.6 Fabric",
+  "javaPath": "/home/steve/.config/mctui/java/21/bin/java",
+  "jvmArgs": null,
+  "lastPlayed": "2026-06-15T19:37:10.324669+05:30",
+  "createdAt": "0001-01-01T00:00:00Z",
+  "playTime": 7091,
+  "isFullyDownloaded": true,
+  "cachedAt": "2026-06-15T19:37:25.685208+05:30",
+  "downloadCacheKey": "1.21.6|fabric|0.19.3"
+}

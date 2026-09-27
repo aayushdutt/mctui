@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Instances                                                  ● Steve
+
+    Instance  Command palette                                         ● Ready
+              ────────────────────────────────────────────────────  .10
+    Survival
+               : Jump to an instance or run a command…               o
+    Snapshot
+                 Play                                           ↵   cks 0
+    Creative     Play offline                                   o
+                 Mods                                           m
+    + New in     Resource packs                                 p   ds
+                 Edit instance                                  e
+                 Delete instance                                d
+                 Open folder                                    f
+                 New instance                                   n
+
+               ↑↓  move    ↵  run    esc  close                         2h ago
+                                                                        3d ago
+              ────────────────────────────────────────────────────
+
+
+   ↵  play    o  offline    n  new    /  search    :  commands    ?  help

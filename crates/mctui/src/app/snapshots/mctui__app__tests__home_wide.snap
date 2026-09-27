@@ -1,0 +1,35 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: "Harness::new(120, 32).text()"
+---
+
+  mctui  ›  Instances                                                                                          ● Steve
+
+    Instances                              3      Survival 1.21                                               ● Ready
+                                                  Minecraft 1.21.4  ·  Fabric 0.16.10
+    Survival 1.21                     2h ago
+                                                    ▶ Play   ↵      Play offline   o
+    Snapshot Test                        new
+                                                   Overview   Mods 3   Resource packs 0
+    Creative Build                    3d ago
+                                                  4h 12m           2h ago           2                3
+    + New instance                                played           last played      worlds           mods
+
+                                                  Worlds
+                                                  New World                                                     2h ago
+                                                  Hardcore Run                                                  3d ago
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ↵  play    o  offline    n  new    /  search    :  commands    ?  help

@@ -1,0 +1,20 @@
+{
+  "accounts": [
+    {
+      "id": "0f3c6d9e1a2b4c5d8e7f9a0b1c2d3e4f",
+      "name": "Steve",
+      "type": "msa",
+      "accessToken": "test-access-token",
+      "expiresAt": "2026-09-28T19:00:55.285468+05:30",
+      "msaRefreshToken": "test-refresh-token"
+    },
+    {
+      "id": "offline-alex",
+      "name": "Alex",
+      "type": "offline",
+      "accessToken": "",
+      "expiresAt": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "activeId": "0f3c6d9e1a2b4c5d8e7f9a0b1c2d3e4f"
+}

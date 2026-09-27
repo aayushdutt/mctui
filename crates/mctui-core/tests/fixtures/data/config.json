@@ -1,0 +1,15 @@
+{
+  "dataDir": "/home/steve/.local/share/mctui",
+  "instancesDir": "/home/steve/.local/share/mctui/instances",
+  "assetsDir": "/home/steve/.local/share/mctui/assets",
+  "librariesDir": "/home/steve/.local/share/mctui/libraries",
+  "javaPath": "",
+  "jvmArgs": [
+    "-Xmx4G",
+    "-Xms512M"
+  ],
+  "theme": "catppuccin",
+  "showSnapshots": false,
+  "msaClientID": "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb",
+  "launchLogVerbosity": "warn"
+}

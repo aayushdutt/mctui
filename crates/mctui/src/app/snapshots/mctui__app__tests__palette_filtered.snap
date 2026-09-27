@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Instances                                                  ● Steve
+
+    Instances                3      Survival 1.21                     ● Ready
+                                    Minecraft 1.21.4  ·  Fabric 0.16.10
+    Survival 1.21       2h ago
+                                                                     o
+    Snapshot  Command palette
+              ────────────────────────────────────────────────────  cks 0
+    Creative
+               : creat
+    + New in                                                        ds
+               ● Creative Build
+
+               ↑↓  move    ↵  run    esc  close
+
+              ────────────────────────────────────────────────────
+                                                                        2h ago
+                                    Hardcore Run                        3d ago
+
+
+
+   ↵  play    o  offline    n  new    /  search    :  commands    ?  help

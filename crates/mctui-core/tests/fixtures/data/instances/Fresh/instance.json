@@ -1,0 +1,16 @@
+{
+  "id": "Fresh",
+  "name": "Fresh",
+  "version": "26.3",
+  "loader": "Fabric",
+  "loaderVer": "",
+  "path": "/home/steve/.local/share/mctui/instances/Fresh",
+  "javaPath": "",
+  "jvmArgs": null,
+  "lastPlayed": "0001-01-01T00:00:00Z",
+  "createdAt": "0001-01-01T00:00:00Z",
+  "playTime": -3,
+  "isFullyDownloaded": false,
+  "cachedAt": "0001-01-01T00:00:00Z",
+  "installStarterFabricMods": true
+}

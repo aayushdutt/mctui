@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Instances                                                  ● Steve
+
+
+
+
+
+
+
+                                     mctui
+                     A Minecraft launcher for your terminal
+                             Blazingly monospaced!
+
+
+                         Create your first instance   ↵
+
+
+
+
+
+
+
+   ↵  new instance    a  sign in    s  settings    ?  help    q  quit

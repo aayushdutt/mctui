@@ -1,0 +1,27 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Instances                                                  ● Steve
+
+    Instances                3      Survival 1.21                     ● Ready
+                                                                    .10
+    Survival  Delete instance?
+              ────────────────────────────────────────────────────   o
+    Snapshot
+              Delete “Survival 1.21”?                               cks 0
+    Creative  Removes its folder: 2 worlds · 3 mods · 4h 12m
+              played.
+    + New in                                                        ds
+              ▲ This cannot be undone.
+
+                Delete      Cancel
+
+               ←→  choose    ↵  confirm    esc  cancel
+                                                                        2h ago
+              ────────────────────────────────────────────────────      3d ago
+
+
+
+   ↵  play    o  offline    n  new    /  search    :  commands    ?  help

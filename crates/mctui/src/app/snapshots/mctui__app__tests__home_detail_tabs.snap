@@ -1,0 +1,31 @@
+---
+source: crates/mctui/src/app/tests.rs
+expression: h.text()
+---
+
+  mctui  ›  Instances                                                                      ● Steve
+
+    Instances                      3      Survival 1.21                                   ● Ready
+                                          Minecraft 1.21.4  ·  Fabric 0.16.10
+    Survival 1.21             2h ago
+                                            ▶ Play   ↵      Play offline   o
+    Snapshot Test                new
+                                           Overview   Mods 3   Resource packs 0
+    Creative Build            3d ago
+                                          Fabric API                                        2.0 MB
+    + New instance                        Lithium                                           683 KB
+                                          Sodium                                            1.2 MB
+
+
+
+
+
+
+
+
+
+
+
+
+
+   ←→  tabs    ↵  open    esc  list    :  commands    ?  help
