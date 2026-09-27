@@ -459,7 +459,8 @@ impl PlayScreen {
             return;
         }
         // Scrolled up, a row goes to "↓ newer", and one to the note below.
-        let note = usize::from(session.dropped > 0);
+        let gone = session.dropped + session.missed;
+        let note = usize::from(gone > 0);
         let top = usize::from(body.height).saturating_sub(1 + note).max(1);
         self.max_scroll.set(total.saturating_sub(top));
         let below = self.below(session, verbosity);
@@ -467,7 +468,10 @@ impl PlayScreen {
         let mut y = body.y;
         // Scrolled back to the oldest line kept: say that older ones are gone.
         if note > 0 && below + height >= total && height > 1 {
-            let note = format!("… {} earlier lines weren't kept", session.dropped);
+            let note = format!(
+                "… {} lines weren't kept",
+                format::thousands(usize::try_from(gone).unwrap_or(usize::MAX))
+            );
             cv.text(body.x, y, &note, body.width, Style::new().fg(t.faint));
             height -= 1;
             y += 1;

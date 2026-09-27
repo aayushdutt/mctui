@@ -48,6 +48,8 @@ pub enum Msg {
     Started(Box<Started>),
     Failed(Failure),
     Logs(Vec<LogLine>),
+    /// The reader fell this many more lines behind the game's output.
+    Missed(u64),
     Exited(ExitReport),
 }
 
@@ -102,8 +104,10 @@ pub struct Session {
     pub done: Vec<Stage>,
     /// The game's output, oldest first.
     pub log: VecDeque<LogLine>,
-    /// Lines dropped because the log was full or the reader fell behind.
+    /// Lines dropped from the front because the log was full.
     pub dropped: u64,
+    /// Lines never read because the game wrote faster than we could keep up.
+    pub missed: u64,
     /// Worth knowing, but not a failure ("using saved game files").
     pub notes: Vec<String>,
     /// It crashed or failed while the launch screen wasn't showing, and
@@ -192,6 +196,7 @@ impl Session {
             done: Vec::new(),
             log: VecDeque::new(),
             dropped: 0,
+            missed: 0,
             notes: Vec::new(),
             unseen: false,
             task: Some(task),
@@ -316,6 +321,10 @@ impl Session {
                 self.dropped += over as u64;
                 None
             }
+            Msg::Missed(n) => {
+                self.missed += n;
+                None
+            }
             Msg::Exited(report) => {
                 self.task = None;
                 let played = format::play_time(report.ran_for.as_secs());
@@ -425,6 +434,7 @@ async fn pump(seq: u64, launched: Launched, mail: &Mailbox) {
         starter_mods,
     };
     mail.send(msg::Msg::Play(seq, Msg::Started(Box::new(started))));
+    let mut missed = 0;
     loop {
         let Some(first) = logs.recv().await else {
             break;
@@ -438,6 +448,11 @@ async fn pump(seq: u64, launched: Launched, mail: &Mailbox) {
             }
         }
         mail.send(msg::Msg::Play(seq, Msg::Logs(batch)));
+        if logs.skipped() > missed {
+            let more = logs.skipped() - missed;
+            missed = logs.skipped();
+            mail.send(msg::Msg::Play(seq, Msg::Missed(more)));
+        }
     }
     mail.send(msg::Msg::Play(seq, Msg::Exited(game.wait().await)));
 }

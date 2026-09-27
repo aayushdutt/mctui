@@ -48,7 +48,8 @@ pub struct PlanInputs<'a> {
     pub java: &'a Path,
     /// Who plays.
     pub identity: &'a Identity,
-    /// The platform to evaluate rules for: [`Env::current`], but for tests.
+    /// The platform to evaluate rules for: this computer's OS, and the
+    /// architecture of the Java that runs the game.
     pub env: &'a Env,
 }
 

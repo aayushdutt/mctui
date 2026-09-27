@@ -25,6 +25,7 @@ fn session(seq: u64, phase: Phase) -> Session {
         done: Vec::new(),
         log: VecDeque::new(),
         dropped: 0,
+        missed: 0,
         notes: Vec::new(),
         unseen: false,
         task: None,
@@ -386,7 +387,7 @@ fn the_log_scrolls_to_a_full_first_page_and_says_what_it_dropped() {
     h.press(KeyCode::Char('g'));
     let text = h.text();
     assert!(
-        text.contains("… 1800 earlier lines weren't kept") && text.contains("line 1\n"),
+        text.contains("… 1,800 lines weren't kept") && text.contains("line 1\n"),
         "{text}"
     );
     let shown = text.lines().filter(|l| l.contains("line ")).count();

@@ -100,7 +100,9 @@ pub fn fixture() -> Fixture {
         name: "Steve".into(),
         kind: AccountKind::Msa,
         access_token: Secret::new("test-token"),
-        expires_at: Some(ago(-86_400)),
+        // Checked against the real clock (sessions are), not the fixed one
+        // frames are drawn at: a fixed expiry would lapse one day.
+        expires_at: Some(Timestamp::now() + jiff::SignedDuration::from_hours(24)),
         msa_refresh_token: None,
     });
 

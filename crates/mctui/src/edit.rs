@@ -98,21 +98,26 @@ impl EditInstance {
                 Action::Close,
             ]));
         };
-        let mut edited = inst.clone();
-        edited.name = name;
-        edited.java_path = (!java.is_empty()).then(|| PathBuf::from(java));
+        let java_path = (!java.is_empty()).then(|| PathBuf::from(java));
         let extra = self
             .form
             .text("jvm_args")
             .split_whitespace()
             .map(str::to_owned);
-        edited.jvm_args = xmx
+        let jvm_args: Vec<String> = xmx
             .map(|size| format!("-Xmx{size}"))
             .into_iter()
             .chain(extra)
             .collect();
-        match cx.data.store.save(&edited) {
-            Ok(()) => {
+        // Only this form's fields change: play time another window recorded
+        // meanwhile stays.
+        let saved = cx.data.store.update(&inst.id, |fresh| {
+            fresh.name = name;
+            fresh.java_path = java_path;
+            fresh.jvm_args = jvm_args;
+        });
+        match saved {
+            Ok(edited) => {
                 let banner = Banner::success(format!("Saved “{}”.", edited.name));
                 *inst = edited;
                 Handled::Action(Action::Many(vec![
