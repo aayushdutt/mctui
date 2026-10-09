@@ -25,3 +25,9 @@ docs/
 
 # Snapshot review leftovers
 *.snap.new
+
+# Local design experiments (vite app)
+/exp/
+
+# Local credentials
+/creds.txt
